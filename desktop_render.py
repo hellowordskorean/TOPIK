@@ -26,14 +26,21 @@ POLL_INTERVAL  = 60   # 초 (1분마다 확인)
 HOSTNAME       = "desktop"
 RENDER_CONFIG  = NAS_DRIVE / "logs" / "render_config.json"
 
-DOCKER_CMD_BASE = [
-    "docker", "compose",
-    "-f", str(NAS_DRIVE / "docker-compose.yml"),
-    "-f", str(NAS_DRIVE / "docker-compose.gpu.yml"),
-    "run", "--rm", "topik-bot",
-    "python3", "make_video.py",
-    "--output", "/app/output/",
-]
+# FFmpeg 경로 (winget 설치 위치)
+_FFMPEG_DIR = Path.home() / "AppData/Local/Microsoft/WinGet/Packages"
+_FFMPEG_BIN = None
+for p in _FFMPEG_DIR.glob("Gyan.FFmpeg*/ffmpeg*/bin"):
+    if (p / "ffmpeg.exe").exists():
+        _FFMPEG_BIN = str(p)
+        break
+
+def _get_env():
+    """FFmpeg 경로 + APP_BASE를 환경변수에 추가"""
+    env = os.environ.copy()
+    if _FFMPEG_BIN:
+        env["PATH"] = _FFMPEG_BIN + os.pathsep + env.get("PATH", "")
+    env["APP_BASE"] = str(NAS_DRIVE)
+    return env
 
 
 # ─── 로그 ────────────────────────────────────────────────────
@@ -95,13 +102,22 @@ def mark_failed(q: dict, reason: str):
 
 # ─── 렌더링 ──────────────────────────────────────────────────
 def render(word_id: int, db_path: str) -> bool:
-    cmd = DOCKER_CMD_BASE + [
-        "--db", db_path,
+    # Docker 컨테이너 경로 → 로컬 경로 변환
+    local_db = db_path.replace("/app/", str(NAS_DRIVE) + "/").replace("/", os.sep)
+    if not Path(local_db).exists():
+        # fallback: 기본 DB 경로
+        local_db = str(NAS_DRIVE / "data" / "LanguageTest" / "words_db.json")
+    local_output = str(NAS_DRIVE / "output")
+
+    cmd = [
+        sys.executable, str(NAS_DRIVE / "make_video.py"),
+        "--db", local_db,
         "--id", str(word_id),
+        "--output", local_output,
     ]
-    log(f"렌더링 시작: word_id={word_id}  GPU(h264_nvenc)")
+    log(f"렌더링 시작: word_id={word_id}  (native Python + FFmpeg)")
     log(f"명령어: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=str(NAS_DRIVE))
+    result = subprocess.run(cmd, cwd=str(NAS_DRIVE), env=_get_env())
     if result.returncode == 0:
         log(f"렌더링 완료: word_id={word_id}")
         return True
@@ -143,7 +159,7 @@ def main():
                         mark_done(q)
                         log(f"완료 처리: word_id={word_id}")
                     else:
-                        mark_failed(q, "Docker 렌더링 실패")
+                        mark_failed(q, "렌더링 실패")
             elif q.get("status") == "claimed" and q.get("claimed_by") == HOSTNAME:
                 log(f"이전 작업이 claimed 상태로 남아있음 (word_id={q.get('word_id')}) - 재시도")
                 q["status"] = "pending"

@@ -17,9 +17,21 @@ __pycache__/
 *.bak
 *.bak2
 *.bak3
+*.bak_*
+*_backup.json
 
-# 임시 데이터
+# 임시 데이터 / 스크립트
 data/temp_*.json
+data/prompt_gen_progress.json
+data/LanguageTest/scene_cache.json
+data/LanguageTest/**/fix*.py
+data/LanguageTest/**/batch*.py
+data/LanguageTest/**/gen*.py
+data/LanguageTest/**/run*.py
+data/LanguageTest/**/replace*.js
+data/LanguageTest/**/*_log.txt
+data/LanguageTest/**/*_pid.txt
+data/LanguageTest/HSK/synonym_scan.py
 
 # OS
 .DS_Store

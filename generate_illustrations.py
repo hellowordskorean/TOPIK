@@ -38,7 +38,7 @@ _STYLE_SUFFIX = (
     "centered subject, accurate and clear depiction, "
     "charming expressive characters with cozy warmth, "
     "delicate brushstroke details, soft color washes, "
-    "no text, no letters, no watermark, "
+    "no text, no letters, no numbers, no watermark, "
     "square composition, high quality hand-painted illustration"
 )
 

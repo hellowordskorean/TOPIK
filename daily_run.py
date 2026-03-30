@@ -183,14 +183,17 @@ def main():
         )
         
         day_number = upload_log["last_day"] + 1
-        metadata = generate_metadata(word, day_number)
+        metadata = generate_metadata(word, day_number, lang="EN")
         
         publish_at = None
         if PUBLISH_DELAY_HOURS > 0:
             publish_at = datetime.now(timezone.utc) + timedelta(hours=PUBLISH_DELAY_HOURS)
         
         youtube = get_youtube_client()
-        video_id = upload_video(youtube, str(output_path), metadata, publish_at=publish_at)
+        thumb_path = str(output_path).rsplit(".", 1)[0] + "_thumb.png"
+        video_id = upload_video(youtube, str(output_path), metadata,
+                                publish_at=publish_at,
+                                thumbnail_path=thumb_path if os.path.exists(thumb_path) else None)
         
         # Step 3: 로그 업데이트
         upload_log["last_day"] = day_number
