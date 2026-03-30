@@ -1,0 +1,61 @@
+version: "3.8"
+
+services:
+  topik-bot:
+    build: .
+    container_name: topik_youtube_bot
+    restart: unless-stopped
+
+    environment:
+      # ── 필수 API 키 ──────────────────────────────────
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp_service_account.json
+
+      # ── 타임존 (한국) ────────────────────────────────
+      - TZ=Asia/Seoul
+
+    volumes:
+      # 단어 DB, 로그, 영상 출력 → NAS 볼륨에 영구 저장
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./output:/app/output
+      - ./secrets:/app/secrets          # credentials.json, token.pickle, gcp 키
+      - ./assets:/app/assets            # 폰트, 배경 이미지 등
+      # Python 파일 마운트 → 재빌드 없이 코드 변경 반영
+      - ./make_video.py:/app/make_video.py
+      - ./upload_youtube.py:/app/upload_youtube.py
+      - ./daily_run.py:/app/daily_run.py
+      - ./generate_sentences.py:/app/generate_sentences.py
+      - ./generate_illustrations.py:/app/generate_illustrations.py
+
+    # Synology는 메모리 제한 권장 (영상 렌더링 시 RAM 많이 사용)
+    mem_limit: 3g
+    memswap_limit: 4g
+
+    # cron은 컨테이너 내부 supercronic으로 실행
+    command: supercronic /app/crontab
+
+  # ── 대시보드 (Flask) ─────────────────────────────────────
+  topik-dashboard:
+    build: .
+    container_name: topik_dashboard
+    restart: unless-stopped
+    command: python3 /app/dashboard.py
+    ports:
+      - "8765:8765"     # http://NAS-IP:8765
+    environment:
+      - TZ=Asia/Seoul
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp_service_account.json
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
+      - YOUTUBE_CHANNEL_ID=${YOUTUBE_CHANNEL_ID:-}
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs
+      - ./output:/app/output
+      - ./assets:/app/assets          # 일러스트 생성 쓰기 필요
+      - ./secrets:/app/secrets:ro
+      - ./make_video.py:/app/make_video.py
+      - ./generate_illustrations.py:/app/generate_illustrations.py
+      - ./dashboard.py:/app/dashboard.py

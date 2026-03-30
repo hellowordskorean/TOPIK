@@ -1,0 +1,25 @@
+# 환경 / 시크릿
+.env
+secrets/
+
+# 생성물 (용량 큼, 각 환경에서 생성)
+assets/illustrations/
+output/
+
+# 로그 / 임시
+logs/
+*.log
+Thumbs.db
+__pycache__/
+*.pyc
+
+# 백업 파일
+*.bak
+*.bak2
+*.bak3
+
+# 임시 데이터
+data/temp_*.json
+
+# OS
+.DS_Store

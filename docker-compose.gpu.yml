@@ -1,0 +1,22 @@
+# 데스크탑 GPU 렌더링용 오버라이드
+# 사용법:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml run --rm topik-bot \
+#     python3 make_video.py --db /app/data/LanguageTest/words_db.json --id 1 --output /app/output/
+#
+# 사전 준비:
+#   1. Docker Desktop for Windows 설치
+#   2. NVIDIA Container Toolkit (WSL2에서 자동 지원)
+#   3. Docker Desktop 설정 → Use the WSL 2 based engine 활성화
+
+services:
+  topik-bot:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility

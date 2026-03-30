@@ -1,0 +1,12 @@
+anthropic>=0.25.0
+requests>=2.31.0
+google-genai>=1.0.0
+Pillow>=10.0.0
+numpy>=1.24.0
+google-cloud-texttospeech>=2.16.0
+google-auth>=2.20.0
+google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.90.0
+eng-to-ipa>=0.0.2
+korean-romanizer>=0.0.5
+flask>=3.0.0

@@ -1,0 +1,4 @@
+# TOPIK 유튜브 자동화 - 매일 오전 6시 (KST) 실행
+# 형식: 분 시 일 월 요일 명령어
+
+0 6 * * * cd /app && python3 daily_run.py >> /app/logs/cron.log 2>&1
