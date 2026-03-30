@@ -74,20 +74,66 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def db_path_for(category, exam=None, lang=None):
-    if category == "시험용" and exam and lang:
-        return f"{DATA_ROOT}/{category}/{exam}/{lang}/words_db.json"
-    elif category == "여행용" and lang:
-        return f"{DATA_ROOT}/{category}/{lang}/words_db.json"
-    # fallback: current single DB
-    return f"{DATA_ROOT}/LanguageTest/words_db.json"
+def _normalize_words(data):
+    """per-level 형식(object) → 통합 배열 형식으로 정규화"""
+    if isinstance(data, dict) and "words" in data:
+        file_level = data.get("level")
+        words = data["words"]
+        for w in words:
+            if "level" not in w and file_level is not None:
+                w["level"] = file_level
+            if "sentences" not in w and "examples" in w:
+                w["sentences"] = w["examples"]
+            if "part_of_speech" not in w and "pos" in w:
+                w["part_of_speech"] = w["pos"]
+        return words
+    if isinstance(data, list):
+        return data
+    return []
 
 def get_db(category="시험용", exam="TOPIK", lang="EN"):
-    path = db_path_for(category, exam, lang)
-    db = load_json(path, None)
-    if db is None:
-        db = load_json(f"{DATA_ROOT}/LanguageTest/words_db.json", [])
-    return db
+    """DB 로드 — 실제 파일 구조에서 읽어 통합 배열로 반환"""
+    LT = f"{DATA_ROOT}/LanguageTest"
+    # TOPIK: 언어별 per-level 파일 합치기
+    if category == "시험용" and exam == "TOPIK":
+        all_words = []
+        for lv in range(1, 7):
+            path = f"{LT}/TOPIK/{lang}/topik_{lv}.json"
+            data = load_json(path, None)
+            if data is not None:
+                all_words.extend(_normalize_words(data))
+        if all_words:
+            return all_words
+    # 다른 시험: 디렉토리 내 모든 json 합치기
+    elif category == "시험용" and exam:
+        exam_dir = f"{LT}/{exam}"
+        if os.path.isdir(exam_dir):
+            all_words = []
+            for fname in sorted(os.listdir(exam_dir)):
+                if fname.endswith(".json") and not fname.endswith(".bak"):
+                    fpath = os.path.join(exam_dir, fname)
+                    data = load_json(fpath, None)
+                    if data is not None:
+                        all_words.extend(_normalize_words(data))
+            if all_words:
+                return all_words
+    # fallback
+    return load_json(f"{LT}/words_db.json", [])
+
+def render_db_path_for(exam, lang, level):
+    """렌더링 시 make_video.py에 전달할 DB 파일 경로"""
+    LT = f"{DATA_ROOT}/LanguageTest"
+    if exam == "TOPIK":
+        return f"{LT}/TOPIK/{lang}/topik_{level}.json"
+    # 다른 시험: 파일명에서 level 매칭
+    exam_dir = f"{LT}/{exam}"
+    if os.path.isdir(exam_dir):
+        level_str = str(level).lower().replace("-", "_")
+        for fname in sorted(os.listdir(exam_dir)):
+            if fname.endswith(".json") and not fname.endswith(".bak"):
+                if level_str in fname.lower():
+                    return f"{exam_dir}/{fname}"
+    return f"{LT}/words_db.json"
 
 # ─── 통계 ────────────────────────────────────────────────────
 def get_videos_log():  return load_json(VIDEOS_LOG, [])
@@ -173,8 +219,8 @@ def get_next_word_id():
         if w["id"] not in done: return w["id"]
     return None
 
-def get_next_words_for_custom(exam, lang, level, count):
-    """커스텀 렌더: 지정 시험/언어/등급의 다음 N개 미렌더 단어 반환"""
+def get_next_words_for_custom(exam, lang, level, count=30, start_id=None, end_id=None):
+    """커스텀 렌더: 지정 시험/언어/등급의 미렌더 단어 반환 (ID범위 지원)"""
     db = get_db("시험용", exam, lang)
     videos = get_videos_log()
     rendered = {v["word_id"] for v in videos
@@ -182,10 +228,22 @@ def get_next_words_for_custom(exam, lang, level, count):
     words = []
     for w in sorted(db, key=lambda x: x["id"]):
         if w.get("level") == level and w["id"] not in rendered:
+            if start_id and w["id"] < start_id:
+                continue
+            if end_id and w["id"] > end_id:
+                continue
             words.append(w)
             if len(words) >= count:
                 break
     return words
+
+def get_level_id_range(exam, lang, level):
+    """해당 등급의 ID 범위 반환 (min_id, max_id, total)"""
+    db = get_db("시험용", exam, lang)
+    ids = [w["id"] for w in db if w.get("level") == level]
+    if not ids:
+        return None, None, 0
+    return min(ids), max(ids), len(ids)
 
 def get_music_files():
     if not os.path.isdir(MUSIC_DIR): return []
@@ -279,8 +337,10 @@ def get_batch_for_date(date_str):
     return sorted(result, key=lambda x: x.get("generated_at",""))
 
 # ─── 렌더링 ──────────────────────────────────────────────────
-def write_queue_job(word_id):
-    save_json(QUEUE_FILE,{"word_id":word_id,"db_path":"/app/data/LanguageTest/words_db.json",
+def write_queue_job(word_id, db_path=None):
+    if not db_path:
+        db_path = "/app/data/LanguageTest/words_db.json"
+    save_json(QUEUE_FILE,{"word_id":word_id,"db_path":db_path,
         "status":"pending","claimed_by":None,"claimed_at":None,
         "created_at":datetime.now().isoformat(),"completed_at":None})
 
@@ -288,7 +348,7 @@ _render_thread = None
 _illust_thread = None
 _batch_thread  = None
 
-def run_batch_render(word_ids, target="auto"):
+def run_batch_render(word_ids, target="auto", db_path=None):
     """target: "desktop", "nas", "auto"(글로벌 토글 따름)"""
     global _batch_thread
     for i, word_id in enumerate(word_ids):
@@ -300,7 +360,7 @@ def run_batch_render(word_ids, target="auto"):
                     item["status"] = "rendering"
             save_json(BATCH_QUEUE_F, bq)
 
-            write_queue_job(word_id)
+            write_queue_job(word_id, db_path)
             cfg = get_render_config()
             use_desktop = (target == "desktop") if target != "auto" else cfg.get("desktop_enabled")
 
@@ -313,9 +373,9 @@ def run_batch_render(word_ids, target="auto"):
                     if rq.get("status") in ("done", "failed"):
                         finished = True; break
                 if not finished:
-                    run_render_nas(word_id)
+                    run_render_nas(word_id, db_path)
             else:
-                run_render_nas(word_id)
+                run_render_nas(word_id, db_path)
         except Exception:
             pass
 
@@ -331,13 +391,15 @@ def run_batch_render(word_ids, target="auto"):
     bq["completed_at"] = datetime.now().isoformat()
     save_json(BATCH_QUEUE_F, bq)
 
-def run_render_nas(word_id):
+def run_render_nas(word_id, db_path=None):
+    if not db_path:
+        db_path = "/app/data/LanguageTest/words_db.json"
     try:
         q = load_json(QUEUE_FILE,{})
         q.update({"status":"claimed","claimed_by":"nas","claimed_at":datetime.now().isoformat()})
         save_json(QUEUE_FILE,q)
         r = subprocess.run([sys.executable,"/app/make_video.py",
-            "--db","/app/data/LanguageTest/words_db.json",
+            "--db",db_path,
             "--id",str(word_id),"--output","/app/output/"])
         q = load_json(QUEUE_FILE,{})
         q.update({"status":"done" if r.returncode==0 else "failed","completed_at":datetime.now().isoformat()})
@@ -493,44 +555,50 @@ def api_render_batch():
 
 @app.route("/api/render/preview")
 def api_render_preview():
-    """커스텀 렌더링 미리보기 — 다음 N개 단어 반환"""
-    exam  = request.args.get("exam", "TOPIK")
-    lang  = request.args.get("lang", "EN")
-    level = int(request.args.get("level", 1))
-    count = int(request.args.get("count", 1))
-    words = get_next_words_for_custom(exam, lang, level, min(count, 30))
-    remaining = 0
+    """커스텀 렌더링 미리보기 — ID 범위 지원"""
+    exam     = request.args.get("exam", "TOPIK")
+    lang     = request.args.get("lang", "EN")
+    level    = int(request.args.get("level", 1))
+    count    = int(request.args.get("count", 30))
+    start_id = request.args.get("start_id", type=int)
+    end_id   = request.args.get("end_id", type=int)
+    words = get_next_words_for_custom(exam, lang, level, min(count, 30), start_id, end_id)
+    # 남은 수 계산
     db = get_db("시험용", exam, lang)
     videos = get_videos_log()
     rendered = {v["word_id"] for v in videos
                 if v.get("exam", "TOPIK") == exam and v.get("language", "EN") == lang}
-    for w in db:
-        if w.get("level") == level and w["id"] not in rendered:
-            remaining += 1
-    return jsonify({"words": words, "count": len(words), "remaining": remaining})
+    remaining = sum(1 for w in db if w.get("level") == level and w["id"] not in rendered)
+    # 등급 ID 범위
+    min_id, max_id, total = get_level_id_range(exam, lang, level)
+    return jsonify({"words": words, "count": len(words), "remaining": remaining,
+                    "level_min_id": min_id, "level_max_id": max_id, "level_total": total})
 
 @app.route("/api/render/custom", methods=["POST"])
 def api_render_custom():
-    """커스텀 렌더링 — 시험/언어/등급/개수/위치 지정"""
+    """커스텀 렌더링 — 시험/언어/등급/ID범위/위치 지정"""
     global _batch_thread
-    data   = request.get_json(silent=True) or {}
-    exam   = data.get("exam", "TOPIK")
-    lang   = data.get("lang", "EN")
-    level  = int(data.get("level", 1))
-    count  = int(data.get("count", 1))
-    target = data.get("target", "auto")
-    words  = get_next_words_for_custom(exam, lang, level, min(count, 30))
+    data     = request.get_json(silent=True) or {}
+    exam     = data.get("exam", "TOPIK")
+    lang     = data.get("lang", "EN")
+    level    = int(data.get("level", 1))
+    count    = int(data.get("count", 30))
+    start_id = data.get("start_id")
+    end_id   = data.get("end_id")
+    target   = data.get("target", "auto")
+    words  = get_next_words_for_custom(exam, lang, level, min(count, 30), start_id, end_id)
     if not words:
         return jsonify({"error": "렌더링할 단어가 없습니다"}), 400
     bq = load_json(BATCH_QUEUE_F, {})
     if bq.get("status") == "running":
         return jsonify({"error": "이미 렌더링 중"}), 409
+    db_path = render_db_path_for(exam, lang, level)
     word_ids = [w["id"] for w in words]
     items = [{"word_id": wid, "status": "pending"} for wid in word_ids]
     save_json(BATCH_QUEUE_F, {"status":"running","total":len(items),"current":0,
         "items":items,"target":target,"exam":exam,"lang":lang,"level":level,
         "started_at":datetime.now().isoformat()})
-    _batch_thread = threading.Thread(target=run_batch_render, args=(word_ids,target), daemon=True)
+    _batch_thread = threading.Thread(target=run_batch_render, args=(word_ids,target,db_path), daemon=True)
     _batch_thread.start()
     return jsonify({"status":"started","count":len(word_ids),"target":target,
                     "words":[{"id":w["id"],"word":w["word"]} for w in words]})
@@ -1539,13 +1607,20 @@ async function _doCustomPreview(){
   const exam=document.getElementById('rc-exam').value;
   const lang=document.getElementById('rc-lang').value;
   const level=document.getElementById('rc-level').value;
-  const count=Math.max(1,Math.min(30,+document.getElementById('rc-count').value||1));
+  const count=Math.max(1,Math.min(30,+document.getElementById('rc-count').value||10));
+  const startId=document.getElementById('rc-start-id').value;
+  const endId=document.getElementById('rc-end-id').value;
+  let url=`/api/render/preview?exam=${exam}&lang=${lang}&level=${level}&count=${count}`;
+  if(startId) url+=`&start_id=${startId}`;
+  if(endId) url+=`&end_id=${endId}`;
   try{
-    const r=await fetch(`/api/render/preview?exam=${exam}&lang=${lang}&level=${level}&count=${count}`);
+    const r=await fetch(url);
     const d=await r.json();
     const el=document.getElementById('rc-preview');
     const remEl=document.getElementById('rc-remaining');
+    const hintEl=document.getElementById('rc-id-range-hint');
     if(remEl) remEl.textContent=`남은 단어: ${d.remaining||0}개`;
+    if(hintEl && d.level_min_id!=null) hintEl.textContent=`이 등급 범위: ID ${d.level_min_id} ~ ${d.level_max_id} (${d.level_total}개)`;
     if(!d.words||!d.words.length){
       el.innerHTML='<div style="color:#484f58;text-align:center;padding:16px;font-size:.78rem;">렌더링할 단어가 없습니다</div>';
       document.getElementById('rc-start').disabled=true;
@@ -1580,15 +1655,21 @@ async function startCustomRender(){
   const exam=document.getElementById('rc-exam').value;
   const lang=document.getElementById('rc-lang').value;
   const level=+document.getElementById('rc-level').value;
-  const count=Math.max(1,Math.min(30,+document.getElementById('rc-count').value||1));
+  const count=Math.max(1,Math.min(30,+document.getElementById('rc-count').value||10));
+  const startId=+document.getElementById('rc-start-id').value||null;
+  const endId=+document.getElementById('rc-end-id').value||null;
   const target=_customTarget;
-  const msg=`${exam} ${lang} ${level}급 × ${count}개\n위치: ${target==='desktop'?'💻 데스크탑 GPU':'🖥 NAS CPU'}\n\n시작할까요?`;
+  let range=startId||endId?` (ID ${startId||'?'}~${endId||'?'})`:'';
+  const msg=`${exam} ${lang} ${level}급 × 최대 ${count}개${range}\n위치: ${target==='desktop'?'💻 데스크탑 GPU':'🖥 NAS CPU'}\n\n시작할까요?`;
   if(!confirm(msg)) return;
   const btn=document.getElementById('rc-start');
   btn.disabled=true;btn.textContent='⏳ 요청 중...';
   try{
+    const body={exam,lang,level,count,target};
+    if(startId) body.start_id=startId;
+    if(endId) body.end_id=endId;
     const r=await fetch('/api/render/custom',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({exam,lang,level,count,target})});
+      body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok) alert('오류: '+(d.error||''));
     else{rpTab('batch');loadOverview();}
@@ -1700,7 +1781,7 @@ setInterval(()=>{if(_rpOpen){if(_rpTab==='batch')loadBatchData();}},5000);
   <div id="rp-custom" style="display:none;flex:1;overflow-y:auto;padding:14px;">
     <!-- 렌더링 대상 -->
     <div style="font-size:.72rem;color:#8b949e;margin-bottom:8px;font-weight:600;">🎯 렌더링 대상</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
       <div>
         <div style="font-size:.64rem;color:#484f58;margin-bottom:3px;">시험</div>
         <select id="rc-exam" onchange="updateCustomPreview()" style="width:100%;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 8px;font-size:.78rem;">
@@ -1721,7 +1802,20 @@ setInterval(()=>{if(_rpOpen){if(_rpTab==='batch')loadBatchData();}},5000);
       </div>
       <div>
         <div style="font-size:.64rem;color:#484f58;margin-bottom:3px;">에피소드 수</div>
-        <input type="number" id="rc-count" value="1" min="1" max="30" onchange="updateCustomPreview()" oninput="updateCustomPreview()" style="width:100%;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 8px;font-size:.78rem;">
+        <input type="number" id="rc-count" value="10" min="1" max="30" onchange="updateCustomPreview()" oninput="updateCustomPreview()" style="width:100%;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 8px;font-size:.78rem;">
+      </div>
+    </div>
+    <!-- ID 범위 -->
+    <div style="background:#1c2128;border:1px solid #21262d;border-radius:7px;padding:8px 10px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:.68rem;color:#484f58;font-weight:600;">단어 ID 범위 (선택)</span>
+        <span id="rc-id-range-hint" style="font-size:.62rem;color:#484f58;"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input type="number" id="rc-start-id" placeholder="시작" onchange="updateCustomPreview()" oninput="updateCustomPreview()" style="flex:1;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:5px 8px;font-size:.78rem;">
+        <span style="color:#484f58;font-size:.72rem;">~</span>
+        <input type="number" id="rc-end-id" placeholder="끝" onchange="updateCustomPreview()" oninput="updateCustomPreview()" style="flex:1;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:5px 8px;font-size:.78rem;">
+        <button onclick="document.getElementById('rc-start-id').value='';document.getElementById('rc-end-id').value='';updateCustomPreview();" style="padding:4px 8px;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#8b949e;cursor:pointer;font-size:.68rem;white-space:nowrap;">초기화</button>
       </div>
     </div>
     <!-- 렌더링 위치 -->

@@ -744,6 +744,14 @@ def create_video(word: dict, output_path: str, tmpdir: str):
             pct = 30 + int((frame_n / total_frames) * 55)  # 30~85%
             write_progress(f"3/4 프레임 렌더링 중... ({frame_n}/{total_frames})", pct=pct, word=word)
     
+    # 썸네일 저장 (인트로 첫 프레임)
+    thumb_path = output_path.rsplit(".", 1)[0] + "_thumb.png"
+    intro_frame = os.path.join(frames_dir, "frame_000000.png")
+    if os.path.exists(intro_frame):
+        import shutil
+        shutil.copy2(intro_frame, thumb_path)
+        print(f"  ✓ 썸네일 저장: {thumb_path}")
+
     write_progress("4/4 FFmpeg 합성 중...", pct=88, word=word)
     print("  4/4 FFmpeg 합성 중...")
 
@@ -829,8 +837,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     with open(args.db) as f:
-        db = json.load(f)
-    
+        raw = json.load(f)
+
+    # per-level 형식 정규화 (object with "words" → flat array)
+    if isinstance(raw, dict) and "words" in raw:
+        db = raw["words"]
+        file_level = raw.get("level")
+        for w in db:
+            if "level" not in w and file_level is not None:
+                w["level"] = file_level
+            if "sentences" not in w and "examples" in w:
+                w["sentences"] = w["examples"]
+            if "part_of_speech" not in w and "pos" in w:
+                w["part_of_speech"] = w["pos"]
+    else:
+        db = raw
+
     word = next((w for w in db if w["id"] == args.id), None)
     if not word:
         print(f"단어 ID {args.id}를 찾을 수 없습니다")
