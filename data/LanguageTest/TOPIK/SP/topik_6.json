@@ -515,8 +515,8 @@
       "examples": [
         {
           "situation": "En una clase de lógica — validez, solidez, ej.1",
-          "ko": "타당한 논증은 전제들이 참이라면 결론도 반드시 참인 논리적 형식을 갖춘 논증이다.",
-          "es": "Un argumento válido es aquel que tiene una forma lógica tal que si las premisas son verdaderas, la conclusión también debe ser verdadera."
+          "ko": "타당성을 갖춘 논증은 전제들이 참이라면 결론도 반드시 참인 형식이다.",
+          "es": "Un argumento con validez tiene una forma donde, si las premisas son verdaderas, la conclusión también debe serlo."
         },
         {
           "situation": "En la conferencia sobre metodología de medición de las ciencias sociales",
@@ -5438,8 +5438,8 @@
         },
         {
           "situation": "En la clase de metodología de las ciencias sociales",
-          "ko": "사회과학 이론의 과학성을 담보하려면 구체적인 반증 조건을 명시할 수 있어야 한다.",
-          "es": "Para garantizar la cientificidad de la teoría científica social, es necesario poder especificar condiciones concretas para su refutación."
+          "ko": "반증가능성을 확보하려면 구체적인 반증 조건을 명시할 수 있어야 한다.",
+          "es": "Para garantizar la falsabilidad, se debe poder especificar condiciones concretas de refutación."
         },
         {
           "situation": "En la charla de filosofía de la física",
@@ -5505,8 +5505,8 @@
         },
         {
           "situation": "En una conferencia de filosofía del derecho — validez universal, ej.4",
-          "ko": "자연법론은 실정법을 넘어서는 보편타당한 도덕 원리가 존재하며 이것이 법의 정당성 기준이라고 주장한다.",
-          "es": "La teoría del derecho natural sostiene que existen principios morales universalmente válidos que trascienden el derecho positivo y que estos constituyen el criterio de legitimidad jurídica."
+          "ko": "자연법론은 보편타당성을 지닌 도덕 원리가 존재한다고 주장한다.",
+          "es": "La teoría del derecho natural sostiene que existen principios morales con validez universal."
         },
         {
           "situation": "En la conferencia sobre fundamentos de las matemáticas — validez universal, ej.5",
@@ -5515,13 +5515,13 @@
         },
         {
           "situation": "En seminario de teoría de sociología — validez universal, ej.6",
-          "ko": "하버마스는 의사소통 행위 이론을 통해 이성적 합의에 기반한 보편타당한 규범 정립의 가능성을 탐구한다.",
-          "es": "A través de su teoría de la acción comunicativa, Habermas explora la posibilidad de establecer normas universalmente válidas basadas en el consenso racional."
+          "ko": "하버마스는 보편타당성에 기반한 규범 정립의 가능성을 탐구한다.",
+          "es": "Habermas explora la posibilidad de establecer normas basadas en la validez universal."
         },
         {
           "situation": "In an aesthetics lecture",
-          "ko": "칸트는 미적 판단이 주관적이면서도 보편타당한 동의를 요청한다는 역설적 성격을 지닌다고 분석하였다.",
-          "es": "En una conferencia sobre estética, Kant analizó el juicio estético como algo que tiene el carácter paradójico de ser subjetivo y al mismo tiempo pretender tener validez universal."
+          "ko": "칸트는 미적 판단이 보편타당성을 요청한다는 역설적 성격을 분석하였다.",
+          "es": "Kant analizó la naturaleza paradójica del juicio estético que reclama validez universal."
         },
         {
           "situation": "En seminario de debate sobre relativismo",
@@ -5530,13 +5530,13 @@
         },
         {
           "situation": "En una conferencia de filosofía política — validez universal, ej.9",
-          "ko": "롤스의 공정으로서의 정의 이론은 특정 공동체의 전통을 초월하는 보편타당한 원칙의 도출을 목표로 한다.",
-          "es": "La teoría de la justicia como equidad de Rawls tiene como objetivo derivar principios universalmente válidos que trascienden las tradiciones de cualquier comunidad en particular."
+          "ko": "롤스의 정의 이론은 보편타당성을 지닌 원칙의 도출을 목표로 한다.",
+          "es": "La teoría de la justicia de Rawls busca derivar principios con validez universal."
         },
         {
           "situation": "En el debate sobre la teoría lingüística",
-          "ko": "촘스키의 보편 문법 가설은 모든 인간 언어에 공통된 보편타당한 문법 구조가 존재한다고 가정한다.",
-          "es": "La hipótesis de la gramática universal de Chomsky postula la existencia de una estructura gramatical universalmente válida y común a todas las lenguas humanas."
+          "ko": "촘스키의 보편 문법 가설은 보편타당성을 지닌 문법 구조가 존재한다고 본다.",
+          "es": "La hipótesis de la gramática universal de Chomsky postula que existen estructuras gramaticales con validez universal."
         }
       ]
     },
@@ -5828,8 +5828,8 @@
         },
         {
           "situation": "En una conferencia sobre política ambiental",
-          "ko": "지속 가능 발전 패러다임은 성장 중심 경제 패러다임에서 생태 중심 경제 패러다임으로의 전환을 요구한다.",
-          "es": "El paradigma del desarrollo sostenible exige un cambio de paradigma de un paradigma económico centrado en el crecimiento a uno centrado en la ecología."
+          "ko": "지속 가능 발전은 성장 중심에서 생태 중심으로의 패러다임전환을 요구한다.",
+          "es": "El desarrollo sostenible requiere un cambio de paradigma del crecimiento al ecocentrismo."
         },
         {
           "situation": "En una conferencia de historia del pensamiento político",
@@ -6004,13 +6004,13 @@
         },
         {
           "situation": "In a philosophy of language class — intersubjetividad, ej.4",
-          "ko": "비트겐슈타인의 사적 언어 논증은 의미가 본질적으로 상호주관적 사용 규칙에 의존함을 보여준다.",
-          "es": "En una clase de filosofía del lenguaje: el argumento del lenguaje privado de Wittgenstein muestra que el significado depende esencialmente de reglas de uso intersubjetivas."
+          "ko": "비트겐슈타인은 의미가 상호주관성에 기반한 사용 규칙에 의존함을 보여준다.",
+          "es": "Wittgenstein muestra que el significado depende de reglas de uso basadas en la intersubjetividad."
         },
         {
           "situation": "En conferencia de metodología de sociología",
-          "ko": "질적 연구의 타당성은 연구자와 연구 참여자 사이의 상호주관적 이해를 통해 확보될 수 있다.",
-          "es": "La validez de la investigación cualitativa se puede asegurar mediante la comprensión intersubjetiva entre el investigador y los participantes de la investigación."
+          "ko": "질적 연구의 타당성은 상호주관성을 통해 확보될 수 있다.",
+          "es": "La validez de la investigación cualitativa puede asegurarse a través de la intersubjetividad."
         },
         {
           "situation": "En conferencia de psicología del desarrollo",
@@ -6019,18 +6019,18 @@
         },
         {
           "situation": "En la conferencia sobre metodología de etnografía",
-          "ko": "문화 기술지 연구자는 현장에서 상호주관적 의미 공유를 통해 내부자적 관점을 획득하고자 노력한다.",
-          "es": "Los investigadores etnográficos se esfuerzan por adquirir una perspectiva interna a través del intercambio intersubjetivo de significados en el campo."
+          "ko": "문화 기술지 연구자는 상호주관성을 통해 내부자적 관점을 획득하고자 한다.",
+          "es": "Los investigadores etnográficos buscan adquirir una perspectiva interna a través de la intersubjetividad."
         },
         {
           "situation": "En su conferencia sobre hermenéutica filosófica",
-          "ko": "가다머의 해석학적 순환은 텍스트 이해가 저자와 독자 사이의 상호주관적 지평 융합을 통해 이루어진다고 설명한다.",
-          "es": "El círculo hermenéutico de Gadamer explica que la comprensión del texto se produce a través de una fusión intersubjetiva de horizontes entre autor y lector."
+          "ko": "가다머의 해석학에서 텍스트 이해는 상호주관성에 기반한 지평 융합을 통해 이루어진다.",
+          "es": "En la hermenéutica de Gadamer, la comprensión textual se logra a través de una fusión de horizontes basada en la intersubjetividad."
         },
         {
           "situation": "En una conferencia de filosofía política — intersubjetividad, ej.9",
-          "ko": "민주주의적 정당성은 개인의 이해 계산을 넘어 시민들 사이의 상호주관적 심의 과정에서 도출된다.",
-          "es": "La legitimidad democrática se deriva del proceso deliberativo intersubjetivo entre los ciudadanos, más allá del cálculo de los intereses individuales."
+          "ko": "민주주의적 정당성은 시민들 사이의 상호주관성에 기반한 심의 과정에서 도출된다.",
+          "es": "La legitimidad democrática se deriva de procesos deliberativos basados en la intersubjetividad entre ciudadanos."
         },
         {
           "situation": "En conferencia de neurofenomenología",
@@ -8226,8 +8226,8 @@
         },
         {
           "situation": "Clasificación de Weber",
-          "ko": "베버는 정당성의 유형을 전통적, 카리스마적, 합법적-합리적 지배로 구분했다.",
-          "es": "Weber clasificó los tipos de legitimidad en dominación tradicional, carismática y jurídico-racional."
+          "ko": "베버는 정치적 정당성의 유형을 전통적, 카리스마적, 합법적-합리적 지배로 구분했다.",
+          "es": "Weber clasificó los tipos de legitimidad política como dominación tradicional, carismática y legal-racional."
         },
         {
           "situation": "Conexión con la democracia — legitimidad política, ej.3",
@@ -8241,13 +8241,13 @@
         },
         {
           "situation": "Legitimación procesal",
-          "ko": "절차적 정당성은 결과보다 의사 결정 과정의 공정성에서 정당성을 찾는다.",
-          "es": "La legitimidad procesal encuentra legitimidad en la equidad del proceso de toma de decisiones más que en el resultado."
+          "ko": "정치적 정당성은 결과보다 의사 결정 과정의 공정성에서 찾을 수도 있다.",
+          "es": "La legitimidad política también puede encontrarse en la equidad del proceso de toma de decisiones más que en el resultado."
         },
         {
           "situation": "Legitimación sustantiva",
-          "ko": "실질적 정당성은 좋은 통치 결과를 통해 권력이 인정받는 방식이다.",
-          "es": "La legitimidad sustantiva es la forma en que se reconoce el poder a través de resultados de buena gobernanza."
+          "ko": "정치적 정당성은 좋은 통치 결과를 통해 권력이 인정받는 방식이기도 하다.",
+          "es": "La legitimidad política también es la forma en que el poder es reconocido a través de buenos resultados de gobernanza."
         },
         {
           "situation": "Comparative politics",
@@ -8355,8 +8355,8 @@
         },
         {
           "situation": "Velo de ignorancia",
-          "ko": "무지의 베일 뒤에서 사람들은 자신의 사회적 위치를 모른 채 원칙을 선택해야 한다.",
-          "es": "Detrás del velo de la ignorancia, las personas deben elegir principios sin conocer su posición en la sociedad."
+          "ko": "롤스정의론에서 무지의 베일 뒤에서 사람들은 원칙을 선택해야 한다.",
+          "es": "En la teoría de la justicia de Rawls, las personas deben elegir principios detrás del velo de ignorancia."
         },
         {
           "situation": "Principio de diferencia",
@@ -8375,8 +8375,8 @@
         },
         {
           "situation": "Posición académica",
-          "ko": "정의론은 20세기 영미 정치철학에서 가장 영향력 있는 저작 중 하나이다.",
-          "es": "Una teoría de la justicia es una de las obras más influyentes de la filosofía política angloamericana del siglo XX."
+          "ko": "롤스정의론은 20세기 영미 정치철학에서 가장 영향력 있는 저작 중 하나이다.",
+          "es": "La teoría de la justicia de Rawls es una de las obras más influyentes de la filosofía política angloamericana del siglo XX."
         },
         {
           "situation": "justicia internacional",
@@ -8603,8 +8603,8 @@
         },
         {
           "situation": "destacados académicos — pluralismo político, ej.3",
-          "ko": "달의 다원주의 이론은 미국 민주주의 분석에 큰 영향을 미쳤다.",
-          "es": "La teoría pluralista de Dahl tuvo una gran influencia en el análisis de la democracia estadounidense."
+          "ko": "정치적 다원주의에 대한 달의 이론은 미국 민주주의 분석에 큰 영향을 미쳤다.",
+          "es": "La teoría del pluralismo político de Dahl tuvo una gran influencia en el análisis de la democracia estadounidense."
         },
         {
           "situation": "Política de grupos de interés",
@@ -8613,8 +8613,8 @@
         },
         {
           "situation": "Análisis crítico — pluralismo político, ej.5",
-          "ko": "다원주의 비판론자들은 권력 자원의 불균등 분포로 인해 실질적 다원주의가 실현되지 않는다고 본다.",
-          "es": "Los críticos del pluralismo argumentan que el pluralismo sustantivo no se realiza debido a la distribución desigual de los recursos de poder."
+          "ko": "정치적 다원주의 비판론자들은 권력 자원의 불균등 분포를 지적한다.",
+          "es": "Los críticos del pluralismo político señalan la distribución desigual de los recursos de poder."
         },
         {
           "situation": "Contrast with elite theory",
@@ -8792,8 +8792,8 @@
         },
         {
           "situation": "Conferencia de teoría cultural",
-          "ko": "라캉은 프로이트의 무의식 이론을 언어학적으로 재해석하면서 기표의 우위를 주장했다.",
-          "es": "Lacan reinterpretó lingüísticamente la teoría freudiana del inconsciente y afirmó la primacía del significante."
+          "ko": "라캉은 기표와 기의의 관계를 재해석하면서 기표의 우위를 주장했다.",
+          "es": "Lacan reinterpretó la relación entre significante y significado y afirmó la primacía del significante."
         },
         {
           "situation": "Seminario de posestructuralismo",
@@ -9184,8 +9184,8 @@
         },
         {
           "situation": "Debate sobre educación bilingüe",
-          "ko": "이중언어 사용자는 두 언어 체계 사이에서 유연하게 사고를 전환하는 인지적 이점을 가질 수 있다.",
-          "es": "Los hablantes bilingües pueden tener una ventaja cognitiva al cambiar de manera flexible el pensamiento entre dos sistemas lingüísticos."
+          "ko": "언어상대성의 관점에서 이중언어 사용자는 인지적 이점을 가질 수 있다.",
+          "es": "Desde la perspectiva de la relatividad lingüística, los hablantes bilingües pueden tener ventajas cognitivas."
         },
         {
           "situation": "Clase de filosofía de la lengua",
@@ -9804,8 +9804,8 @@
         },
         {
           "situation": "Conferencia de lingüística cognitiva",
-          "ko": "필모어의 프레임 의미론은 어휘 의미가 해당 단어를 이해하는 데 필요한 배경 지식 프레임과 연동됨을 보인다.",
-          "es": "La semántica del marco de Fillmore muestra que el significado léxico está vinculado al marco de conocimiento previo necesario para comprender la palabra en cuestión."
+          "ko": "프레이밍 이론에 따르면 어휘 의미는 배경 지식 프레임과 연동된다.",
+          "es": "Según la teoría del enmarcado, el significado léxico está vinculado a marcos de conocimiento previo."
         },
         {
           "situation": "Clase de análisis de estrategias publicitarias",
@@ -10352,13 +10352,13 @@
         },
         {
           "situation": "Hablando de enunciados",
-          "ko": "발화는 단순한 정보 전달 이상의 행위를 수행한다.",
-          "es": "Un enunciado realiza más que una simple transmisión de información."
+          "ko": "언어행위론에 따르면 발화는 단순한 정보 전달 이상의 행위를 수행한다.",
+          "es": "Según la teoría de actos de habla, un enunciado realiza más que una simple transmisión de información."
         },
         {
           "situation": "Hablando de expresiones performativas",
-          "ko": "약속, 명령, 선언 같은 수행적 발화는 현실을 변화시킨다.",
-          "es": "Las expresiones performativas como promesas, órdenes y declaraciones cambian la realidad."
+          "ko": "언어행위론에서 약속, 명령, 선언 같은 수행적 발화는 현실을 변화시킨다.",
+          "es": "En la teoría de actos de habla, los enunciados performativos como promesas, órdenes y declaraciones cambian la realidad."
         },
         {
           "situation": "Discussing Searle",
@@ -10600,8 +10600,8 @@
         },
         {
           "situation": "Crítica académica — distorsión histórica, ej.2",
-          "ko": "일본의 역사 교과서 왜곡 문제는 한일 관계의 만성적인 갈등 요인이 되어 왔다.",
-          "es": "La cuestión de la distorsión en los libros de texto de historia japoneses ha sido una fuente crónica de conflicto en las relaciones entre Corea y Japón."
+          "ko": "일본의 역사 교과서에 대한 역사왜곡 문제는 한일 관계의 갈등 요인이다.",
+          "es": "El problema de la distorsión histórica en los libros de texto de historia japoneses es un factor de conflicto en las relaciones Corea-Japón."
         },
         {
           "situation": "Artículo de noticias",
@@ -11912,8 +11912,8 @@
         },
         {
           "situation": "Conferencia de derecho — derechos de los embriones, ej.4",
-          "ko": "대부분의 국가는 법적으로 배아를 완전한 인격체로 인정하지 않으나, 특별한 도덕적 지위를 부여한다.",
-          "es": "La mayoría de los países no reconocen legalmente a los embriones como personas plenas, pero les otorgan un estatus moral especial."
+          "ko": "배아권리에 대해 대부분의 국가는 배아를 완전한 인격체로 인정하지 않으나 특별한 도덕적 지위를 부여한다.",
+          "es": "En cuanto a los derechos del embrión, la mayoría de los países no reconocen a los embriones como personas completas, pero les otorgan un estatus moral especial."
         },
         {
           "situation": "Debate religioso — derechos de los embriones, ej.5",
@@ -11927,8 +11927,8 @@
         },
         {
           "situation": "Seminario de Filosofía — derechos de los embriones, ej.7",
-          "ko": "배아에 도덕적 권리를 부여하는 근거는 잠재성(potentiality), 즉 완전한 인간으로 발달할 수 있다는 점에 있다.",
-          "es": "La base para conceder derechos morales a los embriones reside en la potencialidad, es decir, la capacidad de desarrollarse hasta convertirse en un ser humano plenamente realizado."
+          "ko": "배아권리를 부여하는 근거는 완전한 인간으로 발달할 수 있는 잠재성에 있다.",
+          "es": "La base para otorgar derechos al embrión radica en la potencialidad de desarrollarse en un ser humano completo."
         },
         {
           "situation": "Discusión legislativa",
@@ -11969,8 +11969,8 @@
         },
         {
           "situation": "Investigación médica",
-          "ko": "치료 목적의 체세포 유전자 편집은 생식세포 편집에 비해 윤리적으로 덜 논쟁적이다.",
-          "es": "La edición de genes de células somáticas con fines terapéuticos es éticamente menos controvertida que la edición de células germinales."
+          "ko": "유전자편집윤리의 관점에서 체세포 편집은 생식세포 편집보다 덜 논쟁적이다.",
+          "es": "Desde la perspectiva de la ética de la edición genética, la edición de células somáticas es menos controvertida que la de células germinales."
         },
         {
           "situation": "Debate filosófico — ética de la edición de genes, ej.4",
@@ -12909,8 +12909,8 @@
         },
         {
           "situation": "Presentación de la investigación en salud pública",
-          "ko": "교란변수를 통제하면서 주요 위험 요인의 독립적 효과를 파악하기 위해 다변량 로지스틱 회귀분석을 실시하였다.",
-          "es": "Se realizó un análisis de regresión logística multivariante para identificar el efecto independiente de los factores de riesgo clave mientras se controlan las variables de confusión."
+          "ko": "다변량분석 기법인 로지스틱 회귀분석을 통해 주요 위험 요인의 독립적 효과를 파악하였다.",
+          "es": "Se identificaron los efectos independientes de los principales factores de riesgo mediante regresión logística, una técnica de análisis multivariante."
         },
         {
           "situation": "Conferencia sobre metodología de la investigación educativa",
@@ -13413,8 +13413,8 @@
         },
         {
           "situation": "Taller de investigación en ciencias sociales — significación estadística, ej.4",
-          "ko": "p값이 0.05 미만이라는 것은 귀무가설이 참일 때 관찰된 결과가 나올 확률이 5% 미만임을 의미한다.",
-          "es": "Un valor p inferior a 0,05 significa que la probabilidad de observar el resultado cuando la hipótesis nula es verdadera es inferior al 5%."
+          "ko": "통계적 유의성을 판단할 때 p값이 0.05 미만이면 유의미한 결과로 본다.",
+          "es": "Al evaluar la significancia estadística, un valor p inferior a 0.05 se considera un resultado significativo."
         },
         {
           "situation": "Presentación de investigación en psicología",
@@ -13501,8 +13501,8 @@
         },
         {
           "situation": "Conferencia sobre métodos de investigación organizacional — control de sesgos, ej.9",
-          "ko": "동일방법편향 통제를 위해 독립변수와 종속변수를 서로 다른 자료원에서 수집하는 방법을 채택하였다.",
-          "es": "Para controlar el sesgo del método común, se adoptó un método en el que se recopilaron variables independientes y dependientes de diferentes fuentes de datos."
+          "ko": "편향통제를 위해 독립변수와 종속변수를 서로 다른 자료원에서 수집하는 방법을 채택하였다.",
+          "es": "Para el control de sesgos, se adoptó un método de recopilación de variables independientes y dependientes de diferentes fuentes de datos."
         },
         {
           "situation": "seminario de investigación en economía",
@@ -13927,8 +13927,8 @@
         },
         {
           "situation": "Clase de metodología de la investigación en psicología — investigación fenomenológica, ej.6",
-          "ko": "지오르지의 현상학적 심리학은 실험적 방법론을 대신하여 경험의 심리학적 의미를 기술하는 체계적 방법을 제안하였다.",
-          "es": "La psicología fenomenológica de Giorgi propuso un método sistemático para describir el significado psicológico de la experiencia en lugar de la metodología experimental."
+          "ko": "현상학적 연구 방법론을 활용하여 경험의 심리학적 의미를 기술하는 체계적 방법이 제안되었다.",
+          "es": "Se propuso un método sistemático para describir el significado psicológico de la experiencia utilizando la metodología de investigación fenomenológica."
         },
         {
           "situation": "Seminario de investigación cualitativa en sociología",
@@ -14413,8 +14413,8 @@
         },
         {
           "situation": "Investigación de Heidegger",
-          "ko": "하이데거의 불안 개념은 일상적 안주에서 벗어나 자신의 본래적 존재 가능성을 마주하게 한다.",
-          "es": "El concepto de ansiedad de Heidegger aleja a uno de la comodidad cotidiana para confrontar las propias posibilidades auténticas de ser."
+          "ko": "실존주의적 불안은 일상적 안주에서 벗어나 자신의 존재 가능성을 마주하게 한다.",
+          "es": "La angustia existencialista aleja a uno de la comodidad cotidiana para confrontar las propias posibilidades de ser."
         },
         {
           "situation": "Foro de debate académico — ansiedad existencialista, ej.5",
@@ -15043,8 +15043,8 @@
         },
         {
           "situation": "presentación del artículo — postestructuralismo, ej.6",
-          "ko": "데리다의 해체론은 텍스트 내의 이항 대립이 어떻게 위계적으로 작동하는지를 분석한다.",
-          "es": "La deconstrucción de Derrida analiza cómo las oposiciones binarias dentro de los textos operan jerárquicamente."
+          "ko": "탈구조주의의 대표적 사상가인 데리다는 텍스트 내 이항 대립의 위계적 작동을 분석한다.",
+          "es": "Derrida, pensador representativo del posestructuralismo, analiza cómo las oposiciones binarias dentro de los textos operan jerárquicamente."
         },
         {
           "situation": "Conferencia de teoría crítica",
@@ -15904,8 +15904,8 @@
         },
         {
           "situation": "Seminario de teoría de Gadamer",
-          "ko": "가다머의 해석학은 텍스트 해석이 독자의 선이해와 텍스트 사이의 지평 융합을 통해 이루어진다고 주장한다.",
-          "es": "La hermenéutica de Gadamer sostiene que la interpretación textual se produce a través de una fusión de horizontes entre la precomprensión del lector y el texto."
+          "ko": "텍스트 해석학에 따르면 텍스트 해석은 독자의 선이해와 텍스트 사이의 지평 융합을 통해 이루어진다.",
+          "es": "Según la hermenéutica textual, la interpretación textual se produce a través de una fusión de horizontes entre la precomprensión del lector y el texto."
         },
         {
           "situation": "Artículo académico — hermenéutica textual, ej.3",
@@ -17541,8 +17541,8 @@
         },
         {
           "situation": "Conferencia de teoría lingüística — polifonía; heteroglosia, ej.4",
-          "ko": "바흐친의 이질어 개념은 언어 내부의 사회적 다층성이 언어 사용에서 끊임없이 협상됨을 보여 준다.",
-          "es": "El concepto de heteroglosia de Bakhtin muestra que la estratificación social dentro del lenguaje se negocia constantemente en el uso del lenguaje."
+          "ko": "바흐친의 다성성 이론은 언어 내부의 사회적 다층성이 끊임없이 협상됨을 보여준다.",
+          "es": "La teoría de la polifonía de Bajtín muestra que la estratificación social dentro del lenguaje se negocia constantemente."
         },
         {
           "situation": "Seminario de investigación en periodismo",
@@ -17571,8 +17571,8 @@
         },
         {
           "situation": "Documento de enseñanza de idiomas — polifonía; heteroglosia, ej.10",
-          "ko": "다성적 쓰기 교육은 학습자가 단일한 권위적 목소리를 모방하는 대신 복수의 관점을 통합하는 능력을 기르도록 돕는다.",
-          "es": "La instrucción de escritura polifónica ayuda a los alumnos a desarrollar la capacidad de integrar múltiples perspectivas en lugar de imitar una única voz autorizada."
+          "ko": "다성성에 기반한 쓰기 교육은 복수의 관점을 통합하는 능력을 기르도록 돕는다.",
+          "es": "La enseñanza de escritura basada en la polifonía ayuda a desarrollar la capacidad de integrar múltiples perspectivas."
         }
       ]
     },
@@ -18230,8 +18230,8 @@
         },
         {
           "situation": "Debate sobre filosofía — teoría de Li y Qi, ej.5",
-          "ko": "율곡 이이는 기발리승일도설을 통해 기의 중요성을 강조하였다.",
-          "es": "Yi I (Yulgok) enfatizó la importancia del Qi a través de la teoría de la activación del Qi y la conducción de Li."
+          "ko": "리기론에서 율곡 이이는 기발리승일도설을 통해 기의 중요성을 강조하였다.",
+          "es": "En la teoría Li-Qi, Yi I (Yulgok) enfatizó la importancia del Qi a través de su teoría."
         },
         {
           "situation": "Presentación académica — teoría de Li y Qi, ej.6",

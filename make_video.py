@@ -12,11 +12,17 @@ pip install moviepy pillow google-cloud-texttospeech numpy
 import json
 import os
 import sys
+import io
 import subprocess
 import tempfile
 import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
+
+# Windows cp949 인코딩 문제 방지
+if sys.stdout.encoding != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -67,6 +73,16 @@ CONFIG = {
         "fade_duration":     0.3,   # 페이드 인/아웃
     },
 }
+
+REELS_TIMING = {
+    "intro_duration":    1.5,   # 릴스: 짧은 인트로
+    "word_hold":         0.8,   # 릴스: 짧은 단어 홀드
+    "sentence_duration": 4.0,   # 릴스: 짧은 예문 표시
+    "outro_duration":    1.0,   # 릴스: 짧은 아웃트로
+    "fade_duration":     0.2,   # 릴스: 빠른 전환
+}
+
+_VIDEO_FORMAT = "youtube"
 
 W = CONFIG["video"]["width"]
 H = CONFIG["video"]["height"]
@@ -232,7 +248,7 @@ _POS_MAP = {
            "수사": "数词", "보조동사": "助动词"},
     "VN": {"명사": "Danh t\u1eeb", "동사": "Dong t\u1eeb", "형용사": "Tinh t\u1eeb",
            "부사": "Pho t\u1eeb"},
-    "SP": {"명사": "Sustantivo", "동사": "Verbo", "형용사": "Adjetivo",
+    "ES": {"명사": "Sustantivo", "동사": "Verbo", "형용사": "Adjetivo",
            "부사": "Adverbio"},
 }
 
@@ -281,7 +297,7 @@ def draw_word_card(img: Image.Image, word: dict, bg_path: str = None, progress: 
         "JP": (219, 68, 85),    # 빨강/핑크
         "CN": (200, 50, 50),    # 빨강
         "VN": (218, 165, 32),   # 골드
-        "SP": (230, 126, 34),   # 오렌지
+        "ES": (230, 126, 34),   # 오렌지
     }
     lang_code = word.get("language", "EN")
     if lang_code:
@@ -476,8 +492,9 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
 
     # CTA (아래)
     font_cta = get_font("english", 30)
-    draw.text((cx, card_y + card_h + 60),
-              "Like & Subscribe for daily TOPIK vocab",
+    cta_text = ("Follow for daily TOPIK vocab" if _VIDEO_FORMAT == "reels"
+                else "Like & Subscribe for daily TOPIK vocab")
+    draw.text((cx, card_y + card_h + 60), cta_text,
               font=font_cta, fill=(*C["text_muted"], int(160 * p)), anchor="mm")
 
 # ─── 배경 이미지 ─────────────────────────────────────────────
@@ -695,12 +712,18 @@ def render_frame(word: dict, sentence_idx: int, t: float, duration: float,
 
 
 # ─── 메인 영상 생성 ──────────────────────────────────────────
-def create_video(word: dict, output_path: str, tmpdir: str):
+def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = "youtube"):
     print(f"\n>> 영상 생성: {word['word']} ({word['meaning']})")
     write_progress("1/4 TTS 음성 생성 중...", pct=5, word=word)
 
-    T = CONFIG["timing"]
+    global _VIDEO_FORMAT
+    is_reels = video_format == "reels"
+    _VIDEO_FORMAT = video_format
+    T = REELS_TIMING if is_reels else CONFIG["timing"]
     sentences = word["sentences"]
+    if is_reels:
+        sentences = sentences[:4]
+        word = {**word, "sentences": sentences}
 
     # 1. TTS 음성 파일 생성
     print("  1/4 TTS 음성 생성 중...")
@@ -738,28 +761,48 @@ def create_video(word: dict, output_path: str, tmpdir: str):
     audio_timeline = []  # (audio_path, absolute_start_time)       — 오디오 배치용
 
     t = 0.0
-    # 인트로 (단어 카드): (영어 → 한국어) × 2
+    # 인트로 (단어 카드)
     word_dur = get_audio_duration(word_audio)
     meaning_dur = get_audio_duration(meaning_audio)
-    cycle = meaning_dur + 0.5 + word_dur + 0.8   # 1회 사이클 길이
-    audio_timeline.append((meaning_audio, t))
-    audio_timeline.append((word_audio,   t + meaning_dur + 0.5))
-    audio_timeline.append((meaning_audio, t + cycle))
-    audio_timeline.append((word_audio,   t + cycle + meaning_dur + 0.5))
-    intro_dur = max(T["intro_duration"], cycle * 2 + T["word_hold"])
+    if is_reels:
+        # 릴스: (영어 → 한국어) × 1, 짧은 간격
+        gap1, gap2 = 0.4, 0.4
+        cycle = meaning_dur + gap1 + word_dur + gap2
+        audio_timeline.append((meaning_audio, t))
+        audio_timeline.append((word_audio,   t + meaning_dur + gap1))
+        intro_dur = max(T["intro_duration"], cycle + T["word_hold"])
+    else:
+        # YouTube: (영어 → 한국어) × 2
+        gap1, gap2 = 0.5, 0.8
+        cycle = meaning_dur + gap1 + word_dur + gap2
+        audio_timeline.append((meaning_audio, t))
+        audio_timeline.append((word_audio,   t + meaning_dur + gap1))
+        audio_timeline.append((meaning_audio, t + cycle))
+        audio_timeline.append((word_audio,   t + cycle + meaning_dur + gap1))
+        intro_dur = max(T["intro_duration"], cycle * 2 + T["word_hold"])
     segments.append(("intro", -1, t, intro_dur))
     t += intro_dur
 
-    # 예문들: (영어 → 한국어) × 2
+    # 예문들
     for i, (ko_path, en_path) in enumerate(sentence_audios):
         ko_dur = get_audio_duration(ko_path)
         en_dur = get_audio_duration(en_path)
-        cycle = en_dur + 0.8 + ko_dur + 0.8      # 1회 사이클 길이
-        audio_timeline.append((en_path, t))
-        audio_timeline.append((ko_path, t + en_dur + 0.8))
-        audio_timeline.append((en_path, t + cycle))
-        audio_timeline.append((ko_path, t + cycle + en_dur + 0.8))
-        sent_dur = max(T["sentence_duration"], cycle * 2 + 1.0)
+        if is_reels:
+            # 릴스: (영어 → 한국어) × 1, 짧은 간격
+            gap_s = 0.4
+            cycle = en_dur + gap_s + ko_dur + gap_s
+            audio_timeline.append((en_path, t))
+            audio_timeline.append((ko_path, t + en_dur + gap_s))
+            sent_dur = max(T["sentence_duration"], cycle + 0.5)
+        else:
+            # YouTube: (영어 → 한국어) × 2
+            gap_s = 0.8
+            cycle = en_dur + gap_s + ko_dur + gap_s
+            audio_timeline.append((en_path, t))
+            audio_timeline.append((ko_path, t + en_dur + gap_s))
+            audio_timeline.append((en_path, t + cycle))
+            audio_timeline.append((ko_path, t + cycle + en_dur + gap_s))
+            sent_dur = max(T["sentence_duration"], cycle * 2 + 1.0)
         segments.append(("sentence", i, t, sent_dur))
         t += sent_dur
 
@@ -895,7 +938,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TOPIK 단어 영상 생성")
     parser.add_argument("--db", default="data/LanguageTest/words_db.json", help="단어 DB")
     parser.add_argument("--id", type=int, required=True, help="단어 ID")
-    parser.add_argument("--output", default="output/", help="출력 폴더")
+    parser.add_argument("--output", default="output/", help="출력 루트 폴더")
+    parser.add_argument("--exam", default="TOPIK", help="시험 종류")
+    parser.add_argument("--lang", default="EN", help="대상 언어")
+    parser.add_argument("--format", default="youtube", choices=["youtube", "reels"],
+                        help="영상 포맷 (youtube: 전체, reels: 짧은 릴스)")
     args = parser.parse_args()
     
     with open(args.db, encoding="utf-8") as f:
@@ -919,11 +966,21 @@ if __name__ == "__main__":
     if not word:
         print(f"단어 ID {args.id}를 찾을 수 없습니다")
         sys.exit(1)
-    
-    os.makedirs(args.output, exist_ok=True)
-    output_path = os.path.join(args.output, f"topik_{args.id:04d}_{word['word']}.mp4")
-    
+
+    word["language"] = args.lang
+    word["exam"] = args.exam
+
+    # 폴더 트리: output/{시험}/{언어}/lv{등급}/video/ & thumbnail/
+    lv = word.get("level", 1)
+    sub_dir = "reels" if args.format == "reels" else "video"
+    video_dir = os.path.join(args.output, args.exam, args.lang, f"lv{lv}", sub_dir)
+    os.makedirs(video_dir, exist_ok=True)
+
+    fmt_suffix = "_reels" if args.format == "reels" else ""
+    filename = f"{args.exam.lower()}_{args.id:04d}_{word['word']}{fmt_suffix}"
+    output_path = os.path.join(video_dir, f"{filename}.mp4")
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        create_video(word, output_path, tmpdir)
+        create_video(word, output_path, tmpdir, video_format=args.format)
     
     print(f"\n완료! {output_path}")

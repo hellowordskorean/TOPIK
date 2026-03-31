@@ -7684,8 +7684,8 @@
         },
         {
           "situation": "Hablando de acuerdos internacionales",
-          "ko": "유엔의 지속가능발전목표(SDGs)는 전 세계가 함께 달성해야 할 목표다.",
-          "es": "Los Objetivos de Desarrollo Sostenible (ODS) de la ONU son objetivos que todo el mundo debe alcanzar juntos."
+          "ko": "지속가능성을 위해 전 세계가 함께 노력해야 한다.",
+          "es": "Todo el mundo debe trabajar juntos por la sostenibilidad."
         },
         {
           "situation": "Hablando de patrones de consumo",
@@ -8056,8 +8056,8 @@
         },
         {
           "situation": "Hablando de peticiones",
-          "ko": "시민들이 온라인 청원을 통해 정책에 의견을 반영시킨다.",
-          "es": "Los ciudadanos reflejan sus opiniones sobre políticas a través de peticiones en línea."
+          "ko": "시민참여를 통해 정책에 의견을 반영시킬 수 있다.",
+          "es": "A través de la participación ciudadana se pueden reflejar opiniones en las políticas."
         },
         {
           "situation": "Hablando de audiencias públicas",
@@ -9234,8 +9234,8 @@
         },
         {
           "situation": "Industria pesquera",
-          "ko": "남획으로 인해 어업 자원이 빠르게 고갈되고 있다.",
-          "es": "Los recursos pesqueros se están agotando rápidamente debido a la sobrepesca."
+          "ko": "남획으로 인해 자원고갈이 빠르게 진행되고 있다.",
+          "es": "El agotamiento de recursos avanza rápidamente debido a la sobrepesca."
         },
         {
           "situation": "Industria minera",
@@ -9254,8 +9254,8 @@
         },
         {
           "situation": "Disputa internacional",
-          "ko": "희소 자원의 고갈로 인해 국가 간 자원 분쟁이 증가할 수 있다.",
-          "es": "Las disputas por recursos entre países pueden aumentar debido al agotamiento de los recursos escasos."
+          "ko": "자원고갈로 인해 국가 간 분쟁이 증가할 수 있다.",
+          "es": "El agotamiento de recursos puede aumentar los conflictos entre países."
         },
         {
           "situation": "Innovación tecnológica",
@@ -9621,8 +9621,8 @@
         },
         {
           "situation": "Conversación con un amigo",
-          "ko": "부모님의 소득에 따라 아이들의 기회가 달라지는 것은 문제다.",
-          "es": "Es preocupante que las oportunidades de los niños varíen tanto según los ingresos de sus padres."
+          "ko": "소득격차가 아이들의 교육 기회에 큰 영향을 미친다.",
+          "es": "La brecha de ingresos afecta significativamente las oportunidades educativas de los niños."
         },
         {
           "situation": "Debate político — brecha de ingresos; disparidad, ej.9",
@@ -9730,8 +9730,8 @@
         },
         {
           "situation": "Hablando de consentimiento",
-          "ko": "개인정보 수집 전에 반드시 당사자의 동의를 받아야 한다.",
-          "es": "Se debe obtener el consentimiento del individuo antes de recopilar información personal."
+          "ko": "데이터보호를 위해 개인정보 수집 전에 반드시 동의를 받아야 한다.",
+          "es": "Para la protección de datos, se debe obtener consentimiento antes de recopilar información personal."
         },
         {
           "situation": "Hablando de IA — protección de datos, protecció, ej.6",
@@ -16807,8 +16807,8 @@
         },
         {
           "situation": "Libro de texto — colonia; territorio colonial, ej.9",
-          "ko": "일제강점기는 한국인들에게 큰 시련의 시대였다.",
-          "es": "El período colonial japonés fue una época de grandes pruebas para los coreanos."
+          "ko": "식민지 시대는 한국인들에게 큰 시련의 시대였다.",
+          "es": "La era colonial fue un tiempo de gran prueba para los coreanos."
         },
         {
           "situation": "Salón conmemorativo — colonia; territorio colonial, ej.10",
@@ -17759,8 +17759,8 @@
       "examples": [
         {
           "situation": "Chequeo de salud — examen médico, examen, chequeo, ej.1",
-          "ko": "매년 건강검진을 받아 건강 상태를 확인하는 것이 좋다.",
-          "es": "Es bueno hacerse un chequeo de salud todos los años para comprobar su estado de salud."
+          "ko": "매년 건강 검사를 받아 건강 상태를 확인하는 것이 좋다.",
+          "es": "Es bueno hacerse un examen de salud cada año para verificar su estado de salud."
         },
         {
           "situation": "Análisis de sangre",
@@ -17799,8 +17799,8 @@
         },
         {
           "situation": "Chequeo de salud en el trabajo",
-          "ko": "회사에서 매년 직원들을 대상으로 건강검진을 실시한다.",
-          "es": "La empresa realiza anualmente controles de salud a los empleados."
+          "ko": "회사에서 매년 직원들을 대상으로 건강 검사를 실시한다.",
+          "es": "La empresa realiza exámenes de salud para los empleados cada año."
         },
         {
           "situation": "Prueba de orina",
@@ -17866,8 +17866,8 @@
         },
         {
           "situation": "Ensayo clínico",
-          "ko": "신약의 안전성과 효능을 확인하기 위해 임상 시험을 거쳐야 한다.",
-          "es": "Se deben realizar ensayos clínicos para confirmar la seguridad y eficacia de nuevos medicamentos."
+          "ko": "새로운 약물의 안전성과 효능을 확인하기 위해 임상 시험을 거쳐야 한다.",
+          "es": "Se deben realizar ensayos clínicos para confirmar la seguridad y eficacia de nuevos fármacos."
         }
       ]
     },
@@ -18022,8 +18022,8 @@
         },
         {
           "situation": "Medición de azúcar en sangre",
-          "ko": "혈당 측정기를 이용해 하루에 여러 번 혈당 수치를 확인한다.",
-          "es": "Utilizo un medidor de glucosa en sangre para controlar mis niveles de azúcar en sangre varias veces al día."
+          "ko": "당뇨 환자는 하루에 여러 번 혈당 수치를 확인해야 한다.",
+          "es": "Los pacientes con diabetes deben verificar sus niveles de azúcar en sangre varias veces al día."
         },
         {
           "situation": "Complicaciones de la diabetes",
@@ -18089,8 +18089,8 @@
         },
         {
           "situation": "Tratamiento quirúrgico",
-          "ko": "관상동맥이 막힌 경우 스텐트 시술이나 우회 수술을 받을 수 있다.",
-          "es": "Si una arteria coronaria está bloqueada, se puede realizar la implantación de un stent o una cirugía de bypass."
+          "ko": "심장병 환자는 관상동맥이 막힌 경우 수술을 받을 수 있다.",
+          "es": "Los pacientes con enfermedades cardíacas pueden someterse a cirugía si una arteria coronaria está bloqueada."
         },
         {
           "situation": "Tratamiento farmacológico",
@@ -18528,8 +18528,8 @@
         },
         {
           "situation": "Conversación familiar — baja tasa de natalidad; tasa d, ej.6",
-          "ko": "높은 양육비 때문에 아이를 낳지 않는 가정이 늘고 있다.",
-          "es": "El aumento de los costes del cuidado de los niños está llevando a cada vez más familias a renunciar a tener hijos."
+          "ko": "저출산 문제로 아이를 낳지 않는 가정이 늘고 있다.",
+          "es": "Debido al problema de la baja natalidad, cada vez más familias optan por no tener hijos."
         },
         {
           "situation": "Aula — baja tasa de natalidad; tasa d, ej.7",
@@ -18585,8 +18585,8 @@
         },
         {
           "situation": "Informe de noticias — envejecimiento de la población, ej.5",
-          "ko": "2025년에는 전체 인구의 20%가 65세 이상이 될 것으로 전망된다.",
-          "es": "Se proyecta que el 20% de la población total tendrá 65 años o más para 2025."
+          "ko": "고령화로 인해 전체 인구의 20%가 65세 이상이 될 것으로 전망된다.",
+          "es": "Debido al envejecimiento, se proyecta que el 20% de la población total tendrá 65 años o más."
         },
         {
           "situation": "Predicción futura",

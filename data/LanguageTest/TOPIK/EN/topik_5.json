@@ -487,8 +487,8 @@
         },
         {
           "situation": "Consular Protection Rights",
-          "ko": "해외 거주 국민에게는 영사 보호권이 보장된다.",
-          "en": "Consular protection rights are guaranteed for nationals living abroad."
+          "ko": "해외 거주 국민은 영사관을 통해 보호를 받을 수 있다.",
+          "en": "Nationals living abroad can receive protection through the consulate."
         },
         {
           "situation": "Honorary Consulate",
@@ -7065,8 +7065,8 @@
         },
         {
           "situation": "Summit Joint Statement",
-          "ko": "회담 후 양 정상은 공동성명을 발표했다.",
-          "en": "After the talks, the two leaders issued a joint statement."
+          "ko": "정상회담 후 양 정상은 공동성명을 발표했다.",
+          "en": "After the summit, the two leaders issued a joint statement."
         },
         {
           "situation": "Summit Outlook",
@@ -7227,8 +7227,8 @@
         },
         {
           "situation": "Preparing for Multilateral Meetings",
-          "ko": "회의 개최국은 의제 설정과 운영에 중요한 역할을 한다.",
-          "en": "The host country plays an important role in agenda-setting and management."
+          "ko": "다자회의 개최국은 의제 설정과 운영에 중요한 역할을 한다.",
+          "en": "The host country of a multilateral meeting plays an important role in agenda-setting and management."
         },
         {
           "situation": "Multilateral Meeting Outcomes",
@@ -7443,8 +7443,8 @@
         },
         {
           "situation": "Conditions for Ending Isolation",
-          "ko": "국제 기준에 부합하는 정책 변화가 고립 탈피의 조건이다.",
-          "en": "Policy changes that meet international standards are conditions for breaking out of isolation."
+          "ko": "외교적 고립을 탈피하려면 국제 기준에 부합하는 정책 변화가 필요하다.",
+          "en": "Policy changes that meet international standards are needed to break out of diplomatic isolation."
         }
       ]
     },
@@ -9212,18 +9212,18 @@
         },
         {
           "situation": "Talking About the Legislature",
-          "ko": "입법부인 국회가 법률을 제정하는 역할을 한다.",
-          "en": "The legislature, the National Assembly, plays the role of enacting laws."
+          "ko": "삼권분립에 따라 입법부인 국회가 법률을 제정하는 역할을 한다.",
+          "en": "Under the separation of powers, the legislature, the National Assembly, enacts laws."
         },
         {
           "situation": "Talking About the Executive Branch",
-          "ko": "행정부인 정부가 법률을 집행하는 역할을 한다.",
-          "en": "The executive, the government, plays the role of enforcing laws."
+          "ko": "삼권분립에 따라 행정부인 정부가 법률을 집행하는 역할을 한다.",
+          "en": "Under the separation of powers, the executive branch enforces laws."
         },
         {
           "situation": "Talking About the Judiciary — separation of powers, ex.6",
-          "ko": "사법부인 법원이 법률을 해석하고 판결하는 역할을 한다.",
-          "en": "The judiciary, the courts, plays the role of interpreting laws and making judgments."
+          "ko": "삼권분립에 따라 사법부인 법원이 법률을 해석하고 판결하는 역할을 한다.",
+          "en": "Under the separation of powers, the judiciary interprets laws and makes judgments."
         },
         {
           "situation": "Talking About History",
@@ -9394,8 +9394,8 @@
         },
         {
           "situation": "Liability for Damages",
-          "ko": "고의 또는 과실로 타인에게 손해를 입힌 자는 배상 책임이 있다.",
-          "en": "A person who intentionally or negligently causes harm to another is liable for compensation."
+          "ko": "고의 또는 과실로 타인에게 손해를 입힌 자는 손해배상 책임이 있다.",
+          "en": "A person who intentionally or negligently causes harm to another is liable for damages."
         },
         {
           "situation": "Alimony Payment",
@@ -9650,8 +9650,8 @@
         },
         {
           "situation": "Connecting to Education",
-          "ko": "교육 수준이 높을수록 건강 관리 능력이 좋다.",
-          "en": "The higher the education level, the better the health management ability."
+          "ko": "건강불평등은 교육 수준에 따라 건강 관리 능력이 달라지는 현상에서도 나타난다.",
+          "en": "Health inequality also appears in how health management ability varies by education level."
         },
         {
           "situation": "Talking About Policy",
@@ -9743,8 +9743,8 @@
         },
         {
           "situation": "Stating Grounds for Administrative Action",
-          "ko": "행정 기관은 처분의 이유를 당사자에게 명확히 제시해야 한다.",
-          "en": "The administrative agency must clearly present the reasons for the disposition to the party."
+          "ko": "행정처분의 이유를 당사자에게 명확히 제시해야 한다.",
+          "en": "The reasons for administrative disposition must be clearly presented to the party."
         }
       ]
     },
@@ -13973,8 +13973,8 @@
         },
         {
           "situation": "European Case Study",
-          "ko": "유럽 그린딜은 2050년까지 EU의 탄소중립을 목표로 한다.",
-          "en": "The European Green Deal aims for carbon neutrality in the EU by 2050."
+          "ko": "유럽의 그린뉴딜은 2050년까지 탄소중립을 목표로 한다.",
+          "en": "Europe's Green New Deal aims for carbon neutrality by 2050."
         },
         {
           "situation": "Post-covid",
@@ -14588,8 +14588,8 @@
         },
         {
           "situation": "Flood Damage Prevention",
-          "ko": "도시 식물과 공원은 빗물을 흡수해 도시 침수 피해를 줄인다.",
-          "en": "Urban plants and parks absorb rainwater, reducing urban flood damage."
+          "ko": "도시녹화를 통해 빗물을 흡수하고 침수 피해를 줄일 수 있다.",
+          "en": "Urban greening can absorb rainwater and reduce flood damage."
         },
         {
           "situation": "Air Purification",
@@ -14697,8 +14697,8 @@
         },
         {
           "situation": "Vulnerable Population",
-          "ko": "저소득층과 유색인종 지역 사회가 환경 오염의 불균형한 피해를 입는다는 연구가 있다.",
-          "en": "Studies show that low-income and minority communities suffer disproportionate harm from environmental pollution."
+          "ko": "환경정의의 관점에서, 저소득층이 환경 오염의 불균형한 피해를 입는 문제가 있다.",
+          "en": "From the perspective of environmental justice, there is the issue of low-income communities suffering disproportionate harm from pollution."
         },
         {
           "situation": "Climate Justice",
@@ -15794,8 +15794,8 @@
         },
         {
           "situation": "Corporate Research",
-          "ko": "성공적인 세대 교체와 지식 전수를 위해 기업들이 역멘토링 프로그램을 도입하고 있다.",
-          "en": "Companies are introducing reverse mentoring programs for successful generational succession and knowledge transfer."
+          "ko": "세대갈등을 해소하기 위해 기업들이 역멘토링 프로그램을 도입하고 있다.",
+          "en": "Companies are introducing reverse mentoring programs to resolve generational conflict."
         },
         {
           "situation": "Cultural Studies — generational conflict, ex.10",
@@ -16790,8 +16790,8 @@
         },
         {
           "situation": "Remand After Reversal",
-          "ko": "대법원은 원심 판결을 파기하고 항소법원으로 환송했다.",
-          "en": "The Supreme Court overturned the original ruling and remanded the case to the appellate court."
+          "ko": "대법원은 상고 심리 후 원심 판결을 파기하고 환송했다.",
+          "en": "The Supreme Court overturned the original ruling and remanded the case after reviewing the appeal."
         },
         {
           "situation": "Preparing an Appeal — final appeal, ex.9",
@@ -16890,8 +16890,8 @@
         },
         {
           "situation": "Judicial Appointment",
-          "ko": "대법관은 대통령이 임명하며 국회의 동의를 받아야 한다.",
-          "en": "Supreme Court justices are appointed by the president and must receive consent from the National Assembly."
+          "ko": "대법원 판사는 대통령이 임명하며 국회의 동의를 받아야 한다.",
+          "en": "Supreme Court judges are appointed by the president and must receive consent from the National Assembly."
         },
         {
           "situation": "Judge Qualifications",
@@ -17358,8 +17358,8 @@
         },
         {
           "situation": "Court Appearance",
-          "ko": "재판에 출석하지 않으면 결석 재판이 진행될 수 있다.",
-          "en": "If one fails to appear at trial, a trial in absentia may proceed."
+          "ko": "법원에 출석하지 않으면 결석 재판이 진행될 수 있다.",
+          "en": "If one fails to appear at court, a trial in absentia may proceed."
         },
         {
           "situation": "Open Court Trial",

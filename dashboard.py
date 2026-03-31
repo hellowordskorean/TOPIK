@@ -28,9 +28,9 @@ DEFAULT_SCHEDULE = {"slots": [
     {"exam":"TOPIK","lang":"JP","level":1},
     {"exam":"TOPIK","lang":"JP","level":2},
     {"exam":"TOPIK","lang":"JP","level":3},
-    {"exam":"TOPIK","lang":"SP","level":1},
-    {"exam":"TOPIK","lang":"SP","level":2},
-    {"exam":"TOPIK","lang":"SP","level":3},
+    {"exam":"TOPIK","lang":"ES","level":1},
+    {"exam":"TOPIK","lang":"ES","level":2},
+    {"exam":"TOPIK","lang":"ES","level":3},
 ]}
 
 # ─── 전체 콘텐츠 구조 정의 ───────────────────────────────────
@@ -39,7 +39,7 @@ STRUCTURE = {
         "icon": "📚", "color": "#6366f1",
         "exams": {
             "TOPIK":  {"flag":"🇰🇷","color":"#818cf8","levels":[1,2,3,4,5,6],
-                       "langs":["EN","CN","JP","VN","SP"]},
+                       "langs":["EN","CN","JP","VN","ES"]},
             "TOEIC":  {"flag":"📝","color":"#60a5fa","levels":["LC","RC"],
                        "langs":["KO","CN","JP","VN"]},
             "JLPT":   {"flag":"🌸","color":"#f472b6","levels":["N5","N4","N3","N2","N1"],
@@ -52,14 +52,14 @@ STRUCTURE = {
     },
     "여행용": {
         "icon": "✈️", "color": "#10b981",
-        "langs": ["EN","CN","JP","VN","SP","KO","FR","DE"],
+        "langs": ["EN","CN","JP","VN","ES","KO","FR","DE"],
     }
 }
 
 LANG_META = {
     "EN":{"flag":"🇺🇸","name":"영어"},   "CN":{"flag":"🇨🇳","name":"중국어"},
     "JP":{"flag":"🇯🇵","name":"일본어"},  "VN":{"flag":"🇻🇳","name":"베트남어"},
-    "SP":{"flag":"🇪🇸","name":"스페인어"},"KO":{"flag":"🇰🇷","name":"한국어"},
+    "ES":{"flag":"🇪🇸","name":"스페인어"},"KO":{"flag":"🇰🇷","name":"한국어"},
     "FR":{"flag":"🇫🇷","name":"프랑스어"},"DE":{"flag":"🇩🇪","name":"독일어"},
 }
 
@@ -195,14 +195,19 @@ def get_node_stats(category, exam=None, lang=None):
     upl = [u for u in uploaded if match({"exam":u.get("exam","TOPIK"),"language":u.get("language","EN")})]
 
     db = get_db(category, exam or "TOPIK", lang or "EN")
-    by_level = defaultdict(lambda:{"total":0,"generated":0,"uploaded":0})
+    by_level = defaultdict(lambda:{"total":0,"generated":0,"uploaded":0,"min_id":None,"max_id":None})
     gen_ids = {v["word_id"] for v in gen}
     upl_ids = {u["word_id"] for u in upl}
     for w in db:
         lv = str(w.get("level","?"))
         by_level[lv]["total"] += 1
-        if w["id"] in gen_ids: by_level[lv]["generated"] += 1
-        if w["id"] in upl_ids: by_level[lv]["uploaded"] += 1
+        wid = w["id"]
+        if by_level[lv]["min_id"] is None or wid < by_level[lv]["min_id"]:
+            by_level[lv]["min_id"] = wid
+        if by_level[lv]["max_id"] is None or wid > by_level[lv]["max_id"]:
+            by_level[lv]["max_id"] = wid
+        if wid in gen_ids: by_level[lv]["generated"] += 1
+        if wid in upl_ids: by_level[lv]["uploaded"] += 1
 
     return {
         "total":     len(db),
@@ -281,8 +286,11 @@ def get_schedule():
 def get_next_word_for_slot(exam, lang, level):
     db = get_db("시험용", exam, lang)
     videos = get_videos_log()
+    # 같은 exam/lang/level 에서 렌더된 word_id만 필터
     rendered = {v["word_id"] for v in videos
-                if v.get("exam", "TOPIK") == exam and v.get("language", "EN") == lang}
+                if v.get("exam", "TOPIK") == exam
+                and v.get("language", "EN") == lang
+                and v.get("level") == level}
     for w in sorted(db, key=lambda x: x["id"]):
         if w.get("level") == level and w["id"] not in rendered:
             return w
@@ -292,32 +300,40 @@ def get_batch_today():
     slots  = get_schedule().get("slots", [])
     videos = get_videos_log()
     uploaded, _ = get_uploads()
-    upl_ids = {u["word_id"] for u in uploaded}
-    vid_ids = {v["word_id"] for v in videos}
-    seen_words: set = set()          # 같은 단어 중복 방지
+    # (exam, lang, level, word_id) 로 중복 방지 — ID가 등급별로 독립적이므로
+    seen_keys: set = set()
     batch = []
     for i, slot in enumerate(slots):
         exam  = slot.get("exam", "TOPIK")
         lang  = slot.get("lang", "EN")
         level = slot.get("level", 1)
+        # 슬롯의 exam/lang에 맞는 ID만 필터
+        slot_vid_ids = {v["word_id"] for v in videos
+                        if v.get("exam", "TOPIK") == exam and v.get("language", "EN") == lang}
+        slot_upl_ids = {u["word_id"] for u in uploaded
+                        if u.get("exam", "TOPIK") == exam and u.get("language", "EN") == lang}
         word  = get_next_word_for_slot(exam, lang, level)
-        # 이미 다른 슬롯에서 선택된 단어면 다음으로
-        if word and word["id"] in seen_words:
+        # 같은 슬롯 조합에서 이미 선택된 단어면 다음으로
+        if word and (exam, lang, level, word["id"]) in seen_keys:
             db    = get_db("시험용", exam, lang)
-            vids  = {v["word_id"] for v in videos if v.get("exam") == exam and v.get("language") == lang}
             for w in sorted(db, key=lambda x: x["id"]):
-                if w.get("level") == level and w["id"] not in vids and w["id"] not in seen_words:
+                if w.get("level") == level and w["id"] not in slot_vid_ids and (exam, lang, level, w["id"]) not in seen_keys:
                     word = w; break
             else:
                 word = None
         if word:
-            seen_words.add(word["id"])
-        status = ("uploaded" if word and word["id"] in upl_ids
-                  else "generated" if word and word["id"] in vid_ids
+            seen_keys.add((exam, lang, level, word["id"]))
+        status = ("uploaded" if word and word["id"] in slot_upl_ids
+                  else "generated" if word and word["id"] in slot_vid_ids
                   else "pending"   if word
                   else "no_word")
+        # 일러스트 존재 여부
+        has_illust = False
+        if word:
+            lv = str(word.get("level", 1))
+            has_illust = os.path.exists(f"{ILLUST_DIR}/lv{lv}/{word['word']}/word.png")
         batch.append({"slot": i, "exam": exam, "lang": lang, "level": level,
-                      "word": word, "status": status})
+                      "word": word, "status": status, "has_illust": has_illust})
     return batch
 
 def get_batch_for_date(date_str):
@@ -337,10 +353,11 @@ def get_batch_for_date(date_str):
     return sorted(result, key=lambda x: x.get("generated_at",""))
 
 # ─── 렌더링 ──────────────────────────────────────────────────
-def write_queue_job(word_id, db_path=None):
+def write_queue_job(word_id, db_path=None, exam="TOPIK", lang="EN"):
     if not db_path:
         db_path = "/app/data/LanguageTest/words_db.json"
     save_json(QUEUE_FILE,{"word_id":word_id,"db_path":db_path,
+        "exam":exam,"lang":lang,
         "status":"pending","claimed_by":None,"claimed_at":None,
         "created_at":datetime.now().isoformat(),"completed_at":None})
 
@@ -348,10 +365,27 @@ _render_thread = None
 _illust_thread = None
 _batch_thread  = None
 
-def run_batch_render(word_ids, target="auto", db_path=None):
-    """target: "desktop", "nas", "auto"(글로벌 토글 따름)"""
+def _is_batch_cancelled():
+    bq = load_json(BATCH_QUEUE_F, {})
+    return bq.get("status") == "cancelled"
+
+def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
+                     exam="TOPIK", lang="EN", words_map=None):
+    """target: "desktop", "nas", "auto"(글로벌 토글 따름)
+    auto_upload: True면 렌더링 후 YouTube 자동 업로드"""
     global _batch_thread
     for i, word_id in enumerate(word_ids):
+        # 취소 확인
+        if _is_batch_cancelled():
+            bq = load_json(BATCH_QUEUE_F, {})
+            for item in bq.get("items", []):
+                if item.get("status") in ("pending", "rendering"):
+                    item["status"] = "skipped"
+            bq["status"] = "cancelled"
+            bq["completed_at"] = datetime.now().isoformat()
+            save_json(BATCH_QUEUE_F, bq)
+            return
+
         try:
             bq = load_json(BATCH_QUEUE_F, {})
             bq["current"] = i
@@ -360,7 +394,7 @@ def run_batch_render(word_ids, target="auto", db_path=None):
                     item["status"] = "rendering"
             save_json(BATCH_QUEUE_F, bq)
 
-            write_queue_job(word_id, db_path)
+            write_queue_job(word_id, db_path, exam=exam, lang=lang)
             cfg = get_render_config()
             use_desktop = (target == "desktop") if target != "auto" else cfg.get("desktop_enabled")
 
@@ -368,14 +402,36 @@ def run_batch_render(word_ids, target="auto", db_path=None):
                 deadline = time.time() + 30 * 60
                 finished = False
                 while time.time() < deadline:
+                    if _is_batch_cancelled(): break
                     time.sleep(15)
                     rq = load_json(QUEUE_FILE, {})
                     if rq.get("status") in ("done", "failed"):
                         finished = True; break
+                if _is_batch_cancelled(): continue
                 if not finished:
-                    run_render_nas(word_id, db_path)
+                    run_render_nas(word_id, db_path, exam=exam, lang=lang)
             else:
-                run_render_nas(word_id, db_path)
+                run_render_nas(word_id, db_path, exam=exam, lang=lang)
+
+            # 렌더링 후 자동 업로드
+            if auto_upload and words_map and word_id in words_map:
+                bq2 = load_json(BATCH_QUEUE_F, {})
+                for item in bq2.get("items", []):
+                    if item["word_id"] == word_id:
+                        item["status"] = "uploading"
+                save_json(BATCH_QUEUE_F, bq2)
+
+                word = words_map[word_id]
+                lv = word.get("level", 1)
+                video_path = f"/app/output/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}.mp4"
+                if not os.path.exists(video_path):
+                    video_path = f"/app/output/topik_{word_id:04d}_{word['word']}.mp4"
+                if os.path.exists(video_path):
+                    vid = run_upload(word, video_path, exam=exam, lang=lang)
+                    if vid:
+                        for item in bq2.get("items", []):
+                            if item["word_id"] == word_id:
+                                item["video_id"] = vid
         except Exception:
             pass
 
@@ -391,7 +447,7 @@ def run_batch_render(word_ids, target="auto", db_path=None):
     bq["completed_at"] = datetime.now().isoformat()
     save_json(BATCH_QUEUE_F, bq)
 
-def run_render_nas(word_id, db_path=None):
+def run_render_nas(word_id, db_path=None, exam="TOPIK", lang="EN"):
     if not db_path:
         db_path = "/app/data/LanguageTest/words_db.json"
     try:
@@ -400,12 +456,60 @@ def run_render_nas(word_id, db_path=None):
         save_json(QUEUE_FILE,q)
         r = subprocess.run([sys.executable,"/app/make_video.py",
             "--db",db_path,
-            "--id",str(word_id),"--output","/app/output/"])
+            "--id",str(word_id),"--output","/app/output/",
+            "--exam",exam,"--lang",lang])
         q = load_json(QUEUE_FILE,{})
         q.update({"status":"done" if r.returncode==0 else "failed","completed_at":datetime.now().isoformat()})
         save_json(QUEUE_FILE,q)
     except Exception as e:
         save_json(QUEUE_FILE,{**load_json(QUEUE_FILE,{}),"status":"failed","error":str(e)})
+
+def run_upload(word, video_path, exam="TOPIK", lang="EN"):
+    """렌더링 완료된 영상을 YouTube에 업로드"""
+    try:
+        sys.path.insert(0, os.path.dirname(__file__) or "/app")
+        from upload_youtube import get_youtube_client, generate_metadata, upload_video, load_upload_log, save_upload_log
+
+        log_path = f"{BASE}/logs/uploads.json"
+        upload_log = load_upload_log(log_path)
+        day_number = upload_log.get("last_day", 0) + 1
+
+        metadata = generate_metadata(word, day_number, lang=lang)
+        youtube = get_youtube_client(lang=lang)
+
+        # 썸네일 경로 추정
+        thumb_path = video_path.rsplit(".", 1)[0] + "_thumb.png"
+        if not os.path.exists(thumb_path):
+            # thumbnail/ 폴더에 있을 수 있음
+            vdir = os.path.dirname(video_path)
+            tdir = os.path.join(os.path.dirname(vdir), "thumbnail") if os.path.basename(vdir) == "video" else vdir
+            tname = os.path.splitext(os.path.basename(video_path))[0] + "_thumb.png"
+            alt = os.path.join(tdir, tname)
+            if os.path.exists(alt):
+                thumb_path = alt
+            else:
+                thumb_path = None
+
+        video_id = upload_video(youtube, video_path, metadata,
+                                thumbnail_path=thumb_path if thumb_path and os.path.exists(thumb_path) else None)
+
+        upload_log["last_day"] = day_number
+        upload_log["last_word_id"] = word["id"]
+        upload_log.setdefault("uploaded", []).append({
+            "day": day_number,
+            "word_id": word["id"],
+            "word": word["word"],
+            "meaning": word.get("meaning", ""),
+            "video_id": video_id,
+            "youtube_url": f"https://youtube.com/watch?v={video_id}",
+            "uploaded_at": datetime.now().isoformat(),
+        })
+        save_upload_log(upload_log, log_path)
+        return video_id
+    except Exception as e:
+        print(f"  업로드 실패: {e}")
+        import traceback; traceback.print_exc()
+        return None
 
 def run_illustration_generation(start, end, mode="both"):
     try:
@@ -463,8 +567,10 @@ def api_node():
     stats = get_node_stats(cat, exam, lang)
     videos = get_videos_log()
     uploaded, _ = get_uploads()
-    upl_map = {u["word_id"]:u for u in uploaded}
-    vid_map = {v["word_id"]:v for v in videos}
+    upl_map = {u["word_id"]:u for u in uploaded
+               if (not exam or u.get("exam","TOPIK") == exam) and (not lang or u.get("language","EN") == lang)}
+    vid_map = {v["word_id"]:v for v in videos
+               if (not exam or v.get("exam","TOPIK") == exam) and (not lang or v.get("language","EN") == lang)}
     db = get_db(cat, exam or "TOPIK", lang or "EN")
     video_ids = [u.get("video_id") for u in uploaded if u.get("video_id")]
     yt_stats = (get_youtube_stats(video_ids) or {}).get("video_stats",{})
@@ -497,16 +603,26 @@ def api_render():
     data = request.get_json(silent=True) or {}
     word_id = data.get("word_id") or get_next_word_id()
     target  = data.get("target", "auto")
+    exam    = data.get("exam", "TOPIK")
+    lang    = data.get("lang", "EN")
     if not word_id: return jsonify({"error":"렌더링할 단어가 없습니다"}),400
     q = load_json(QUEUE_FILE,{})
     if q.get("status") in ("pending","claimed"):
         return jsonify({"error":"이미 렌더링 중입니다","queue":q}),409
-    write_queue_job(word_id)
+    # 단어의 level 찾아서 정확한 DB 경로 결정
+    db = get_db("시험용", exam, lang)
+    word_level = None
+    for w in db:
+        if w["id"] == word_id:
+            word_level = w.get("level", 1)
+            break
+    db_path = render_db_path_for(exam, lang, word_level or 1)
+    write_queue_job(word_id, db_path, exam=exam, lang=lang)
     cfg = get_render_config()
     use_desktop = (target == "desktop") if target != "auto" else cfg.get("desktop_enabled")
     if use_desktop:
         return jsonify({"status":"queued","host":"desktop","word_id":word_id})
-    _render_thread = threading.Thread(target=run_render_nas,args=(word_id,),daemon=True)
+    _render_thread = threading.Thread(target=run_render_nas,args=(word_id,db_path,exam,lang),daemon=True)
     _render_thread.start()
     return jsonify({"status":"rendering","host":"nas","word_id":word_id})
 
@@ -536,8 +652,9 @@ def api_batch_date():
 def api_render_batch():
     global _batch_thread
     data = request.get_json(silent=True) or {}
-    word_ids = data.get("word_ids", [])
-    target   = data.get("target", "auto")   # "desktop", "nas", "auto"
+    word_ids    = data.get("word_ids", [])
+    target      = data.get("target", "auto")
+    auto_upload = data.get("auto_upload", False)
     if not word_ids:
         batch    = get_batch_today()
         word_ids = [b["word"]["id"] for b in batch if b.get("word") and b.get("status") == "pending"]
@@ -546,12 +663,80 @@ def api_render_batch():
     bq = load_json(BATCH_QUEUE_F, {})
     if bq.get("status") == "running":
         return jsonify({"error": "이미 배치 렌더링 중"}), 409
-    items = [{"word_id": wid, "status": "pending"} for wid in word_ids]
+    # words_map 구성 (업로드 시 단어 정보 필요)
+    db = get_db()
+    words_map = {w["id"]: w for w in db if w["id"] in word_ids}
+    items = [{"word_id": wid, "word": words_map[wid]["word"] if wid in words_map else "", "status": "pending"} for wid in word_ids]
     save_json(BATCH_QUEUE_F, {"status":"running","total":len(items),"current":0,
-        "items":items,"target":target,"started_at":datetime.now().isoformat()})
-    _batch_thread = threading.Thread(target=run_batch_render, args=(word_ids,target), daemon=True)
+        "items":items,"target":target,"auto_upload":auto_upload,
+        "started_at":datetime.now().isoformat()})
+    _batch_thread = threading.Thread(target=run_batch_render,
+        args=(word_ids, target), kwargs={"auto_upload": auto_upload, "words_map": words_map},
+        daemon=True)
     _batch_thread.start()
-    return jsonify({"status": "started", "count": len(word_ids), "target": target})
+    return jsonify({"status": "started", "count": len(word_ids), "target": target, "auto_upload": auto_upload})
+
+@app.route("/api/render/cancel", methods=["POST"])
+def api_render_cancel():
+    """배치/단일 렌더링 취소"""
+    bq = load_json(BATCH_QUEUE_F, {})
+    if bq.get("status") == "running":
+        bq["status"] = "cancelled"
+        save_json(BATCH_QUEUE_F, bq)
+        # 단일 렌더 큐도 취소
+        q = load_json(QUEUE_FILE, {})
+        if q.get("status") in ("pending", "claimed"):
+            q["status"] = "failed"
+            q["error"] = "cancelled"
+            save_json(QUEUE_FILE, q)
+        return jsonify({"status": "cancelled"})
+    # 단일 렌더만 진행 중
+    q = load_json(QUEUE_FILE, {})
+    if q.get("status") in ("pending", "claimed"):
+        q["status"] = "failed"
+        q["error"] = "cancelled"
+        save_json(QUEUE_FILE, q)
+        return jsonify({"status": "cancelled"})
+    return jsonify({"error": "취소할 렌더링이 없습니다"}), 400
+
+@app.route("/api/upload/manual", methods=["POST"])
+def api_upload_manual():
+    """생성된 영상을 수동으로 YouTube 업로드"""
+    data = request.get_json(silent=True) or {}
+    word_id = data.get("word_id")
+    exam    = data.get("exam", "TOPIK")
+    lang    = data.get("lang", "EN")
+    if not word_id:
+        return jsonify({"error": "word_id가 필요합니다"}), 400
+    # 단어 정보 가져오기
+    db = get_db("시험용", exam, lang)
+    word = None
+    for w in db:
+        if w["id"] == word_id:
+            word = w; break
+    if not word:
+        return jsonify({"error": f"단어 ID {word_id}를 찾을 수 없습니다"}), 404
+    # 영상 파일 찾기
+    lv = word.get("level", 1)
+    video_path = None
+    candidates = [
+        f"{OUTPUT_DIR}/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}.mp4",
+        f"{OUTPUT_DIR}/topik_{word_id:04d}_{word['word']}.mp4",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            video_path = p; break
+    if not video_path:
+        return jsonify({"error": f"영상 파일을 찾을 수 없습니다: {word['word']}"}), 404
+    # 업로드 실행
+    try:
+        vid = run_upload(word, video_path, exam=exam, lang=lang)
+        if vid:
+            return jsonify({"status": "uploaded", "video_id": vid,
+                            "url": f"https://youtube.com/watch?v={vid}"})
+        return jsonify({"error": "업로드 실패"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/render/preview")
 def api_render_preview():
@@ -563,6 +748,10 @@ def api_render_preview():
     start_id = request.args.get("start_id", type=int)
     end_id   = request.args.get("end_id", type=int)
     words = get_next_words_for_custom(exam, lang, level, min(count, 30), start_id, end_id)
+    # 일러스트 존재 여부 추가
+    for w in words:
+        lv = str(w.get("level", 1))
+        w["has_illust"] = os.path.exists(f"{ILLUST_DIR}/lv{lv}/{w['word']}/word.png")
     # 남은 수 계산
     db = get_db("시험용", exam, lang)
     videos = get_videos_log()
@@ -594,7 +783,8 @@ def api_render_custom():
         return jsonify({"error": "이미 렌더링 중"}), 409
     db_path = render_db_path_for(exam, lang, level)
     word_ids = [w["id"] for w in words]
-    items = [{"word_id": wid, "status": "pending"} for wid in word_ids]
+    wmap = {w["id"]: w["word"] for w in words}
+    items = [{"word_id": wid, "word": wmap.get(wid, ""), "status": "pending"} for wid in word_ids]
     save_json(BATCH_QUEUE_F, {"status":"running","total":len(items),"current":0,
         "items":items,"target":target,"exam":exam,"lang":lang,"level":level,
         "started_at":datetime.now().isoformat()})
@@ -621,191 +811,153 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hellowords</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<title>Hellowords Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
-:root{
-  --bg:#0d1117;--sidebar:#0d1117;--card:#161b22;--border:#21262d;
-  --border2:#30363d;--text:#e6edf3;--muted:#8b949e;--muted2:#484f58;
-}
+:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--border:#21262d;--border2:#30363d;--text:#e6edf3;--muted:#8b949e;--muted2:#484f58;--accent:#818cf8;--green:#3fb950;--red:#f87171;--amber:#f59e0b;--blue:#58a6ff;}
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+::-webkit-scrollbar{width:5px;}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+::-webkit-scrollbar-track{background:transparent;}
 /* HEADER */
-#header{background:#161b22;border-bottom:1px solid var(--border);padding:0 20px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;z-index:100;}
-/* BODY */
+#header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20px;height:48px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;z-index:100;}
+#header .logo{font-weight:700;font-size:.92rem;letter-spacing:-.02em;}
+#header .clock{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;}
+#header .status-pill{display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:.7rem;font-weight:600;background:var(--bg3);border:1px solid var(--border);}
+/* LAYOUT */
 #body{display:flex;flex:1;overflow:hidden;}
-/* SIDEBAR */
-#sidebar{width:220px;background:var(--sidebar);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;padding:8px 0;}
-#sidebar::-webkit-scrollbar{width:4px;}
-#sidebar::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
-.s-section{padding:6px 12px 2px;font-size:.65rem;color:var(--muted2);text-transform:uppercase;letter-spacing:.08em;margin-top:8px;}
-.s-item{display:flex;align-items:center;gap:8px;padding:6px 16px;cursor:pointer;font-size:.82rem;color:var(--muted);border-left:2px solid transparent;transition:.15s;user-select:none;}
-.s-item:hover{background:#161b22;color:var(--text);}
-.s-item.active{background:#161b22;color:var(--text);border-left-color:var(--accent-color,#6366f1);}
-.s-item.level2{padding-left:28px;font-size:.79rem;}
-.s-item.level3{padding-left:42px;font-size:.76rem;}
-.s-badge{font-size:.6rem;padding:1px 6px;border-radius:10px;margin-left:auto;font-weight:600;}
-.s-arrow{margin-left:auto;font-size:.65rem;transition:.2s;color:var(--muted2);}
-.s-children{display:none;}
-.s-children.open{display:block;}
-/* MAIN */
+#sidebar{width:200px;background:var(--bg);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;padding:6px 0;display:flex;flex-direction:column;}
 #main{flex:1;overflow-y:auto;padding:20px 24px;}
-#main::-webkit-scrollbar{width:6px;}
-#main::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+/* SIDEBAR */
+.s-group{padding:4px 14px 2px;font-size:.6rem;color:var(--muted2);text-transform:uppercase;letter-spacing:.1em;margin-top:10px;}
+.s-sep{height:1px;background:var(--border);margin:8px 14px;}
+.s-item{display:flex;align-items:center;gap:7px;padding:7px 14px;cursor:pointer;font-size:.8rem;color:var(--muted);border-left:2px solid transparent;transition:all .12s;user-select:none;}
+.s-item:hover{background:var(--bg2);color:var(--text);}
+.s-item.active{background:var(--bg2);color:var(--text);border-left-color:var(--c,var(--accent));}
+.s-item.l2{padding-left:26px;font-size:.78rem;}
+.s-item.l3{padding-left:40px;font-size:.75rem;}
+.s-item .arrow{margin-left:auto;font-size:.55rem;color:var(--muted2);transition:.2s;}
+.s-ch{display:none;}.s-ch.open{display:block;}
+.s-item.dim{opacity:.45;cursor:default;}
+.s-item.dim:hover{background:transparent;color:var(--muted);}
 /* CARDS */
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;}
-.card-sm{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;}
+.card-sm{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;}
+.kpi{text-align:center;}
+.kpi .num{font-size:1.6rem;font-weight:700;line-height:1.1;}
+.kpi .label{font-size:.68rem;color:var(--muted);margin-top:4px;}
 /* PROGRESS */
-.pbar-bg{background:#21262d;border-radius:6px;overflow:hidden;}
-.pbar{border-radius:6px;transition:width .4s ease;}
+.pbar-bg{background:var(--border);border-radius:4px;overflow:hidden;}
+.pbar{border-radius:4px;transition:width .4s ease;}
 /* TABLE */
 table{width:100%;border-collapse:collapse;}
-th{color:var(--muted);font-size:.68rem;text-transform:uppercase;padding:8px 12px;border-bottom:1px solid var(--border);text-align:left;font-weight:500;}
-td{padding:8px 12px;border-bottom:1px solid var(--border);font-size:.82rem;}
-tr:hover td{background:#1c2128;}
+th{color:var(--muted);font-size:.66rem;text-transform:uppercase;padding:7px 10px;border-bottom:1px solid var(--border);text-align:left;font-weight:500;letter-spacing:.03em;}
+td{padding:7px 10px;border-bottom:1px solid var(--border);font-size:.8rem;}
+tr:hover td{background:var(--bg3);}
 /* BADGES */
-.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:.68rem;font-weight:600;}
-.badge-run{background:#0d2b0d;color:#3fb950;border:1px solid #3fb950;}
-.badge-idle{background:#1c2128;color:var(--muted);border:1px solid var(--border2);}
-.badge-done{background:#0d2b0d;color:#3fb950;border:1px solid #3fb950;}
-.badge-soon{background:#1c1c2e;color:#6366f1;border:1px solid #6366f1;}
-/* CONTROLS */
-.ctrl-btn{padding:5px 14px;border-radius:7px;font-size:.78rem;font-weight:600;cursor:pointer;border:1px solid;transition:.15s;}
-.ctrl-btn:hover{filter:brightness(1.2);}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:.66rem;font-weight:600;}
+.badge-g{background:#0d2b0d;color:var(--green);border:1px solid var(--green);}
+.badge-p{background:#1c1c2e;color:var(--accent);border:1px solid var(--accent);}
+.badge-a{background:#2d1f00;color:var(--amber);border:1px solid var(--amber);}
+.badge-m{background:var(--bg3);color:var(--muted);border:1px solid var(--border2);}
+/* BUTTONS */
+.btn{padding:6px 14px;border-radius:7px;font-size:.76rem;font-weight:600;cursor:pointer;border:1px solid;transition:.12s;display:inline-flex;align-items:center;gap:5px;}
+.btn:hover{filter:brightness(1.15);}
+.btn-g{background:#0d2b0d;color:var(--green);border-color:var(--green);}
+.btn-r{background:#2b0d0d;color:var(--red);border-color:var(--red);}
+.btn-a{background:#2d1f00;color:var(--amber);border-color:var(--amber);}
+.btn-p{background:#1a1a3a;color:var(--accent);border-color:var(--accent);}
+.btn-b{background:#0d1b2b;color:var(--blue);border-color:var(--blue);}
+.btn-m{background:transparent;color:var(--muted);border-color:var(--border2);}
+/* GRIDS */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.g6{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;}
+/* TABS */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px;}
+.tab{padding:8px 16px;font-size:.78rem;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:.12s;background:none;border-top:none;border-left:none;border-right:none;}
+.tab:hover{color:var(--text);}
+.tab.on{color:var(--text);border-bottom-color:var(--green);}
 /* BREADCRUMB */
-#breadcrumb{font-size:.78rem;color:var(--muted);margin-bottom:18px;display:flex;align-items:center;gap:6px;}
-#breadcrumb span{cursor:pointer;color:var(--muted);}
-#breadcrumb span:hover{color:var(--text);}
-#breadcrumb span.active{color:var(--text);font-weight:600;}
-/* INPUT */
-.num-input{background:#21262d;border:1px solid var(--border2);border-radius:6px;color:var(--text);padding:4px 8px;font-size:.8rem;width:70px;}
-/* STAT NUM */
-.stat-n{font-size:1.8rem;font-weight:700;line-height:1;}
-/* GRID */
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
-.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
-.grid-6{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;}
-/* SECTION TITLE */
-.sec-title{font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px;}
-/* PULSE */
+.bc{font-size:.76rem;color:var(--muted);margin-bottom:16px;display:flex;align-items:center;gap:5px;}
+.bc span{cursor:pointer;}.bc span:hover{color:var(--text);}.bc .cur{color:var(--text);font-weight:600;}
+/* SECTION */
+.sec{font-size:.74rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;}
+/* MISC */
 .pulse{animation:pulse 1.8s infinite;}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-/* LANG CARD */
-.lang-card{background:#1c2128;border:1px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:.15s;}
-.lang-card:hover{border-color:var(--border2);background:#21262d;}
-.lang-card.available{border-color:var(--card-color,var(--border));}
-/* CHIP */
-.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:.72rem;background:#21262d;border:1px solid var(--border2);}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:16px;font-size:.7rem;background:var(--border);border:1px solid var(--border2);}
+.num-input{background:var(--border);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 8px;font-size:.78rem;width:68px;}
+.view{display:none;}.view:first-child{display:block;}
+.slot{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border-radius:8px;margin-bottom:5px;border:1px solid var(--border);}
+.slot.hl{border-color:rgba(63,185,80,.25);}
+select.inp{background:var(--border);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:.76rem;}
+input.inp{background:var(--border);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:.76rem;}
 </style>
 </head>
 <body>
-
-<!-- ══ HEADER ══════════════════════════════════════════════ -->
+<!-- ══ HEADER ═══════════════════════════════════════════ -->
 <div id="header">
-  <div style="display:flex;align-items:center;gap:12px;">
-    <span style="font-size:1.3rem;">🌍</span>
-    <div>
-      <div style="font-weight:700;font-size:.95rem;letter-spacing:-.01em;">Hellowords</div>
-      <div id="breadcrumb-mini" style="font-size:.65rem;color:var(--muted);">Dashboard</div>
-    </div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <span style="font-size:1.15rem;">🌍</span>
+    <span class="logo">Hellowords</span>
   </div>
   <div style="display:flex;align-items:center;gap:10px;">
-    <!-- 렌더링 토글 -->
-    <div style="display:flex;align-items:center;gap:6px;background:#21262d;border:1px solid var(--border2);border-radius:8px;padding:5px 10px;">
-      <span style="font-size:.7rem;color:var(--muted);">렌더링</span>
-      <button id="toggle-btn" onclick="toggleRender()" class="ctrl-btn" style="padding:3px 10px;font-size:.72rem;"></button>
-      <span id="queue-badge" style="font-size:.68rem;color:var(--muted);"></span>
+    <div id="render-status" class="status-pill" style="display:none;">
+      <span class="pulse" style="color:var(--green);">●</span>
+      <span id="rs-text">렌더링 중...</span>
     </div>
-    <!-- 지금 렌더링 -->
-    <button id="render-now-btn" onclick="toggleRenderPanel()" class="ctrl-btn"
-      style="background:#0d2b0d;color:#3fb950;border-color:#3fb950;">▶ 지금 렌더링</button>
-    <!-- 클럭 -->
-    <div style="text-align:right;min-width:130px;">
-      <div id="clock" style="font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums;"></div>
-      <div id="last-upd" style="font-size:.62rem;color:var(--muted2);"></div>
+    <span id="queue-badge" style="font-size:.68rem;color:var(--muted);"></span>
+    <div style="text-align:right;">
+      <div id="clock" class="clock"></div>
+      <div id="last-upd" style="font-size:.58rem;color:var(--muted2);"></div>
     </div>
   </div>
 </div>
-
-<!-- 현재 작업 바 (렌더링 중일 때만 표시) -->
-<div id="progress-row" style="display:none;background:#161b22;border-bottom:1px solid var(--border);padding:8px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
-  <span id="pr-word" style="font-weight:700;color:#818cf8;font-size:.9rem;min-width:120px;"></span>
-  <span id="pr-step" style="font-size:.75rem;color:var(--muted);flex:0 0 200px;"></span>
-  <div class="pbar-bg" style="flex:1;height:6px;">
-    <div id="pr-bar" class="pbar" style="width:0%;height:6px;background:linear-gradient(90deg,#6366f1,#a855f7);"></div>
-  </div>
-  <span id="pr-pct" style="font-size:.75rem;color:var(--muted);min-width:32px;text-align:right;"></span>
+<!-- 진행 바 -->
+<div id="progress-row" style="display:none;background:var(--bg2);border-bottom:1px solid var(--border);padding:6px 20px;align-items:center;gap:12px;flex-shrink:0;">
+  <span id="pr-word" style="font-weight:700;color:var(--accent);font-size:.85rem;min-width:100px;"></span>
+  <span id="pr-step" style="font-size:.72rem;color:var(--muted);flex:0 0 180px;"></span>
+  <div class="pbar-bg" style="flex:1;height:5px;"><div id="pr-bar" class="pbar" style="width:0%;height:5px;background:linear-gradient(90deg,#6366f1,#a855f7);"></div></div>
+  <span id="pr-pct" style="font-size:.72rem;color:var(--muted);min-width:30px;text-align:right;"></span>
 </div>
 
-<!-- ══ BODY ════════════════════════════════════════════════ -->
+<!-- ══ BODY ═══════════════════════════════════════════ -->
 <div id="body">
-
 <!-- ── SIDEBAR ── -->
 <div id="sidebar">
-  <div class="s-item active" data-view="overview" onclick="nav(this,'overview')" style="--accent-color:#6366f1;">
-    <span>📊</span><span>전체 개요</span>
+  <div class="s-item active" data-view="overview" onclick="nav(this,'overview')" style="--c:#818cf8;">
+    <span>📊</span><span>대시보드</span>
   </div>
-
-  <div class="s-section">시험용</div>
-  <div class="s-item" data-view="cat:시험용" onclick="nav(this,'cat:시험용')" style="--accent-color:#6366f1;">
-    <span>📚</span><span>시험 전체</span>
+  <div class="s-group">콘텐츠</div>
+  <div class="s-item l2" data-view="exam:TOPIK" onclick="toggleExam(this,'exam:TOPIK')" style="--c:#818cf8;">
+    <span>🇰🇷</span><span>TOPIK</span><span class="arrow" id="arr-TOPIK">▶</span>
   </div>
-  <!-- TOPIK -->
-  <div class="s-item level2" data-view="exam:TOPIK" onclick="toggleExam(this,'exam:TOPIK')" style="--accent-color:#818cf8;">
-    <span>🇰🇷</span><span>TOPIK</span><span class="s-arrow" id="arr-TOPIK">▶</span>
+  <div class="s-ch" id="ch-TOPIK">
+    <div class="s-item l3" data-view="lang:TOPIK:EN" onclick="nav(this,'lang:TOPIK:EN')" style="--c:#818cf8;">🇺🇸 English</div>
+    <div class="s-item l3" data-view="lang:TOPIK:CN" onclick="nav(this,'lang:TOPIK:CN')" style="--c:#818cf8;">🇨🇳 中文</div>
+    <div class="s-item l3" data-view="lang:TOPIK:JP" onclick="nav(this,'lang:TOPIK:JP')" style="--c:#818cf8;">🇯🇵 日本語</div>
+    <div class="s-item l3" data-view="lang:TOPIK:VN" onclick="nav(this,'lang:TOPIK:VN')" style="--c:#818cf8;">🇻🇳 Tiếng Việt</div>
+    <div class="s-item l3" data-view="lang:TOPIK:ES" onclick="nav(this,'lang:TOPIK:ES')" style="--c:#818cf8;">🇪🇸 Español</div>
   </div>
-  <div class="s-children" id="ch-TOPIK">
-    <div class="s-item level3" data-view="lang:TOPIK:EN" onclick="nav(this,'lang:TOPIK:EN')" style="--accent-color:#818cf8;">🇺🇸 영어 (EN)</div>
-    <div class="s-item level3" data-view="lang:TOPIK:CN" onclick="nav(this,'lang:TOPIK:CN')" style="--accent-color:#818cf8;">🇨🇳 중국어 (CN)</div>
-    <div class="s-item level3" data-view="lang:TOPIK:JP" onclick="nav(this,'lang:TOPIK:JP')" style="--accent-color:#818cf8;">🇯🇵 일본어 (JP)</div>
-    <div class="s-item level3" data-view="lang:TOPIK:VN" onclick="nav(this,'lang:TOPIK:VN')" style="--accent-color:#818cf8;">🇻🇳 베트남어 (VN)</div>
-    <div class="s-item level3" data-view="lang:TOPIK:SP" onclick="nav(this,'lang:TOPIK:SP')" style="--accent-color:#818cf8;">🇪🇸 스페인어 (SP)</div>
+  <div class="s-item l2 dim" style="--c:#60a5fa;"><span>📝</span><span>TOEIC</span></div>
+  <div class="s-item l2 dim" style="--c:#f472b6;"><span>🌸</span><span>JLPT</span></div>
+  <div class="s-item l2 dim" style="--c:#a78bfa;"><span>🎓</span><span>IELTS</span></div>
+  <div class="s-item l2 dim" style="--c:#f87171;"><span>🐉</span><span>HSK</span></div>
+  <div class="s-sep"></div>
+  <div class="s-group">작업</div>
+  <div class="s-item" data-view="render" onclick="nav(this,'render')" style="--c:#3fb950;">
+    <span>🎬</span><span>렌더링</span><span id="sb-render-badge" style="margin-left:auto;font-size:.6rem;"></span>
   </div>
-  <!-- TOEIC -->
-  <div class="s-item level2" data-view="exam:TOEIC" onclick="toggleExam(this,'exam:TOEIC')" style="--accent-color:#60a5fa;">
-    <span>📝</span><span>TOEIC</span><span class="s-arrow" id="arr-TOEIC">▶</span>
-  </div>
-  <div class="s-children" id="ch-TOEIC">
-    <div class="s-item level3" style="color:var(--muted2);cursor:default;">🚧 준비 중</div>
-  </div>
-  <!-- JLPT -->
-  <div class="s-item level2" data-view="exam:JLPT" onclick="toggleExam(this,'exam:JLPT')" style="--accent-color:#f472b6;">
-    <span>🌸</span><span>JLPT</span><span class="s-arrow" id="arr-JLPT">▶</span>
-  </div>
-  <div class="s-children" id="ch-JLPT">
-    <div class="s-item level3" style="color:var(--muted2);cursor:default;">🚧 준비 중</div>
-  </div>
-  <!-- IELTS -->
-  <div class="s-item level2" data-view="exam:IELTS" onclick="toggleExam(this,'exam:IELTS')" style="--accent-color:#a78bfa;">
-    <span>🎓</span><span>IELTS</span><span class="s-arrow" id="arr-IELTS">▶</span>
-  </div>
-  <div class="s-children" id="ch-IELTS">
-    <div class="s-item level3" style="color:var(--muted2);cursor:default;">🚧 준비 중</div>
-  </div>
-  <!-- HSK -->
-  <div class="s-item level2" data-view="exam:HSK" onclick="toggleExam(this,'exam:HSK')" style="--accent-color:#f87171;">
-    <span>🐉</span><span>HSK</span><span class="s-arrow" id="arr-HSK">▶</span>
-  </div>
-  <div class="s-children" id="ch-HSK">
-    <div class="s-item level3" style="color:var(--muted2);cursor:default;">🚧 준비 중</div>
-  </div>
-
-  <div class="s-section">여행용</div>
-  <div class="s-item" data-view="cat:여행용" onclick="nav(this,'cat:여행용')" style="--accent-color:#10b981;">
-    <span>✈️</span><span>여행 전체</span>
-  </div>
-  <div class="s-item level2" style="color:var(--muted2);cursor:default;font-size:.75rem;padding:4px 28px;">🚧 준비 중</div>
-
-  <div class="s-section">관리</div>
-  <div class="s-item" data-view="videos" onclick="nav(this,'videos')" style="--accent-color:#22d3ee;">
-    <span>🎬</span><span>영상 목록</span>
-  </div>
-  <div class="s-item" data-view="illustrations" onclick="nav(this,'illustrations')" style="--accent-color:#f59e0b;">
+  <div class="s-item" data-view="illustrations" onclick="nav(this,'illustrations')" style="--c:#f59e0b;">
     <span>🎨</span><span>일러스트</span>
   </div>
-  <div class="s-item" data-view="youtube" onclick="nav(this,'youtube')" style="--accent-color:#f87171;">
+  <div class="s-item" data-view="videos" onclick="nav(this,'videos')" style="--c:#22d3ee;">
+    <span>📋</span><span>영상 목록</span>
+  </div>
+  <div class="s-item" data-view="youtube" onclick="nav(this,'youtube')" style="--c:#f87171;">
     <span>▶</span><span>YouTube</span>
   </div>
 </div>
@@ -813,234 +965,253 @@ tr:hover td{background:#1c2128;}
 <!-- ── MAIN ── -->
 <div id="main">
 
-<!-- == 전체 개요 == -->
-<div id="view-overview" class="view">
-  <div id="breadcrumb" class="breadcrumb-bar">
-    <span class="active">📊 전체 개요</span>
+<!-- ══ 대시보드 (개요) ═══════════════════════════════════ -->
+<div id="view-overview" class="view" style="display:block;">
+  <div class="g4" style="margin-bottom:14px;">
+    <div class="card-sm kpi"><div id="ov-total" class="num" style="color:var(--muted);">–</div><div class="label">전체 단어</div></div>
+    <div class="card-sm kpi">
+      <div id="ov-gen" class="num" style="color:var(--accent);">–</div><div class="label">영상 생성</div>
+      <div class="pbar-bg" style="height:3px;margin-top:6px;"><div id="ov-gen-bar" class="pbar" style="height:3px;background:var(--accent);width:0%;"></div></div>
+    </div>
+    <div class="card-sm kpi">
+      <div id="ov-upl" class="num" style="color:var(--green);">–</div><div class="label">업로드 완료</div>
+      <div class="pbar-bg" style="height:3px;margin-top:6px;"><div id="ov-upl-bar" class="pbar" style="height:3px;background:var(--green);width:0%;"></div></div>
+    </div>
+    <div class="card-sm kpi"><div id="ov-remain" class="num" style="color:var(--amber);">–</div><div class="label">남은 영상</div></div>
   </div>
-  <div class="grid-4" style="margin-bottom:16px;">
-    <div class="card-sm" style="text-align:center;">
-      <div id="ov-total" class="stat-n" style="color:var(--muted);">–</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:4px;">전체 단어</div>
-    </div>
-    <div class="card-sm" style="text-align:center;">
-      <div id="ov-gen" class="stat-n" style="color:#818cf8;">–</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:4px;">영상 생성</div>
-      <div class="pbar-bg" style="height:4px;margin-top:6px;"><div id="ov-gen-bar" class="pbar" style="height:4px;background:#818cf8;width:0%;"></div></div>
-    </div>
-    <div class="card-sm" style="text-align:center;">
-      <div id="ov-upl" class="stat-n" style="color:#3fb950;">–</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:4px;">업로드 완료</div>
-      <div class="pbar-bg" style="height:4px;margin-top:6px;"><div id="ov-upl-bar" class="pbar" style="height:4px;background:#3fb950;width:0%;"></div></div>
-    </div>
-    <div class="card-sm" style="text-align:center;">
-      <div id="ov-remain" class="stat-n" style="color:#f0883e;">–</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:4px;">남은 영상</div>
-    </div>
-  </div>
-  <div class="grid-2" style="margin-bottom:16px;">
+  <div class="g2" style="margin-bottom:14px;">
+    <!-- 파이프라인 -->
     <div class="card">
-      <div class="sec-title">콘텐츠 카테고리</div>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <div onclick="nav(document.querySelector('[data-view=cat\\:시험용]'),'cat:시험용')" style="cursor:pointer;background:#1c2128;border-radius:8px;padding:12px;border-left:3px solid #6366f1;display:flex;align-items:center;justify-content:space-between;">
-          <div style="display:flex;align-items:center;gap:8px;"><span>📚</span><span style="font-weight:600;">시험용</span></div>
-          <div style="font-size:.75rem;color:var(--muted);">TOPIK · TOEIC · JLPT · IELTS · HSK</div>
+      <div class="sec">파이프라인 현황</div>
+      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:3px;"><span>🎬 렌더링</span><span id="ov-pipe-render">0 / 0</span></div>
+      <div class="pbar-bg" style="height:4px;margin-bottom:10px;"><div id="ov-pipe-render-bar" class="pbar" style="height:4px;background:var(--accent);width:0%;"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:3px;"><span>⬆ 업로드</span><span id="ov-pipe-upload">0 / 0</span></div>
+      <div class="pbar-bg" style="height:4px;margin-bottom:10px;"><div id="ov-pipe-upload-bar" class="pbar" style="height:4px;background:var(--green);width:0%;"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:3px;"><span>🖼 일러스트 (단어)</span><span id="ov-illust-word-txt">–</span></div>
+      <div class="pbar-bg" style="height:4px;margin-bottom:10px;"><div id="ov-illust-word-bar" class="pbar" style="height:4px;background:var(--amber);width:0%;"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:3px;"><span>📝 일러스트 (예문)</span><span id="ov-illust-sent-txt">–</span></div>
+      <div class="pbar-bg" style="height:4px;"><div id="ov-illust-sent-bar" class="pbar" style="height:4px;background:#a855f7;width:0%;"></div></div>
+      <!-- 일러스트 생성 진행 (숨김) -->
+      <div id="ov-illust-gen-progress" style="display:none;margin-top:12px;background:var(--bg3);border-radius:7px;padding:8px 10px;border:1px solid var(--border2);">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span id="ov-illust-gen-label" style="font-size:.7rem;font-weight:600;color:var(--amber);">생성 중...</span><span id="ov-illust-gen-pct" style="font-size:.7rem;font-weight:700;color:var(--amber);">0%</span></div>
+        <div class="pbar-bg" style="height:6px;"><div id="ov-illust-gen-bar" class="pbar" style="height:6px;width:0%;background:var(--amber);"></div></div>
+        <div id="ov-illust-gen-step" style="font-size:.62rem;color:var(--muted);margin-top:3px;"></div>
+      </div>
+    </div>
+    <!-- 타임라인 -->
+    <div class="card">
+      <div class="sec">업로드 타임라인 (30일)</div>
+      <canvas id="chart-timeline" height="140"></canvas>
+    </div>
+  </div>
+  <div class="g2">
+    <!-- 콘텐츠 카테고리 -->
+    <div class="card">
+      <div class="sec">콘텐츠</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div onclick="toggleExam(document.querySelector('[data-view=exam\\:TOPIK]'),'exam:TOPIK')" style="cursor:pointer;background:var(--bg3);border-radius:7px;padding:10px 12px;border-left:3px solid var(--accent);display:flex;align-items:center;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:7px;"><span>🇰🇷</span><span style="font-weight:600;font-size:.85rem;">TOPIK</span></div>
+          <span style="font-size:.7rem;color:var(--muted);">EN · CN · JP · VN · ES</span>
         </div>
-        <div onclick="nav(document.querySelector('[data-view=cat\\:여행용]'),'cat:여행용')" style="cursor:pointer;background:#1c2128;border-radius:8px;padding:12px;border-left:3px solid #10b981;display:flex;align-items:center;justify-content:space-between;">
-          <div style="display:flex;align-items:center;gap:8px;"><span>✈️</span><span style="font-weight:600;">여행용</span></div>
-          <div style="font-size:.75rem;color:var(--muted);">EN · CN · JP · VN · SP ···</div>
+        <div style="background:var(--bg3);border-radius:7px;padding:10px 12px;border-left:3px solid var(--border2);opacity:.4;">
+          <div style="display:flex;align-items:center;gap:7px;"><span>✈️</span><span style="font-weight:600;font-size:.85rem;">여행용</span><span class="badge badge-m" style="margin-left:8px;">준비 중</span></div>
         </div>
       </div>
     </div>
+    <!-- 배경 음악 -->
     <div class="card">
-      <div class="sec-title">업로드 타임라인 (30일)</div>
-      <canvas id="chart-timeline" height="120"></canvas>
+      <div class="sec">배경 음악</div>
+      <div id="ov-music" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
     </div>
   </div>
-  <div class="grid-2">
-    <!-- 일러스트 현황 -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="sec-title" style="margin:0;">🎨 일러스트 현황</div>
-        <span id="ov-illust-badge" class="badge badge-idle"></span>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:3px;">
-        <span>🖼 단어</span><span id="ov-illust-word-txt">–</span><span id="ov-illust-word-pct" style="margin-left:auto;padding-left:8px;">0%</span>
-      </div>
-      <div class="pbar-bg" style="height:5px;margin-bottom:8px;">
-        <div id="ov-illust-word-bar" class="pbar" style="height:5px;width:0%;background:linear-gradient(90deg,#f59e0b,#f97316);"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:3px;">
-        <span>📝 예문</span><span id="ov-illust-sent-txt">–</span><span id="ov-illust-sent-pct" style="margin-left:auto;padding-left:8px;">0%</span>
-      </div>
-      <div class="pbar-bg" style="height:5px;margin-bottom:12px;">
-        <div id="ov-illust-sent-bar" class="pbar" style="height:5px;width:0%;background:linear-gradient(90deg,#818cf8,#a855f7);"></div>
-      </div>
-      <div class="grid-6" id="ov-illust-levels"></div>
-      <div id="ov-illust-log" style="display:none;background:#0d1117;border-radius:6px;padding:8px;font-size:.68rem;color:var(--muted);font-family:monospace;max-height:60px;overflow:auto;margin-top:10px;"></div>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px;">
-        <span style="font-size:.72rem;color:var(--muted);">ID</span>
-        <input id="illust-start" class="num-input" type="number" value="1" min="1" max="1800">
-        <span style="color:var(--muted);font-size:.8rem;">~</span>
-        <input id="illust-end" class="num-input" type="number" value="10" min="1" max="1800">
-        <select id="illust-mode" onchange="updateIllustCost()" style="background:#21262d;color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:4px 8px;font-size:.75rem;">
-          <option value="both">단어+예문</option>
-          <option value="words">🖼 단어만</option>
-          <option value="sentences">📝 예문만</option>
-        </select>
-        <button id="illust-gen-btn" onclick="startIllustGen()" class="ctrl-btn" style="background:#2d1f00;color:#f59e0b;border-color:#f59e0b;">🎨 생성</button>
-        <button onclick="setIllustRange(1,1800)" class="ctrl-btn" style="background:transparent;color:var(--muted);border-color:var(--border2);">전체</button>
-        <span id="illust-cost" style="font-size:.7rem;color:var(--muted);"></span>
-      </div>
+  <!-- 히든 엘리먼트 (일러스트 등급별 — 개요에서는 숨김, 일러스트 뷰에서 사용) -->
+  <div id="ov-illust-levels" style="display:none;"></div>
+  <div id="ov-illust-badge" style="display:none;"></div>
+  <div id="ov-illust-word-pct" style="display:none;"></div>
+  <div id="ov-illust-sent-pct" style="display:none;"></div>
+  <div id="ov-illust-log" style="display:none;"></div>
+  <input id="illust-start" type="hidden" value="1"><input id="illust-end" type="hidden" value="10">
+  <select id="illust-mode" style="display:none;"><option value="both">both</option></select>
+  <span id="illust-cost" style="display:none;"></span>
+</div>
+
+<!-- ══ TOPIK 언어 카드 ══════════════════════════════════ -->
+<div id="view-exam:TOPIK" class="view">
+  <div class="bc">
+    <span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">대시보드</span><span style="color:var(--muted2);">›</span><span class="cur">TOPIK</span>
+  </div>
+  <div class="sec" style="color:var(--accent);">학습 언어별 현황</div>
+  <div id="topik-lang-cards" class="g3"></div>
+</div>
+
+<!-- ══ 언어 상세 뷰 (EN 기본 + 나머지 JS 동적) ════════ -->
+<div id="view-lang:TOPIK:EN" class="view"></div>
+
+<!-- ══ 렌더링 (통합 페이지) ═════════════════════════════ -->
+<div id="view-render" class="view">
+  <!-- 상단: 렌더 설정 + 상태 -->
+  <div class="g2" style="margin-bottom:14px;">
+    <div class="card" style="display:flex;align-items:center;gap:12px;">
+      <div style="font-weight:600;font-size:.85rem;">렌더링 위치</div>
+      <button id="toggle-btn" onclick="toggleRender()" class="btn btn-p" style="font-size:.72rem;"></button>
+      <span id="rp-target-info" style="font-size:.66rem;color:var(--muted);"></span>
     </div>
-    <!-- 음악 -->
-    <div class="card">
-      <div class="sec-title">🎵 배경 음악 풀</div>
-      <div id="ov-music" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    <div class="card" id="rp-batch-progress" style="display:flex;align-items:center;gap:10px;">
+      <span id="rp-batch-prog-label" style="font-size:.72rem;font-weight:600;color:var(--green);white-space:nowrap;">대기 중</span>
+      <div class="pbar-bg" style="flex:1;height:6px;"><div id="rp-batch-prog-bar" class="pbar" style="height:6px;width:0%;background:var(--green);"></div></div>
+      <span id="rp-batch-prog-pct" style="font-size:.72rem;font-weight:700;color:var(--green);min-width:32px;text-align:right;">0%</span>
+      <span id="rp-batch-prog-step" style="font-size:.62rem;color:var(--muted);white-space:nowrap;"></span>
     </div>
   </div>
-</div>
-
-<!-- == 시험 카테고리 == -->
-<div id="view-cat:시험용" class="view" style="display:none;">
-  <div class="breadcrumb-bar"><span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">📊 개요</span><span style="color:var(--muted2);">›</span><span class="active">📚 시험용</span></div>
-  <div class="sec-title">시험 종류</div>
-  <div class="grid-3" id="exam-cards-view"></div>
-</div>
-
-<!-- == 여행 카테고리 == -->
-<div id="view-cat:여행용" class="view" style="display:none;">
-  <div class="breadcrumb-bar"><span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">📊 개요</span><span style="color:var(--muted2);">›</span><span class="active">✈️ 여행용</span></div>
-  <div class="card" style="text-align:center;padding:40px;">
-    <div style="font-size:2.5rem;margin-bottom:12px;">✈️</div>
-    <div style="font-weight:700;font-size:1.1rem;margin-bottom:8px;">여행용 콘텐츠</div>
-    <div style="color:var(--muted);font-size:.85rem;">EN · CN · JP · VN · SP · KO · FR · DE</div>
-    <div class="badge badge-soon" style="margin:16px auto;display:inline-flex;">🚧 준비 중</div>
+  <!-- 탭 -->
+  <div class="tabs">
+    <button class="tab on" id="rp-tab-batch" onclick="rpTab('batch')">📅 오늘 배치</button>
+    <button class="tab" id="rp-tab-custom" onclick="rpTab('custom')">🎬 커스텀</button>
+    <button class="tab" id="rp-tab-history" onclick="rpTab('history')">🗓 날짜별</button>
+    <button class="tab" id="rp-tab-config" onclick="rpTab('config')">⚙️ 설정</button>
+  </div>
+  <!-- 탭 내용: 배치 -->
+  <div id="rp-batch">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div><div id="rp-today-date" style="font-weight:700;font-size:.86rem;"></div><div id="rp-today-sub" style="font-size:.68rem;color:var(--muted);"></div></div>
+      <div style="display:flex;gap:6px;">
+        <button id="rp-target-desktop" onclick="setBatchTarget('desktop')" class="btn btn-p" style="font-size:.7rem;padding:4px 10px;">💻 GPU</button>
+        <button id="rp-target-nas" onclick="setBatchTarget('nas')" class="btn btn-m" style="font-size:.7rem;padding:4px 10px;">🖥 NAS</button>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <label style="font-size:.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px;">
+        <input type="checkbox" id="rp-select-all" onchange="toggleAllBatchCheck()" style="accent-color:var(--green);">전체 선택
+      </label>
+      <div id="rp-batch-queue" style="margin-left:auto;font-size:.68rem;color:var(--muted);"></div>
+    </div>
+    <div id="rp-batch-list"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+      <label style="font-size:.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px;">
+        <input type="checkbox" id="rp-auto-upload" style="accent-color:var(--green);">렌더링 후 YouTube 자동 업로드
+      </label>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button id="rp-render-all" onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;">▶ 전체 렌더링</button>
+      <button id="rp-cancel-btn" onclick="cancelBatchRender()" class="btn btn-r" style="display:none;flex:1;justify-content:center;">⏹ 렌더링 취소</button>
+    </div>
+  </div>
+  <!-- 탭 내용: 커스텀 -->
+  <div id="rp-custom" style="display:none;">
+    <div class="sec">렌더링 대상</div>
+    <div class="g4" style="margin-bottom:12px;">
+      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">시험</div>
+        <select id="rc-exam" onchange="updateCustomPreview()" class="inp" style="width:100%;"><option value="TOPIK">🇰🇷 TOPIK</option><option value="TOEIC">📝 TOEIC</option><option value="JLPT">🌸 JLPT</option><option value="IELTS">🎓 IELTS</option><option value="HSK">🐉 HSK</option></select></div>
+      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">언어</div>
+        <select id="rc-lang" onchange="updateCustomPreview()" class="inp" style="width:100%;"><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select></div>
+      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">등급</div>
+        <select id="rc-level" onchange="updateCustomPreview()" class="inp" style="width:100%;"><option value="1">1급</option><option value="2">2급</option><option value="3">3급</option><option value="4">4급</option><option value="5">5급</option><option value="6">6급</option></select></div>
+      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">수량</div>
+        <input type="number" id="rc-count" value="10" min="1" max="30" onchange="updateCustomPreview()" oninput="updateCustomPreview()" class="inp" style="width:100%;"></div>
+    </div>
+    <div class="card-sm" style="margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:.68rem;color:var(--muted2);font-weight:600;">ID 범위 (선택)</span>
+        <span id="rc-id-range-hint" style="font-size:.6rem;color:var(--muted2);"></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <input type="number" id="rc-start-id" placeholder="시작" onchange="updateCustomPreview()" oninput="updateCustomPreview()" class="inp" style="flex:1;">
+        <span style="color:var(--muted2);">~</span>
+        <input type="number" id="rc-end-id" placeholder="끝" onchange="updateCustomPreview()" oninput="updateCustomPreview()" class="inp" style="flex:1;">
+        <button onclick="document.getElementById('rc-start-id').value='';document.getElementById('rc-end-id').value='';updateCustomPreview();" class="btn btn-m" style="font-size:.66rem;padding:4px 8px;">초기화</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <button id="rc-target-desktop" onclick="setCustomTarget('desktop')" class="btn btn-p" style="flex:1;justify-content:center;font-size:.72rem;">💻 데스크탑 GPU</button>
+      <button id="rc-target-nas" onclick="setCustomTarget('nas')" class="btn btn-m" style="flex:1;justify-content:center;font-size:.72rem;">🖥 NAS CPU</button>
+    </div>
+    <div id="rc-time-est" style="font-size:.64rem;color:var(--muted2);margin-bottom:12px;"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span class="sec" style="margin:0;">미리보기</span>
+      <span id="rc-remaining" style="font-size:.62rem;color:var(--muted2);"></span>
+    </div>
+    <div id="rc-preview" style="margin-bottom:12px;max-height:300px;overflow-y:auto;"></div>
+    <button id="rc-start" onclick="startCustomRender()" class="btn btn-g" style="width:100%;justify-content:center;">▶ 렌더링 시작</button>
+  </div>
+  <!-- 탭 내용: 날짜별 -->
+  <div id="rp-history" style="display:none;">
+    <input type="date" id="rp-date-pick" onchange="loadHistoryDate()" class="inp" style="width:100%;margin-bottom:12px;">
+    <div id="rp-history-list"></div>
+  </div>
+  <!-- 탭 내용: 설정 -->
+  <div id="rp-config" style="display:none;">
+    <div style="font-size:.74rem;color:var(--muted);margin-bottom:10px;">하루 분량 설정 (시험/언어/등급별 슬롯)</div>
+    <div id="rp-config-slots"></div>
+    <button onclick="addSlot()" class="btn btn-m" style="width:100%;margin-top:8px;justify-content:center;">+ 슬롯 추가</button>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button onclick="saveSchedule()" class="btn btn-g" style="flex:1;justify-content:center;">💾 저장</button>
+      <button onclick="resetSchedule()" class="btn btn-m">기본값</button>
+    </div>
   </div>
 </div>
 
-<!-- == 시험별 뷰 (TOPIK/TOEIC/...) == -->
-<div id="view-exam:TOPIK" class="view" style="display:none;">
-  <div class="breadcrumb-bar">
-    <span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">📊 개요</span>
-    <span style="color:var(--muted2);">›</span>
-    <span onclick="nav(document.querySelector('[data-view=cat\\:시험용]'),'cat:시험용')">📚 시험용</span>
-    <span style="color:var(--muted2);">›</span>
-    <span class="active">🇰🇷 TOPIK</span>
+<!-- ══ 영상 목록 ════════════════════════════════════════ -->
+<div id="view-videos" class="view">
+  <div class="bc"><span class="cur">📋 영상 목록</span></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+    <select id="vf-level" onchange="filterVids()" class="inp"><option value="">전체 등급</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+    <select id="vf-music" onchange="filterVids()" class="inp"><option value="">전체 음악</option></select>
+    <select id="vf-status" onchange="filterVids()" class="inp"><option value="">전체 상태</option><option value="uploaded">업로드됨</option><option value="generated">생성만</option></select>
+    <span id="vf-count" style="font-size:.72rem;color:var(--muted);margin-left:auto;"></span>
   </div>
-  <div class="sec-title" style="color:#818cf8;">학습 언어별 현황</div>
-  <div id="topik-lang-cards" class="grid-3" style="margin-bottom:16px;"></div>
-</div>
-
-<!-- == 언어별 상세 뷰 == -->
-<div id="view-lang:TOPIK:EN" class="view" style="display:none;">
-  <div class="breadcrumb-bar">
-    <span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">📊 개요</span>
-    <span style="color:var(--muted2);">›</span>
-    <span onclick="nav(document.querySelector('[data-view=cat\\:시험용]'),'cat:시험용')">📚 시험용</span>
-    <span style="color:var(--muted2);">›</span>
-    <span onclick="nav(document.querySelector('[data-view=exam\\:TOPIK]'),'exam:TOPIK')">🇰🇷 TOPIK</span>
-    <span style="color:var(--muted2);">›</span>
-    <span class="active">🇺🇸 영어 (EN)</span>
-  </div>
-  <div id="lang-detail-content"></div>
-</div>
-
-<!-- 나머지 언어들은 JS로 동적 생성 -->
-
-<!-- == 영상 목록 == -->
-<div id="view-videos" class="view" style="display:none;">
-  <div class="breadcrumb-bar"><span class="active">🎬 영상 목록</span></div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
-    <select id="vf-level" onchange="filterVids()" style="background:#21262d;color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:.78rem;">
-      <option value="">전체 등급</option>
-      <option>1</option><option>2</option><option>3</option>
-      <option>4</option><option>5</option><option>6</option>
-    </select>
-    <select id="vf-music" onchange="filterVids()" style="background:#21262d;color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:.78rem;">
-      <option value="">전체 음악</option>
-    </select>
-    <select id="vf-status" onchange="filterVids()" style="background:#21262d;color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:.78rem;">
-      <option value="">전체 상태</option>
-      <option value="uploaded">업로드됨</option>
-      <option value="generated">생성만</option>
-    </select>
-    <span id="vf-count" style="font-size:.75rem;color:var(--muted);margin-left:auto;"></span>
-  </div>
-  <div style="overflow-x:auto;">
+  <div class="card" style="overflow-x:auto;padding:0;">
     <table>
-      <thead><tr><th>Day</th><th>단어</th><th>뜻</th><th>등급</th><th>음악</th><th>크기</th><th>생성</th><th>조회수</th><th>상태</th></tr></thead>
+      <thead><tr><th>Day</th><th>ID</th><th>단어</th><th>뜻</th><th>등급</th><th>음악</th><th>크기</th><th>생성</th><th>조회수</th><th>상태</th></tr></thead>
       <tbody id="vids-tbody"></tbody>
     </table>
   </div>
 </div>
 
-<!-- == 일러스트 == -->
-<div id="view-illustrations" class="view" style="display:none;">
-  <div class="breadcrumb-bar"><span class="active">🎨 일러스트 관리</span></div>
+<!-- ══ 일러스트 ═════════════════════════════════════════ -->
+<div id="view-illustrations" class="view">
+  <div class="bc"><span class="cur">🎨 일러스트 관리</span></div>
+  <div class="card" style="margin-bottom:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-weight:600;font-size:.88rem;">일러스트 생성 현황</div>
+      <span id="illust-view-badge" class="badge badge-m"></span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:.74rem;color:var(--muted);margin-bottom:3px;"><span>🖼 단어 일러스트</span><span id="illust-view-word-txt">–</span><span id="illust-view-word-pct" style="margin-left:auto;padding-left:8px;">0%</span></div>
+    <div class="pbar-bg" style="height:6px;margin-bottom:10px;"><div id="illust-view-word-bar" class="pbar" style="height:6px;width:0%;background:linear-gradient(90deg,#f59e0b,#f97316);"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:.74rem;color:var(--muted);margin-bottom:3px;"><span>📝 예문 일러스트</span><span id="illust-view-sent-txt">–</span><span id="illust-view-sent-pct" style="margin-left:auto;padding-left:8px;">0%</span></div>
+    <div class="pbar-bg" style="height:6px;margin-bottom:14px;"><div id="illust-view-sent-bar" class="pbar" style="height:6px;width:0%;background:linear-gradient(90deg,#818cf8,#a855f7);"></div></div>
+    <div class="g6" id="illust-view-levels" style="margin-bottom:14px;"></div>
+    <div id="illust-view-log" style="display:none;background:var(--bg);border-radius:6px;padding:10px;font-size:.7rem;color:var(--muted);font-family:monospace;max-height:100px;overflow:auto;margin-bottom:14px;white-space:pre-wrap;"></div>
+  </div>
   <div class="card">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-      <div style="font-weight:600;">일러스트 생성 현황</div>
-      <span id="illust-view-badge" class="badge badge-idle"></span>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:.75rem;color:var(--muted);margin-bottom:3px;">
-      <span>🖼 단어 일러스트</span><span id="illust-view-word-txt">–</span><span id="illust-view-word-pct" style="margin-left:auto;padding-left:8px;">0%</span>
-    </div>
-    <div class="pbar-bg" style="height:7px;margin-bottom:8px;">
-      <div id="illust-view-word-bar" class="pbar" style="height:7px;width:0%;background:linear-gradient(90deg,#f59e0b,#f97316);"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:.75rem;color:var(--muted);margin-bottom:3px;">
-      <span>📝 예문 일러스트</span><span id="illust-view-sent-txt">–</span><span id="illust-view-sent-pct" style="margin-left:auto;padding-left:8px;">0%</span>
-    </div>
-    <div class="pbar-bg" style="height:7px;margin-bottom:16px;">
-      <div id="illust-view-sent-bar" class="pbar" style="height:7px;width:0%;background:linear-gradient(90deg,#818cf8,#a855f7);"></div>
-    </div>
-    <div class="grid-6" id="illust-view-levels" style="margin-bottom:16px;"></div>
-    <div id="illust-view-log" style="display:none;background:#0d1117;border-radius:8px;padding:12px;font-size:.72rem;color:var(--muted);font-family:monospace;max-height:100px;overflow:auto;margin-bottom:16px;white-space:pre-wrap;"></div>
-    <div style="background:#21262d;border-radius:8px;padding:14px;">
-      <div style="font-size:.78rem;font-weight:600;margin-bottom:10px;">일러스트 생성</div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <span style="font-size:.78rem;color:var(--muted);">단어 ID 범위:</span>
-        <input id="illust-start2" class="num-input" type="number" value="1"><span style="color:var(--muted);">~</span>
-        <input id="illust-end2" class="num-input" type="number" value="100">
-        <select id="illust-mode2" onchange="updateIllustCost2()" style="background:#21262d;color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:4px 8px;font-size:.75rem;">
-          <option value="both">단어+예문</option>
-          <option value="words">🖼 단어만</option>
-          <option value="sentences">📝 예문만</option>
-        </select>
-        <button id="illust-gen-btn2" onclick="startIllustGen2()" class="ctrl-btn" style="background:#2d1f00;color:#f59e0b;border-color:#f59e0b;">🎨 일러스트 생성</button>
-        <button onclick="setIllustRange2(1,1800)" class="ctrl-btn" style="background:transparent;color:var(--muted);border-color:var(--border2);">전체 (1800장)</button>
-        <span id="illust-cost2" style="font-size:.75rem;color:#f59e0b;font-weight:600;"></span>
-      </div>
+    <div class="sec">일러스트 생성</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="font-size:.74rem;color:var(--muted);">ID 범위:</span>
+      <input id="illust-start2" class="num-input" type="number" value="1"><span style="color:var(--muted);">~</span>
+      <input id="illust-end2" class="num-input" type="number" value="100">
+      <select id="illust-mode2" onchange="updateIllustCost2()" class="inp"><option value="both">단어+예문</option><option value="words">🖼 단어만</option><option value="sentences">📝 예문만</option></select>
+      <button id="illust-gen-btn2" onclick="startIllustGen2()" class="btn btn-a">🎨 생성</button>
+      <button onclick="setIllustRange2(1,1800)" class="btn btn-m">전체</button>
+      <span id="illust-cost2" style="font-size:.72rem;color:var(--amber);font-weight:600;"></span>
     </div>
   </div>
 </div>
 
-<!-- == YouTube == -->
-<div id="view-youtube" class="view" style="display:none;">
-  <div class="breadcrumb-bar"><span class="active">▶ YouTube 통계</span></div>
-  <div id="yt-no-key" class="card" style="text-align:center;padding:40px;">
-    <div style="font-size:2rem;margin-bottom:10px;">📺</div>
-    <div style="color:var(--muted);margin-bottom:8px;">YouTube API 키가 필요합니다</div>
-    <code style="background:#21262d;padding:4px 10px;border-radius:6px;font-size:.78rem;">.env → YOUTUBE_API_KEY=AIza...</code>
+<!-- ══ YouTube ══════════════════════════════════════════ -->
+<div id="view-youtube" class="view">
+  <div class="bc"><span class="cur">▶ YouTube 통계</span></div>
+  <div id="yt-no-key" class="card" style="text-align:center;padding:36px;">
+    <div style="font-size:1.8rem;margin-bottom:8px;">📺</div>
+    <div style="color:var(--muted);margin-bottom:6px;">YouTube API 키가 필요합니다</div>
+    <code style="background:var(--border);padding:4px 10px;border-radius:5px;font-size:.76rem;">.env → YOUTUBE_API_KEY=AIza...</code>
   </div>
   <div id="yt-content" style="display:none;">
-    <div class="grid-3" style="margin-bottom:16px;">
-      <div class="card-sm" style="text-align:center;"><div id="yt-subs" class="stat-n" style="color:#f87171;">–</div><div style="font-size:.72rem;color:var(--muted);margin-top:4px;">구독자</div></div>
-      <div class="card-sm" style="text-align:center;"><div id="yt-views" class="stat-n" style="color:#fbbf24;">–</div><div style="font-size:.72rem;color:var(--muted);margin-top:4px;">총 조회수</div></div>
-      <div class="card-sm" style="text-align:center;"><div id="yt-vcnt" class="stat-n" style="color:#60a5fa;">–</div><div style="font-size:.72rem;color:var(--muted);margin-top:4px;">영상 수</div></div>
+    <div class="g3" style="margin-bottom:14px;">
+      <div class="card-sm kpi"><div id="yt-subs" class="num" style="color:var(--red);">–</div><div class="label">구독자</div></div>
+      <div class="card-sm kpi"><div id="yt-views" class="num" style="color:var(--amber);">–</div><div class="label">총 조회수</div></div>
+      <div class="card-sm kpi"><div id="yt-vcnt" class="num" style="color:var(--blue);">–</div><div class="label">영상 수</div></div>
     </div>
-    <div class="card" style="margin-bottom:16px;">
-      <div class="sec-title">영상별 조회수 TOP 20</div>
-      <canvas id="chart-yt-views" height="130"></canvas>
-    </div>
-    <div class="card">
-      <div class="sec-title">영상 통계</div>
-      <div style="overflow-x:auto;">
-        <table><thead><tr><th>Day</th><th>단어</th><th>등급</th><th>조회수</th><th>좋아요</th><th>YouTube</th></tr></thead>
-        <tbody id="yt-tbody"></tbody></table>
-      </div>
-    </div>
+    <div class="card" style="margin-bottom:14px;"><div class="sec">영상별 조회수 TOP 20</div><canvas id="chart-yt-views" height="130"></canvas></div>
+    <div class="card"><div class="sec">영상 통계</div><div style="overflow-x:auto;"><table><thead><tr><th>Day</th><th>단어</th><th>등급</th><th>조회수</th><th>좋아요</th><th>YouTube</th></tr></thead><tbody id="yt-tbody"></tbody></table></div></div>
   </div>
 </div>
 
@@ -1048,10 +1219,11 @@ tr:hover td{background:#1c2128;}
 </div><!-- /body -->
 
 <script>
-// ── 상수 ─────────────────────────────────────────────────────
+// ── 상수 ─────────────────────────────────────────────────
 const LVC={1:'#22d3ee',2:'#34d399',3:'#a3e635',4:'#fbbf24',5:'#fb923c',6:'#f87171'};
 const EXAM_COLORS={TOPIK:'#818cf8',TOEIC:'#60a5fa',JLPT:'#f472b6',IELTS:'#a78bfa',HSK:'#f87171'};
-const LANG_NAMES={EN:'🇺🇸 영어',CN:'🇨🇳 중국어',JP:'🇯🇵 일본어',VN:'🇻🇳 베트남어',SP:'🇪🇸 스페인어',KO:'🇰🇷 한국어',FR:'🇫🇷 프랑스어',DE:'🇩🇪 독일어'};
+const LANG_NAMES={EN:'🇺🇸 영어',CN:'🇨🇳 중국어',JP:'🇯🇵 일본어',VN:'🇻🇳 베트남어',ES:'🇪🇸 스페인어',SP:'🇪🇸 스페인어',KO:'🇰🇷 한국어',FR:'🇫🇷 프랑스어',DE:'🇩🇪 독일어'};
+const _FLAGS={EN:'🇺🇸',JP:'🇯🇵',CN:'🇨🇳',VN:'🇻🇳',ES:'🇪🇸',SP:'🇪🇸',KO:'🇰🇷',FR:'🇫🇷',DE:'🇩🇪'};
 
 let _ov=null, _node=null, _chartTL=null, _chartYT=null;
 let _desktopEnabled=true, _currentView='overview';
@@ -1065,7 +1237,7 @@ const ago=iso=>{if(!iso)return'–';const s=Math.floor((Date.now()-new Date(iso.
 function tick(){document.getElementById('clock').textContent=new Date().toLocaleString('ko-KR',{hour12:false});}
 setInterval(tick,1000);tick();
 
-// ── 네비게이션 ───────────────────────────────────────────────
+// ── 네비게이션 ──────────────────────────────────────────
 function nav(el,view){
   document.querySelectorAll('.s-item').forEach(i=>i.classList.remove('active'));
   if(el) el.classList.add('active');
@@ -1073,23 +1245,21 @@ function nav(el,view){
   const target=document.getElementById('view-'+view) || document.getElementById('view-lang:TOPIK:EN');
   if(target) target.style.display='block';
   _currentView=view;
-  // 언어 뷰 동적 렌더
   if(view.startsWith('lang:')) renderLangView(view);
-  // 노드 데이터 로드
   if(view.startsWith('lang:') || view.startsWith('exam:')) loadNodeData(view);
+  if(view==='render'){loadBatchData();rpTab('batch');}
 }
 
 function toggleExam(el, view){
   const parts=view.split(':'); const exam=parts[1];
   const ch=document.getElementById('ch-'+exam);
   const arr=document.getElementById('arr-'+exam);
-  if(ch.classList.contains('open')){
-    ch.classList.remove('open'); arr.textContent='▶';
-  } else {
-    ch.classList.add('open'); arr.textContent='▼';
-  }
+  if(!ch)return nav(el,view);
+  if(ch.classList.contains('open')){ch.classList.remove('open');if(arr)arr.textContent='▶';}
+  else{ch.classList.add('open');if(arr)arr.textContent='▼';}
   nav(el,view);
 }
+function toggleRenderPanel(){nav(document.querySelector('[data-view=render]'),'render');}
 
 // ── 데이터 로드 ──────────────────────────────────────────────
 async function loadOverview(){
@@ -1118,101 +1288,81 @@ async function loadNodeData(view){
   }catch(e){}
 }
 
-// ── 헤더 / 진행 바 ───────────────────────────────────────────
+// ── 헤더 / 진행 바 ──────────────────────────────────────
 function renderHeader(d){
   const p=d.progress, run=p.status==='running';
   const row=document.getElementById('progress-row');
   row.style.display=run?'flex':'none';
+  const rs=document.getElementById('render-status');
+  rs.style.display=run?'flex':'none';
   if(run){
     document.getElementById('pr-word').textContent=p.word?p.word+' ('+p.meaning+')':'렌더링 중...';
     document.getElementById('pr-step').textContent=p.step||'';
     document.getElementById('pr-bar').style.width=(p.pct||0)+'%';
     document.getElementById('pr-pct').textContent=(p.pct||0)+'%';
+    document.getElementById('rs-text').textContent=p.word||'렌더링 중...';
   }
-  // 렌더링 토글 — 초기 타겟 동기화
   const cfg=d.render_config; _desktopEnabled=cfg.desktop_enabled;
   if(!window._targetInitDone){_batchTarget=_desktopEnabled?'desktop':'nas';_customTarget=_desktopEnabled?'desktop':'nas';window._targetInitDone=true;}
   const btn=document.getElementById('toggle-btn');
-  if(_desktopEnabled){btn.textContent='💻 데스크탑';btn.style.cssText='padding:3px 10px;font-size:.72rem;background:#1a1a3a;color:#818cf8;border:1px solid #818cf8;border-radius:6px;cursor:pointer;';}
-  else{btn.textContent='🖥 NAS';btn.style.cssText='padding:3px 10px;font-size:.72px;background:#0d2b0d;color:#3fb950;border:1px solid #3fb950;border-radius:6px;cursor:pointer;font-size:.72rem;';}
+  if(btn){
+    if(_desktopEnabled){btn.textContent='💻 데스크탑';btn.className='btn btn-p';btn.style.fontSize='.72rem';}
+    else{btn.textContent='🖥 NAS';btn.className='btn btn-g';btn.style.fontSize='.72rem';}
+  }
   const q=cfg.queue||{};
   const qb=document.getElementById('queue-badge');
-  if(q.status==='pending') qb.textContent='⏳ 대기';
-  else if(q.status==='claimed') qb.textContent='🔄 '+q.claimed_by;
-  else if(q.status==='done') qb.textContent='✅';
+  if(q.status==='pending') qb.textContent='⏳';
+  else if(q.status==='claimed') qb.textContent='🔄';
   else qb.textContent='';
+  // 사이드바 배지
+  const sb=document.getElementById('sb-render-badge');
+  if(sb) sb.innerHTML=run?'<span class="pulse" style="color:var(--green);">●</span>':'';
 }
 
-// ── 전체 개요 ────────────────────────────────────────────────
+// ── 전체 개요 ──────────────────────────────────────────
 function renderOverview(d){
   const ov=d.overview, t=ov.total||1;
-  document.getElementById('ov-total').textContent=fmt(ov.total);
-  document.getElementById('ov-gen').textContent=fmt(ov.generated);
-  document.getElementById('ov-upl').textContent=fmt(ov.uploaded);
-  document.getElementById('ov-remain').textContent=fmt(ov.total-ov.uploaded);
-  document.getElementById('ov-gen-bar').style.width=(ov.generated/t*100)+'%';
-  document.getElementById('ov-upl-bar').style.width=(ov.uploaded/t*100)+'%';
+  setEl('ov-total',fmt(ov.total));
+  setEl('ov-gen',fmt(ov.generated));
+  setEl('ov-upl',fmt(ov.uploaded));
+  setEl('ov-remain',fmt(ov.total-ov.uploaded));
+  const gb=document.getElementById('ov-gen-bar');if(gb)gb.style.width=(ov.generated/t*100)+'%';
+  const ub=document.getElementById('ov-upl-bar');if(ub)ub.style.width=(ov.uploaded/t*100)+'%';
+  // 파이프라인
+  setEl('ov-pipe-render',fmt(ov.generated)+' / '+fmt(ov.total));
+  setEl('ov-pipe-upload',fmt(ov.uploaded)+' / '+fmt(ov.total));
+  const prb=document.getElementById('ov-pipe-render-bar');if(prb)prb.style.width=(ov.generated/t*100)+'%';
+  const pub=document.getElementById('ov-pipe-upload-bar');if(pub)pub.style.width=(ov.uploaded/t*100)+'%';
   // 타임라인
   const tl=d.timeline||{};const keys=Object.keys(tl).sort();const vals=keys.map(k=>tl[k]);
   if(keys.length){
     if(_chartTL){_chartTL.data.labels=keys;_chartTL.data.datasets[0].data=vals;_chartTL.update();}
     else _chartTL=new Chart(document.getElementById('chart-timeline'),{
       type:'line',data:{labels:keys,datasets:[{data:vals,borderColor:'#3fb950',backgroundColor:'rgba(63,185,80,.1)',fill:true,tension:.3,pointRadius:3,pointBackgroundColor:'#3fb950'}]},
-      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:var_muted(),maxTicksLimit:8},grid:{display:false}},y:{ticks:{color:var_muted(),stepSize:1},grid:{color:'#21262d'}}}}
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#8b949e',maxTicksLimit:8},grid:{display:false}},y:{ticks:{color:'#8b949e',stepSize:1},grid:{color:'#21262d'}}}}
     });
   }
   // 음악
-  const ml=document.getElementById('ov-music');ml.innerHTML='';
-  if(!d.music_files||!d.music_files.length) ml.innerHTML='<span style="color:var(--muted);font-size:.78rem;">assets/music/ 폴더가 비어 있습니다</span>';
-  else d.music_files.forEach(f=>{ml.innerHTML+=`<div class="chip">🎵 ${f}</div>`;});
-  // 시험 카테고리 카드
-  renderExamCategoryCards(d);
+  const ml=document.getElementById('ov-music');if(ml){ml.innerHTML='';
+  if(!d.music_files||!d.music_files.length) ml.innerHTML='<span style="color:var(--muted);font-size:.74rem;">music/ 폴더가 비어있습니다</span>';
+  else d.music_files.forEach(f=>{ml.innerHTML+=`<div class="chip">🎵 ${f}</div>`;});}
 }
 
-function var_muted(){return '#8b949e';}
-
-function renderExamCategoryCards(d){
-  const el=document.getElementById('exam-cards-view');
-  if(!el)return;
-  const exams=[
-    {id:'TOPIK',flag:'🇰🇷',name:'TOPIK',color:'#818cf8',desc:'한국어능력시험'},
-    {id:'TOEIC',flag:'📝',name:'TOEIC',color:'#60a5fa',desc:'비즈니스 영어',soon:true},
-    {id:'JLPT',flag:'🌸',name:'JLPT',color:'#f472b6',desc:'일본어능력시험',soon:true},
-    {id:'IELTS',flag:'🎓',name:'IELTS',color:'#a78bfa',desc:'국제영어시험',soon:true},
-    {id:'HSK',flag:'🐉',name:'HSK',color:'#f87171',desc:'중국어능력시험',soon:true},
-  ];
-  el.innerHTML=exams.map(e=>`
-    <div onclick="${e.soon?'':'nav(document.querySelector(\"[data-view=exam\\\\:'+e.id+']\"),\"exam:'+e.id+'\")'}"
-         style="background:var(--card);border:1px solid ${e.soon?'var(--border)':e.color+'44'};border-radius:12px;padding:18px;cursor:${e.soon?'default':'pointer'};transition:.15s;${e.soon?'opacity:.5':''}">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:1.5rem;">${e.flag}</span>
-          <div><div style="font-weight:700;color:${e.color};">${e.name}</div><div style="font-size:.7rem;color:var(--muted);">${e.desc}</div></div>
-        </div>
-        ${e.soon?'<span class="badge badge-soon">준비 중</span>':'<span style="color:'+e.color+';font-size:1rem;">›</span>'}
-      </div>
-      ${e.soon?'':`<div style="font-size:.75rem;color:var(--muted);">EN · CN · JP · VN · SP</div>`}
-    </div>`).join('');
-}
-
-// ── 시험 뷰 (언어 카드) ─────────────────────────────────────
+// ── 시험 뷰 (언어 카드) ────────────────────────────────
 function renderExamView(exam, stats){
   const el=document.getElementById('topik-lang-cards');
   if(!el)return;
-  const langs=['EN','CN','JP','VN','SP'];
+  const langs=['EN','CN','JP','VN','ES'];
   const col=EXAM_COLORS[exam]||'#818cf8';
   el.innerHTML=langs.map(lang=>`
-    <div class="lang-card available" style="--card-color:${col}44;border-color:${lang==='EN'?col+'66':'var(--border)'};"
-         onclick="nav(document.querySelector('[data-view=lang\\:${exam}\\:${lang}]')||createLangView('${exam}','${lang}'),'lang:${exam}:${lang}')">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div style="font-size:1.2rem;">${LANG_NAMES[lang]||lang}</div>
-        ${lang==='EN'?`<span class="badge" style="background:${col}22;color:${col};border:1px solid ${col}44;">활성</span>`:'<span class="badge badge-soon">준비 중</span>'}
+    <div class="card-sm" style="cursor:pointer;border-color:${col}33;transition:.15s;"
+         onmouseover="this.style.borderColor='${col}66'" onmouseout="this.style.borderColor='${col}33'"
+         onclick="nav(null,'lang:${exam}:${lang}')">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <span style="font-size:1rem;">${LANG_NAMES[lang]||lang}</span>
+        <span class="badge badge-p" style="font-size:.6rem;">활성</span>
       </div>
-      ${lang==='EN'?`
-      <div style="font-size:1.4rem;font-weight:700;color:${col};">${fmt(stats.generated||0)}</div>
-      <div style="font-size:.7rem;color:var(--muted);">영상 생성 / ${fmt(stats.total||0)} 전체</div>
-      <div class="pbar-bg" style="height:4px;margin-top:8px;"><div class="pbar" style="height:4px;width:${stats.total?(stats.generated/stats.total*100).toFixed(1):0}%;background:${col};"></div></div>
-      `:`<div style="font-size:.8rem;color:var(--muted2);">콘텐츠 준비 중</div>`}
+      <div style="font-size:.78rem;color:var(--muted);">콘텐츠 준비됨</div>
     </div>`).join('');
 }
 
@@ -1232,67 +1382,49 @@ function renderLangDetailContent(stats, parts){
   const total=stats.total||1;
   const el=document.getElementById('view-lang:'+exam+':'+lang) || document.getElementById('view-lang:TOPIK:EN');
   if(!el)return;
-
-  // 등급별 바
   const lvRows=[1,2,3,4,5,6].map(lv=>{
-    const info=stats.by_level?.[String(lv)]||{total:0,generated:0,uploaded:0};
+    const info=stats.by_level?.[String(lv)]||{total:0,generated:0,uploaded:0,min_id:null,max_id:null};
     const gpct=info.total?Math.round(info.generated/info.total*100):0;
-    const upct=info.total?Math.round(info.uploaded/info.total*100):0;
+    const idRange=info.min_id!=null?`#${info.min_id}~${info.max_id}`:'–';
     return `<tr>
       <td><span style="color:${LVC[lv]};font-weight:700;">${lv}급</span></td>
+      <td style="color:var(--muted2);font-size:.7rem;">${idRange}</td>
       <td style="color:var(--muted);">${fmt(info.total)}</td>
-      <td style="color:${col};">${fmt(info.generated)} <span style="color:var(--muted2);font-size:.7rem;">(${gpct}%)</span></td>
-      <td style="color:#3fb950;">${fmt(info.uploaded)} <span style="color:var(--muted2);font-size:.7rem;">(${upct}%)</span></td>
-      <td style="width:120px;"><div class="pbar-bg" style="height:4px;"><div class="pbar" style="height:4px;width:${gpct}%;background:${col};"></div></div></td>
+      <td style="color:${col};">${fmt(info.generated)} <span style="color:var(--muted2);font-size:.65rem;">(${gpct}%)</span></td>
+      <td style="color:var(--green);">${fmt(info.uploaded)}</td>
+      <td style="width:100px;"><div class="pbar-bg" style="height:3px;"><div class="pbar" style="height:3px;width:${gpct}%;background:${col};"></div></div></td>
     </tr>`;}).join('');
-
-  // 최근 영상
   const vidRows=(stats.video_list||[]).slice(-20).reverse().map(v=>`<tr>
     <td style="color:var(--muted);">${v.day?'#'+v.day:'–'}</td>
+    <td style="color:var(--muted2);font-size:.7rem;">#${v.word_id}</td>
     <td style="font-weight:600;">${v.word}</td>
     <td><span style="color:${LVC[v.level]};font-weight:600;">${v.level}급</span></td>
-    <td style="color:var(--muted);font-size:.75rem;">${v.music_file?'🎵 '+v.music_file:'–'}</td>
-    <td style="color:#fbbf24;font-weight:600;">${v.views?fmt(v.views):'–'}</td>
-    <td>${v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:#f87171;font-size:.75rem;">▶</a>`:'–'}</td>
+    <td style="color:var(--muted);font-size:.72rem;">${v.music_file?'🎵 '+v.music_file:'–'}</td>
+    <td style="color:var(--amber);font-weight:600;">${v.views?fmt(v.views):'–'}</td>
+    <td>${v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:var(--red);font-size:.72rem;">▶</a>`:'–'}</td>
   </tr>`).join('');
-
   el.innerHTML=`
-    <div class="breadcrumb-bar">
-      <span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">📊 개요</span>
+    <div class="bc">
+      <span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">대시보드</span>
       <span style="color:var(--muted2);">›</span>
-      <span onclick="nav(document.querySelector('[data-view=cat\\\\:시험용]'),'cat:시험용')">📚 시험용</span>
+      <span onclick="nav(document.querySelector('[data-view=exam\\\\:${exam}]'),'exam:${exam}')">TOPIK</span>
       <span style="color:var(--muted2);">›</span>
-      <span onclick="nav(document.querySelector('[data-view=exam\\\\:${exam}]'),'exam:${exam}')">🇰🇷 ${exam}</span>
-      <span style="color:var(--muted2);">›</span>
-      <span class="active">${LANG_NAMES[lang]||lang}</span>
+      <span class="cur">${LANG_NAMES[lang]||lang}</span>
     </div>
-    <div class="grid-3" style="margin-bottom:16px;">
-      <div class="card-sm" style="text-align:center;border-color:${col}44;">
-        <div class="stat-n" style="color:${col};">${fmt(stats.total)}</div>
-        <div style="font-size:.72rem;color:var(--muted);margin-top:4px;">전체 단어</div>
-      </div>
-      <div class="card-sm" style="text-align:center;">
-        <div class="stat-n" style="color:${col};">${fmt(stats.generated)}</div>
-        <div style="font-size:.72rem;color:var(--muted);margin-top:4px;">영상 생성 (${total?(stats.generated/total*100).toFixed(1):0}%)</div>
-        <div class="pbar-bg" style="height:4px;margin-top:6px;"><div class="pbar" style="height:4px;width:${total?(stats.generated/total*100):0}%;background:${col};"></div></div>
-      </div>
-      <div class="card-sm" style="text-align:center;">
-        <div class="stat-n" style="color:#3fb950;">${fmt(stats.uploaded)}</div>
-        <div style="font-size:.72rem;color:var(--muted);margin-top:4px;">업로드 완료 (${total?(stats.uploaded/total*100).toFixed(1):0}%)</div>
-        <div class="pbar-bg" style="height:4px;margin-top:6px;"><div class="pbar" style="height:4px;width:${total?(stats.uploaded/total*100):0}%;background:#3fb950;"></div></div>
-      </div>
+    <div class="g3" style="margin-bottom:14px;">
+      <div class="card-sm kpi" style="border-color:${col}33;"><div class="num" style="color:${col};">${fmt(stats.total)}</div><div class="label">전체 단어</div></div>
+      <div class="card-sm kpi"><div class="num" style="color:${col};">${fmt(stats.generated)}</div><div class="label">영상 생성 (${(stats.generated/total*100).toFixed(1)}%)</div>
+        <div class="pbar-bg" style="height:3px;margin-top:5px;"><div class="pbar" style="height:3px;width:${stats.generated/total*100}%;background:${col};"></div></div></div>
+      <div class="card-sm kpi"><div class="num" style="color:var(--green);">${fmt(stats.uploaded)}</div><div class="label">업로드 (${(stats.uploaded/total*100).toFixed(1)}%)</div>
+        <div class="pbar-bg" style="height:3px;margin-top:5px;"><div class="pbar" style="height:3px;width:${stats.uploaded/total*100}%;background:var(--green);"></div></div></div>
     </div>
-    <div class="grid-2" style="margin-bottom:16px;">
-      <div class="card">
-        <div class="sec-title">등급별 현황</div>
-        <table><thead><tr><th>등급</th><th>전체</th><th>생성</th><th>업로드</th><th>진행률</th></tr></thead>
-        <tbody>${lvRows}</tbody></table>
-      </div>
-      <div class="card">
-        <div class="sec-title">최근 영상</div>
-        <table><thead><tr><th>Day</th><th>단어</th><th>등급</th><th>음악</th><th>조회수</th><th></th></tr></thead>
-        <tbody>${vidRows||'<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px;">영상 없음</td></tr>'}</tbody></table>
-      </div>
+    <div class="g2">
+      <div class="card"><div class="sec">등급별 현황</div>
+        <table><thead><tr><th>등급</th><th>ID</th><th>전체</th><th>생성</th><th>업로드</th><th>진행률</th></tr></thead>
+        <tbody>${lvRows}</tbody></table></div>
+      <div class="card"><div class="sec">최근 영상</div>
+        <table><thead><tr><th>Day</th><th>ID</th><th>단어</th><th>등급</th><th>음악</th><th>조회수</th><th></th></tr></thead>
+        <tbody>${vidRows||'<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:16px;">영상 없음</td></tr>'}</tbody></table></div>
     </div>`;
 }
 
@@ -1336,7 +1468,7 @@ function renderIllustStats(ill, prefix){
       </div>`;}).join('');
   }
 
-  // 진행 배지
+  // 진행 배지 + 게이지
   const prog=ill.progress||{};
   const badge=document.getElementById(P+'-badge');
   if(badge){
@@ -1346,6 +1478,21 @@ function renderIllustStats(ill, prefix){
       badge.className='badge badge-run pulse';
     } else if(prog.status==='done'){badge.textContent='✅ 완료';badge.className='badge badge-done';}
     else{badge.textContent='대기 중';badge.className='badge badge-idle';}
+  }
+  // 일러스트 생성 게이지
+  const gp=document.getElementById('ov-illust-gen-progress');
+  if(gp){
+    if(prog.status==='running'){
+      gp.style.display='block';
+      const pct=prog.pct||0;
+      setEl('ov-illust-gen-pct',pct+'%');
+      setEl('ov-illust-gen-step',prog.step||'');
+      setEl('ov-illust-gen-label',`🎨 일러스트 생성 중 — 단어 ${prog.done_word||0}장 · 예문 ${prog.done_sent||0}장`);
+      const gb=document.getElementById('ov-illust-gen-bar');
+      if(gb) gb.style.width=pct+'%';
+    } else {
+      gp.style.display='none';
+    }
   }
 
   // ov → illustrations view 동기화
@@ -1470,26 +1617,21 @@ async function startIllustGen2(){ await _startIllust(+document.getElementById('i
 
 function setEl(id,val){const e=document.getElementById(id);if(e)e.textContent=val;}
 
-// ── 렌더 패널 ───────────────────────────────────────────────
-let _rpOpen=false, _rpTab='batch', _batchData=null, _configSlots=[];
+// ── 렌더 패널 ──────────────────────────────────────────
+let _rpTab='batch', _batchData=null, _configSlots=[];
+let _batchChecked=new Set();
 let _batchTarget='desktop', _customTarget='desktop';
-
-function toggleRenderPanel(){
-  _rpOpen=!_rpOpen;
-  document.getElementById('render-panel').style.transform=_rpOpen?'translateX(0)':'translateX(100%)';
-  if(_rpOpen){ loadBatchData(); rpTab('batch'); }
-}
 
 function rpTab(tab){
   _rpTab=tab;
   ['batch','custom','history','config'].forEach(t=>{
     const v=document.getElementById('rp-'+t);if(v)v.style.display=t===tab?'block':'none';
     const b=document.getElementById('rp-tab-'+t);
-    if(b){b.style.borderBottomColor=t===tab?'#3fb950':'transparent';b.style.color=t===tab?'#e6edf3':'#8b949e';}
+    if(b){b.classList.toggle('on',t===tab);}
   });
   if(tab==='batch') loadBatchData();
   if(tab==='custom') updateCustomPreview();
-  if(tab==='history'){document.getElementById('rp-date-pick').value=new Date().toISOString().slice(0,10);loadHistoryDate();}
+  if(tab==='history'){const dp=document.getElementById('rp-date-pick');if(dp)dp.value=new Date().toISOString().slice(0,10);loadHistoryDate();}
   if(tab==='config') loadConfigSlots();
 }
 
@@ -1497,13 +1639,15 @@ async function loadBatchData(){
   try{ const r=await fetch('/api/batch/today'); _batchData=await r.json(); renderBatchList(_batchData); }catch(e){}
 }
 
-const _FLAGS={EN:'🇺🇸',JP:'🇯🇵',CN:'🇨🇳',VN:'🇻🇳',SP:'🇪🇸',KO:'🇰🇷',FR:'🇫🇷',DE:'🇩🇪'};
 const _STATUS_HTML={
   pending:'<span style="color:#f59e0b;font-size:.72rem;">● 대기</span>',
   rendering:'<span style="color:#3fb950;font-size:.72rem;" class="pulse">⟳ 렌더링</span>',
+  uploading:'<span style="color:#58a6ff;font-size:.72rem;" class="pulse">⟳ 업로드</span>',
   generated:'<span style="color:#818cf8;font-size:.72rem;">✓ 생성됨</span>',
   uploaded:'<span style="color:#3fb950;font-size:.72rem;">✓ 업로드</span>',
   no_word:'<span style="color:#484f58;font-size:.72rem;">— 완료</span>',
+  skipped:'<span style="color:#8b949e;font-size:.72rem;">⏭ 건너뜀</span>',
+  cancelled:'<span style="color:#f87171;font-size:.72rem;">✕ 취소됨</span>',
 };
 
 function renderBatchList(d){
@@ -1520,39 +1664,90 @@ function renderBatchList(d){
   const bq=d.queue||{};
   const qEl=document.getElementById('rp-batch-queue');
   if(qEl) qEl.textContent=bq.status==='running'?`배치 진행 중: ${bq.current||0}/${bq.total||0} · ${bq.target==='desktop'?'💻 데스크탑':'🖥 NAS'}`:'';
+  // 렌더링 게이지
+  const rp=document.getElementById('rp-batch-progress');
+  if(rp){
+    if(bq.status==='running'&&bq.total>0){
+      rp.style.display='block';
+      const cur=bq.current||0, tot=bq.total||1;
+      const pct=Math.round(cur/tot*100);
+      setEl('rp-batch-prog-pct',pct+'%');
+      const gb=document.getElementById('rp-batch-prog-bar');
+      if(gb) gb.style.width=pct+'%';
+      // 현재 렌더링 중인 항목 이름
+      const curItem=(bq.items||[]).find(it=>it.status==='rendering');
+      const curWord=curItem?` — ${curItem.word||'ID '+curItem.word_id}`:'';
+      setEl('rp-batch-prog-label',`🎬 렌더링 중 (${cur}/${tot})${curWord}`);
+      setEl('rp-batch-prog-step',bq.target==='desktop'?'💻 데스크탑 GPU':'🖥 NAS CPU');
+    } else {
+      rp.style.display='none';
+    }
+  }
+  // 렌더링/취소 버튼
+  const isRunning=bq.status==='running';
   const btn=document.getElementById('rp-render-all');
-  if(btn){btn.disabled=bq.status==='running'||pending===0;btn.textContent=bq.status==='running'?'⏳ 진행 중...':'▶ 전체 렌더링 ('+pending+'개 · '+(_batchTarget==='desktop'?'💻 GPU':'🖥 NAS')+')';}
+  const cancelBtn=document.getElementById('rp-cancel-btn');
+  const checkedPending=batch.filter((b,i)=>b.status==='pending'&&b.word&&_batchChecked.has(i)).length;
+  const renderCount=checkedPending>0?checkedPending:pending;
+  if(btn){
+    btn.disabled=isRunning||renderCount===0;
+    btn.textContent=isRunning?'⏳ 진행 중...':`▶ ${checkedPending>0?'선택':'전체'} 렌더링 (${renderCount}개 · ${_batchTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;
+    btn.style.display=isRunning?'none':'block';
+  }
+  if(cancelBtn){
+    cancelBtn.style.display=isRunning?'block':'none';
+  }
+  // 전체선택 체크 동기화
+  const selAll=document.getElementById('rp-select-all');
+  if(selAll){
+    const pendingIdxs=batch.map((b,i)=>b.status==='pending'&&b.word?i:-1).filter(i=>i>=0);
+    selAll.checked=pendingIdxs.length>0&&pendingIdxs.every(i=>_batchChecked.has(i));
+    selAll.indeterminate=!selAll.checked&&pendingIdxs.some(i=>_batchChecked.has(i));
+  }
   const el=document.getElementById('rp-batch-list');
   if(!batch.length){el.innerHTML='<div style="color:#8b949e;text-align:center;padding:20px;">슬롯이 없습니다. ⚙️ 설정 탭에서 추가하세요.</div>';return;}
   el.innerHTML=batch.map((b,i)=>{
     const w=b.word; const col=EXAM_COLORS[b.exam]||'#818cf8'; const lvC=LVC[b.level]||'#8b949e';
     const canR=b.status==='pending'&&w;
-    return `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:#1c2128;border-radius:8px;margin-bottom:5px;border:1px solid #21262d;">
-      <span style="font-size:.68rem;color:#484f58;min-width:14px;">${i+1}</span>
-      <span style="color:${col};font-size:.7rem;font-weight:700;min-width:42px;">${b.exam}</span>
-      <span style="font-size:.82rem;">${_FLAGS[b.lang]||b.lang}</span>
-      <span style="color:${lvC};font-size:.72rem;font-weight:700;">${b.level}급</span>
+    const isGen=b.status==='generated'&&w;
+    const chk=_batchChecked.has(i);
+    return `<div class="slot${chk?' hl':''}">
+      ${canR?`<input type="checkbox" ${chk?'checked':''} onchange="toggleBatchCheck(${i})" style="accent-color:var(--green);flex-shrink:0;">`
+        :`<span style="font-size:.66rem;color:var(--muted2);min-width:14px;">${i+1}</span>`}
+      <span style="color:${col};font-size:.68rem;font-weight:700;min-width:40px;">${b.exam}</span>
+      <span style="font-size:.78rem;">${_FLAGS[b.lang]||b.lang}</span>
+      <span style="color:${lvC};font-size:.7rem;font-weight:700;">${b.level}급</span>
       <div style="flex:1;min-width:0;">
-        ${w?`<div style="font-weight:600;font-size:.84rem;">${w.word}</div><div style="color:#8b949e;font-size:.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${w.meaning}</div>`
-          :'<div style="color:#484f58;font-size:.78rem;">– 모든 단어 완료</div>'}
+        ${w?`<div style="font-weight:600;font-size:.82rem;"><span style="color:var(--muted2);font-size:.66rem;margin-right:3px;">#${w.id}</span>${w.word} ${b.has_illust?'<span style="font-size:.58rem;" title="일러스트">🖼</span>':'<span style="color:var(--muted2);font-size:.58rem;">🖼</span>'}</div><div style="color:var(--muted);font-size:.66rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${w.meaning}</div>`
+          :'<div style="color:var(--muted2);font-size:.76rem;">– 완료</div>'}
       </div>
       ${_STATUS_HTML[b.status]||''}
-      ${canR?`<button onclick="renderSingle(${w.id})" style="padding:3px 10px;background:#0d2b0d;color:#3fb950;border:1px solid #3fb950;border-radius:5px;cursor:pointer;font-size:.72rem;">▶</button>`:''}
+      ${canR?`<button onclick="renderSingle(${w.id},'${b.exam}','${b.lang}',this)" class="btn btn-g" style="padding:2px 8px;font-size:.68rem;">▶</button>`:''}
+      ${isGen?`<button onclick="manualUpload(${w.id},'${b.exam}','${b.lang}',this)" class="btn btn-b" style="padding:2px 7px;font-size:.64rem;" title="YouTube 업로드">⬆</button>`:''}
     </div>`;
   }).join('');
+}
+
+function toggleBatchCheck(idx){
+  if(_batchChecked.has(idx)) _batchChecked.delete(idx);
+  else _batchChecked.add(idx);
+  if(_batchData) renderBatchList(_batchData);
+}
+function toggleAllBatchCheck(){
+  const batch=(_batchData||{}).batch||[];
+  const pendingIdxs=batch.map((b,i)=>b.status==='pending'&&b.word?i:-1).filter(i=>i>=0);
+  const allChecked=pendingIdxs.every(i=>_batchChecked.has(i));
+  if(allChecked) pendingIdxs.forEach(i=>_batchChecked.delete(i));
+  else pendingIdxs.forEach(i=>_batchChecked.add(i));
+  if(_batchData) renderBatchList(_batchData);
 }
 
 function updateBatchTargetUI(){
   const dBtn=document.getElementById('rp-target-desktop');
   const nBtn=document.getElementById('rp-target-nas');
   if(!dBtn||!nBtn) return;
-  if(_batchTarget==='desktop'){
-    dBtn.style.cssText='flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;border:1px solid #818cf8;background:#1a1a3a;color:#818cf8;transition:.15s;';
-    nBtn.style.cssText='flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;border:1px solid #30363d;background:transparent;color:#8b949e;transition:.15s;';
-  }else{
-    dBtn.style.cssText='flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;border:1px solid #30363d;background:transparent;color:#8b949e;transition:.15s;';
-    nBtn.style.cssText='flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;border:1px solid #3fb950;background:#0d2b0d;color:#3fb950;transition:.15s;';
-  }
+  if(_batchTarget==='desktop'){dBtn.className='btn btn-p';dBtn.style.fontSize='.7rem';dBtn.style.padding='4px 10px';nBtn.className='btn btn-m';nBtn.style.fontSize='.7rem';nBtn.style.padding='4px 10px';}
+  else{dBtn.className='btn btn-m';dBtn.style.fontSize='.7rem';dBtn.style.padding='4px 10px';nBtn.className='btn btn-g';nBtn.style.fontSize='.7rem';nBtn.style.padding='4px 10px';}
 }
 
 function setBatchTarget(t){
@@ -1564,22 +1759,63 @@ async function renderBatchAll(){
   const btn=document.getElementById('rp-render-all');
   btn.disabled=true;btn.textContent='⏳ 요청 중...';
   try{
-    const r=await fetch('/api/render/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:_batchTarget})});
+    const autoUpload=document.getElementById('rp-auto-upload').checked;
+    const batch=(_batchData||{}).batch||[];
+    // 체크된 항목만 있으면 그것만, 없으면 전체 pending
+    let selectedIds=[];
+    if(_batchChecked.size>0){
+      selectedIds=batch.filter((b,i)=>_batchChecked.has(i)&&b.status==='pending'&&b.word).map(b=>b.word.id);
+    }
+    const body={target:_batchTarget,auto_upload:autoUpload};
+    if(selectedIds.length>0) body.word_ids=selectedIds;
+    const r=await fetch('/api/render/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok) alert('오류: '+(d.error||''));
-    else setTimeout(loadBatchData,500);
+    else{_batchChecked.clear();setTimeout(loadBatchData,500);}
   }catch(e){alert('실패: '+e);}
   finally{btn.disabled=false;btn.textContent='▶ 전체 렌더링';}
 }
 
-async function renderSingle(wordId){
+async function cancelBatchRender(){
+  if(!confirm('렌더링을 취소할까요?')) return;
   try{
-    const t=_rpTab==='custom'?_customTarget:_batchTarget;
-    const r=await fetch('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word_id:wordId,target:t})});
+    const r=await fetch('/api/render/cancel',{method:'POST'});
     const d=await r.json();
     if(!r.ok) alert('오류: '+(d.error||''));
-    else{setTimeout(loadBatchData,500);loadOverview();}
+    else setTimeout(loadBatchData,500);
   }catch(e){alert('실패: '+e);}
+}
+
+async function manualUpload(wordId,exam,lang,btnEl){
+  if(!confirm('이 영상을 YouTube에 업로드할까요?')) return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='⏳';btnEl.style.opacity='.5';}
+  try{
+    const r=await fetch('/api/upload/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word_id:wordId,exam,lang})});
+    const d=await r.json();
+    if(!r.ok){alert('오류: '+(d.error||''));if(btnEl){btnEl.disabled=false;btnEl.textContent='⬆';btnEl.style.opacity='1';}}
+    else{
+      if(btnEl){btnEl.textContent='✓';btnEl.style.color='#3fb950';btnEl.style.borderColor='#3fb950';}
+      alert('업로드 완료!\\n'+d.url);
+      setTimeout(loadBatchData,500);loadOverview();
+    }
+  }catch(e){alert('실패: '+e);if(btnEl){btnEl.disabled=false;btnEl.textContent='⬆';btnEl.style.opacity='1';}}
+}
+
+async function renderSingle(wordId,exam,lang,btnEl){
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='⏳';btnEl.style.opacity='.5';}
+  try{
+    const t=_rpTab==='custom'?_customTarget:_batchTarget;
+    const body={word_id:wordId,target:t};
+    if(exam) body.exam=exam;
+    if(lang) body.lang=lang;
+    const r=await fetch('/api/render',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){alert('오류: '+(d.error||''));if(btnEl){btnEl.disabled=false;btnEl.textContent='▶';btnEl.style.opacity='1';}}
+    else{
+      if(btnEl){btnEl.textContent='✓';btnEl.style.background='#1a1a3a';btnEl.style.color='#818cf8';btnEl.style.borderColor='#818cf8';}
+      setTimeout(loadBatchData,1000);loadOverview();
+    }
+  }catch(e){alert('실패: '+e);if(btnEl){btnEl.disabled=false;btnEl.textContent='▶';btnEl.style.opacity='1';}}
 }
 
 // ── 커스텀 렌더링 ─────────────────────────────────────────
@@ -1587,13 +1823,9 @@ function setCustomTarget(t){
   _customTarget=t;
   const dBtn=document.getElementById('rc-target-desktop');
   const nBtn=document.getElementById('rc-target-nas');
-  if(t==='desktop'){
-    dBtn.style.cssText='flex:1;padding:8px;border-radius:6px;cursor:pointer;font-size:.76rem;font-weight:600;border:1px solid #818cf8;background:#1a1a3a;color:#818cf8;transition:.15s;';
-    nBtn.style.cssText='flex:1;padding:8px;border-radius:6px;cursor:pointer;font-size:.76rem;font-weight:600;border:1px solid #30363d;background:transparent;color:#8b949e;transition:.15s;';
-  }else{
-    dBtn.style.cssText='flex:1;padding:8px;border-radius:6px;cursor:pointer;font-size:.76rem;font-weight:600;border:1px solid #30363d;background:transparent;color:#8b949e;transition:.15s;';
-    nBtn.style.cssText='flex:1;padding:8px;border-radius:6px;cursor:pointer;font-size:.76rem;font-weight:600;border:1px solid #3fb950;background:#0d2b0d;color:#3fb950;transition:.15s;';
-  }
+  if(!dBtn||!nBtn)return;
+  if(t==='desktop'){dBtn.className='btn btn-p';dBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';nBtn.className='btn btn-m';nBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';}
+  else{dBtn.className='btn btn-m';dBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';nBtn.className='btn btn-g';nBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';}
   updateCustomTimeEst();
 }
 
@@ -1634,6 +1866,7 @@ async function _doCustomPreview(){
         <span style="font-size:.66rem;color:#484f58;min-width:18px;text-align:right;">${i+1}</span>
         <span style="color:${c};font-size:.68rem;font-weight:700;">Lv.${w.level}</span>
         <span style="font-weight:600;font-size:.82rem;">${w.word}</span>
+        <span style="font-size:.6rem;" title="${w.has_illust?'일러스트 있음':'일러스트 없음'}">${w.has_illust?'🖼':'<span style="opacity:.3;">🖼</span>'}</span>
         <span style="color:#8b949e;font-size:.68rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${w.meaning}</span>
         <span style="color:#484f58;font-size:.64rem;">ID ${w.id}</span>
       </div>`;
@@ -1689,8 +1922,10 @@ async function loadHistoryDate(){
       const c=LVC[v.level]||'#8b949e';
       return `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:#1c2128;border-radius:8px;margin-bottom:5px;border:1px solid #21262d;">
         <span style="color:${c};font-weight:700;font-size:.72rem;">${v.level}급</span>
+        <span style="color:#484f58;font-size:.66rem;">#${v.word_id}</span>
         <div style="flex:1;"><div style="font-weight:600;font-size:.84rem;">${v.word}</div><div style="color:#8b949e;font-size:.68rem;">${v.exam}/${v.lang}</div></div>
-        ${v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:#f87171;font-size:.78rem;">▶ YT</a>`:'<span style="color:#818cf8;font-size:.72rem;">생성됨</span>'}
+        ${v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:#f87171;font-size:.78rem;">▶ YT</a>`
+          :`<button onclick="manualUpload(${v.word_id},'${v.exam}','${v.lang}',this)" style="padding:3px 8px;background:#0d1b2b;color:#58a6ff;border:1px solid #58a6ff;border-radius:5px;cursor:pointer;font-size:.68rem;" title="YouTube 업로드">⬆ 업로드</button>`}
         <span style="color:#484f58;font-size:.68rem;">${(v.generated_at||'').slice(11,16)}</span>
       </div>`;
     }).join('');
@@ -1703,23 +1938,24 @@ async function loadConfigSlots(){
 
 function renderConfigSlots(){
   const el=document.getElementById('rp-config-slots');
+  if(!el)return;
   const exams=['TOPIK','TOEIC','JLPT','IELTS','HSK'];
-  const langs=['EN','JP','CN','VN','SP','KO','FR','DE'];
+  const langs=['EN','JP','CN','VN','ES','KO','FR','DE'];
   const levels=[1,2,3,4,5,6];
   el.innerHTML=_configSlots.map((s,i)=>`
-    <div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;background:#1c2128;padding:7px 10px;border-radius:7px;border:1px solid #21262d;">
-      <span style="color:#484f58;font-size:.68rem;min-width:16px;">${i+1}</span>
-      <select onchange="_configSlots[${i}].exam=this.value" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:3px 5px;font-size:.72rem;">
+    <div class="slot">
+      <span style="color:var(--muted2);font-size:.66rem;min-width:14px;">${i+1}</span>
+      <select onchange="_configSlots[${i}].exam=this.value" class="inp" style="padding:3px 5px;font-size:.7rem;">
         ${exams.map(e=>`<option${s.exam===e?' selected':''}>${e}</option>`).join('')}
       </select>
-      <select onchange="_configSlots[${i}].lang=this.value" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:3px 5px;font-size:.72rem;">
+      <select onchange="_configSlots[${i}].lang=this.value" class="inp" style="padding:3px 5px;font-size:.7rem;">
         ${langs.map(l=>`<option${s.lang===l?' selected':''}>${l}</option>`).join('')}
       </select>
-      <select onchange="_configSlots[${i}].level=+this.value" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:5px;padding:3px 5px;font-size:.72rem;">
+      <select onchange="_configSlots[${i}].level=+this.value" class="inp" style="padding:3px 5px;font-size:.7rem;">
         ${levels.map(lv=>`<option${s.level===lv?' selected':''}>${lv}</option>`).join('')}
       </select>
-      <span style="font-size:.72rem;">${_FLAGS[s.lang]||''}</span>
-      <button onclick="_configSlots.splice(${i},1);renderConfigSlots()" style="margin-left:auto;background:none;border:none;color:#f87171;cursor:pointer;font-size:.85rem;">✕</button>
+      <span style="font-size:.7rem;">${_FLAGS[s.lang]||''}</span>
+      <button onclick="_configSlots.splice(${i},1);renderConfigSlots()" style="margin-left:auto;background:none;border:none;color:var(--red);cursor:pointer;font-size:.82rem;">✕</button>
     </div>`).join('');
 }
 
@@ -1734,122 +1970,18 @@ function resetSchedule(){
   _configSlots=[
     {exam:'TOPIK',lang:'EN',level:1},{exam:'TOPIK',lang:'EN',level:2},{exam:'TOPIK',lang:'EN',level:3},
     {exam:'TOPIK',lang:'JP',level:1},{exam:'TOPIK',lang:'JP',level:2},{exam:'TOPIK',lang:'JP',level:3},
-    {exam:'TOPIK',lang:'SP',level:1},{exam:'TOPIK',lang:'SP',level:2},{exam:'TOPIK',lang:'SP',level:3},
+    {exam:'TOPIK',lang:'ES',level:1},{exam:'TOPIK',lang:'ES',level:2},{exam:'TOPIK',lang:'ES',level:3},
   ];
   renderConfigSlots();
 }
 
-// ── 초기화 ───────────────────────────────────────────────────
-updateIllustCost(); updateIllustCost2();
+// ── 초기화 ──────────────────────────────────────────────
+updateIllustCost2();
 loadOverview();
 setInterval(loadOverview,5000);
-// 패널 열려있으면 자동갱신
-setInterval(()=>{if(_rpOpen){if(_rpTab==='batch')loadBatchData();}},5000);
+setInterval(()=>{if(_currentView==='render'&&_rpTab==='batch')loadBatchData();},5000);
 </script>
 
-<!-- ══ 렌더 패널 (우측 드로어) ══════════════════════════════ -->
-<div id="render-panel" style="position:fixed;top:52px;right:0;width:460px;height:calc(100vh - 52px);background:#161b22;border-left:1px solid #21262d;transform:translateX(100%);transition:transform .3s ease;z-index:200;display:flex;flex-direction:column;box-shadow:-8px 0 24px rgba(0,0,0,.4);">
-  <div style="display:flex;align-items:center;padding:0 14px;height:42px;border-bottom:1px solid #21262d;flex-shrink:0;">
-    <span style="font-weight:700;font-size:.88rem;">렌더링 대기열</span>
-    <div style="display:flex;margin-left:12px;gap:0;">
-      <button onclick="rpTab('batch')" id="rp-tab-batch" style="padding:4px 10px;background:transparent;border:none;color:#e6edf3;cursor:pointer;font-size:.73rem;border-bottom:2px solid #3fb950;" class="rp-tab-btn">📅 오늘</button>
-      <button onclick="rpTab('custom')" id="rp-tab-custom" style="padding:4px 10px;background:transparent;border:none;color:#8b949e;cursor:pointer;font-size:.73rem;border-bottom:2px solid transparent;" class="rp-tab-btn">🎬 커스텀</button>
-      <button onclick="rpTab('history')" id="rp-tab-history" style="padding:4px 10px;background:transparent;border:none;color:#8b949e;cursor:pointer;font-size:.73rem;border-bottom:2px solid transparent;" class="rp-tab-btn">🗓 날짜별</button>
-      <button onclick="rpTab('config')" id="rp-tab-config" style="padding:4px 10px;background:transparent;border:none;color:#8b949e;cursor:pointer;font-size:.73rem;border-bottom:2px solid transparent;" class="rp-tab-btn">⚙️ 설정</button>
-    </div>
-    <button onclick="toggleRenderPanel()" style="margin-left:auto;background:none;border:none;color:#8b949e;cursor:pointer;font-size:1.1rem;padding:4px;">✕</button>
-  </div>
-  <!-- 오늘 분량 -->
-  <div id="rp-batch" style="flex:1;overflow-y:auto;padding:14px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-      <div><div id="rp-today-date" style="font-weight:700;font-size:.88rem;"></div><div id="rp-today-sub" style="font-size:.7rem;color:#8b949e;"></div></div>
-    </div>
-    <!-- 렌더링 위치 선택 -->
-    <div style="background:#1c2128;border:1px solid #21262d;border-radius:8px;padding:10px 12px;margin-bottom:12px;">
-      <div style="font-size:.68rem;color:#484f58;margin-bottom:6px;font-weight:600;">렌더링 위치</div>
-      <div style="display:flex;gap:6px;margin-bottom:6px;">
-        <button id="rp-target-desktop" onclick="setBatchTarget('desktop')" style="flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;border:1px solid #818cf8;background:#1a1a3a;color:#818cf8;transition:.15s;">💻 데스크탑 <span style="font-weight:400;font-size:.65rem;">GPU</span></button>
-        <button id="rp-target-nas" onclick="setBatchTarget('nas')" style="flex:1;padding:6px;border-radius:6px;cursor:pointer;font-size:.74rem;font-weight:600;border:1px solid #30363d;background:transparent;color:#8b949e;transition:.15s;">🖥 NAS <span style="font-weight:400;font-size:.65rem;">CPU</span></button>
-      </div>
-      <div id="rp-target-info" style="font-size:.66rem;color:#484f58;"></div>
-    </div>
-    <div id="rp-batch-list"></div>
-    <div id="rp-batch-queue" style="margin-top:10px;font-size:.72rem;color:#8b949e;"></div>
-    <button id="rp-render-all" onclick="renderBatchAll()" style="width:100%;margin-top:10px;background:#0d2b0d;color:#3fb950;border:1px solid #3fb950;border-radius:7px;padding:8px 14px;font-size:.78rem;font-weight:600;cursor:pointer;">▶ 전체 렌더링</button>
-  </div>
-  <!-- 커스텀 렌더링 -->
-  <div id="rp-custom" style="display:none;flex:1;overflow-y:auto;padding:14px;">
-    <!-- 렌더링 대상 -->
-    <div style="font-size:.72rem;color:#8b949e;margin-bottom:8px;font-weight:600;">🎯 렌더링 대상</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
-      <div>
-        <div style="font-size:.64rem;color:#484f58;margin-bottom:3px;">시험</div>
-        <select id="rc-exam" onchange="updateCustomPreview()" style="width:100%;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 8px;font-size:.78rem;">
-          <option value="TOPIK">🇰🇷 TOPIK</option><option value="TOEIC">📝 TOEIC</option><option value="JLPT">🌸 JLPT</option><option value="IELTS">🎓 IELTS</option><option value="HSK">🐉 HSK</option>
-        </select>
-      </div>
-      <div>
-        <div style="font-size:.64rem;color:#484f58;margin-bottom:3px;">언어</div>
-        <select id="rc-lang" onchange="updateCustomPreview()" style="width:100%;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 8px;font-size:.78rem;">
-          <option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="SP">🇪🇸 SP</option>
-        </select>
-      </div>
-      <div>
-        <div style="font-size:.64rem;color:#484f58;margin-bottom:3px;">등급</div>
-        <select id="rc-level" onchange="updateCustomPreview()" style="width:100%;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 8px;font-size:.78rem;">
-          <option value="1">1급</option><option value="2">2급</option><option value="3">3급</option><option value="4">4급</option><option value="5">5급</option><option value="6">6급</option>
-        </select>
-      </div>
-      <div>
-        <div style="font-size:.64rem;color:#484f58;margin-bottom:3px;">에피소드 수</div>
-        <input type="number" id="rc-count" value="10" min="1" max="30" onchange="updateCustomPreview()" oninput="updateCustomPreview()" style="width:100%;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 8px;font-size:.78rem;">
-      </div>
-    </div>
-    <!-- ID 범위 -->
-    <div style="background:#1c2128;border:1px solid #21262d;border-radius:7px;padding:8px 10px;margin-bottom:14px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-        <span style="font-size:.68rem;color:#484f58;font-weight:600;">단어 ID 범위 (선택)</span>
-        <span id="rc-id-range-hint" style="font-size:.62rem;color:#484f58;"></span>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <input type="number" id="rc-start-id" placeholder="시작" onchange="updateCustomPreview()" oninput="updateCustomPreview()" style="flex:1;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:5px 8px;font-size:.78rem;">
-        <span style="color:#484f58;font-size:.72rem;">~</span>
-        <input type="number" id="rc-end-id" placeholder="끝" onchange="updateCustomPreview()" oninput="updateCustomPreview()" style="flex:1;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:5px 8px;font-size:.78rem;">
-        <button onclick="document.getElementById('rc-start-id').value='';document.getElementById('rc-end-id').value='';updateCustomPreview();" style="padding:4px 8px;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#8b949e;cursor:pointer;font-size:.68rem;white-space:nowrap;">초기화</button>
-      </div>
-    </div>
-    <!-- 렌더링 위치 -->
-    <div style="font-size:.72rem;color:#8b949e;margin-bottom:8px;font-weight:600;">🖥 렌더링 위치</div>
-    <div style="display:flex;gap:6px;margin-bottom:6px;">
-      <button id="rc-target-desktop" onclick="setCustomTarget('desktop')" style="flex:1;padding:8px;border-radius:6px;cursor:pointer;font-size:.76rem;font-weight:600;border:1px solid #818cf8;background:#1a1a3a;color:#818cf8;transition:.15s;">💻 데스크탑<div style="font-size:.62rem;font-weight:400;margin-top:2px;">GPU · ~3분/편</div></button>
-      <button id="rc-target-nas" onclick="setCustomTarget('nas')" style="flex:1;padding:8px;border-radius:6px;cursor:pointer;font-size:.76rem;font-weight:600;border:1px solid #30363d;background:transparent;color:#8b949e;transition:.15s;">🖥 NAS<div style="font-size:.62rem;font-weight:400;margin-top:2px;">CPU · ~12분/편</div></button>
-    </div>
-    <div id="rc-time-est" style="font-size:.66rem;color:#484f58;margin-bottom:14px;"></div>
-    <!-- 미리보기 -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <span style="font-size:.72rem;color:#8b949e;font-weight:600;">📋 미리보기</span>
-      <span id="rc-remaining" style="font-size:.64rem;color:#484f58;"></span>
-    </div>
-    <div id="rc-preview" style="margin-bottom:14px;max-height:240px;overflow-y:auto;"></div>
-    <!-- 시작 버튼 -->
-    <button id="rc-start" onclick="startCustomRender()" style="width:100%;padding:10px;background:#0d2b0d;color:#3fb950;border:1px solid #3fb950;border-radius:8px;cursor:pointer;font-size:.82rem;font-weight:700;">▶ 렌더링 시작</button>
-  </div>
-  <!-- 날짜별 -->
-  <div id="rp-history" style="display:none;flex:1;overflow-y:auto;padding:14px;">
-    <input type="date" id="rp-date-pick" onchange="loadHistoryDate()" style="background:#21262d;border:1px solid #30363d;border-radius:6px;color:#e6edf3;padding:6px 10px;font-size:.82rem;width:100%;margin-bottom:12px;">
-    <div id="rp-history-list"></div>
-  </div>
-  <!-- 설정 -->
-  <div id="rp-config" style="display:none;flex:1;overflow-y:auto;padding:14px;">
-    <div style="font-size:.76rem;color:#8b949e;margin-bottom:10px;">하루 분량 설정 (시험/언어/등급별 슬롯)</div>
-    <div id="rp-config-slots"></div>
-    <button onclick="addSlot()" style="width:100%;margin-top:8px;padding:8px;background:#1c2128;border:1px dashed #30363d;border-radius:7px;color:#8b949e;cursor:pointer;font-size:.78rem;">+ 슬롯 추가</button>
-    <div style="display:flex;gap:8px;margin-top:12px;">
-      <button onclick="saveSchedule()" style="flex:1;padding:8px;background:#0d2b0d;color:#3fb950;border:1px solid #3fb950;border-radius:7px;cursor:pointer;font-weight:600;font-size:.8rem;">💾 저장</button>
-      <button onclick="resetSchedule()" style="padding:8px 14px;background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:7px;cursor:pointer;font-size:.8rem;">기본값</button>
-    </div>
-  </div>
-</div>
 
 </body>
 </html>"""

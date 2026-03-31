@@ -14,10 +14,16 @@ STEP 3: 유튜브 자동 업로드
 import json
 import os
 import sys
+import io
 import pickle
 import argparse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# Windows cp949 인코딩 문제 방지
+if sys.stdout.encoding != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -25,28 +31,152 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-CREDENTIALS_FILE = "credentials.json"   # OAuth 자격증명 파일
-TOKEN_FILE = "token.pickle"              # 저장된 토큰
+SCOPES = ["https://www.googleapis.com/auth/youtube",
+          "https://www.googleapis.com/auth/youtube.upload"]
+SECRETS_DIR = os.path.join(os.path.dirname(__file__) or ".", "secrets")
+CREDENTIALS_FILE = os.path.join(SECRETS_DIR, "credentials.json")
+CHANNELS_FILE = os.path.join(SECRETS_DIR, "youtube_channels.json")
+PLAYLISTS_FILE = os.path.join(SECRETS_DIR, "youtube_playlists.json")
+
+def _token_path_for_lang(lang: str = "EN") -> str:
+    """언어별 토큰 파일 경로 반환"""
+    if os.path.exists(CHANNELS_FILE):
+        with open(CHANNELS_FILE, encoding="utf-8") as f:
+            channels = json.load(f)
+        entry = channels.get(lang, {})
+        rel = entry.get("token", f"tokens/token_{lang}.pickle")
+        return os.path.join(SECRETS_DIR, rel)
+    return os.path.join(SECRETS_DIR, "tokens", f"token_{lang}.pickle")
 
 # ─── 인증 ────────────────────────────────────────────────────
-def get_youtube_client():
+def get_youtube_client(lang: str = "EN"):
+    """언어별 YouTube 채널 클라이언트 반환"""
+    token_file = _token_path_for_lang(lang)
     creds = None
-    if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, "rb") as f:
+    if os.path.exists(token_file):
+        with open(token_file, "rb") as f:
             creds = pickle.load(f)
-    
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            print(f"  [{lang}] YouTube 인증 필요 - 브라우저에서 로그인하세요")
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            # 서버 환경: 포트 지정해서 로컬 리다이렉트
             creds = flow.run_local_server(port=8080)
-        with open(TOKEN_FILE, "wb") as f:
+        os.makedirs(os.path.dirname(token_file), exist_ok=True)
+        with open(token_file, "wb") as f:
             pickle.dump(creds, f)
-    
+
     return build("youtube", "v3", credentials=creds)
+
+# ─── 재생목록 관리 ──────────────────────────────────────────
+PLAYLIST_TITLES = {
+    "EN": "TOPIK Level {level} - Korean Vocabulary",
+    "JP": "TOPIK {level}級 - 韓国語単語",
+    "CN": "TOPIK {level}级 - 韩语词汇",
+    "VN": "TOPIK Cấp {level} - Từ vựng tiếng Hàn",
+    "ES": "TOPIK Nivel {level} - Vocabulario coreano",
+}
+
+PLAYLIST_DESCS = {
+    "EN": "TOPIK Level {level} Korean vocabulary words with example sentences and illustrations.",
+    "JP": "TOPIK {level}級の韓国語単語を例文とイラストで学びます。",
+    "CN": "TOPIK {level}级韩语词汇，配有例句和插图。",
+    "VN": "Từ vựng tiếng Hàn TOPIK cấp {level} với câu ví dụ và minh họa.",
+    "ES": "Vocabulario coreano TOPIK nivel {level} con oraciones de ejemplo e ilustraciones.",
+}
+
+
+def load_playlists() -> dict:
+    """재생목록 ID 캐시 로드: { "EN": { "1": "PLxxxx", ... }, ... }"""
+    if os.path.exists(PLAYLISTS_FILE):
+        with open(PLAYLISTS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_playlists(data: dict):
+    """재생목록 ID 캐시 저장"""
+    os.makedirs(os.path.dirname(PLAYLISTS_FILE), exist_ok=True)
+    with open(PLAYLISTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def get_or_create_playlist(youtube, lang: str, level: int) -> str:
+    """레벨별 재생목록 ID를 반환. 없으면 생성."""
+    playlists = load_playlists()
+    lang_playlists = playlists.get(lang, {})
+    level_key = str(level)
+
+    # 캐시에 있으면 바로 반환
+    if level_key in lang_playlists:
+        playlist_id = lang_playlists[level_key]
+        # 유효성 검증 (삭제된 재생목록 대비)
+        try:
+            youtube.playlists().list(
+                part="id", id=playlist_id
+            ).execute()
+            return playlist_id
+        except Exception:
+            pass  # 삭제된 경우 아래에서 재생성
+
+    # 기존 재생목록에서 검색
+    title_tmpl = PLAYLIST_TITLES.get(lang, PLAYLIST_TITLES["EN"])
+    target_title = title_tmpl.format(level=level)
+
+    next_page = None
+    while True:
+        resp = youtube.playlists().list(
+            part="snippet", mine=True, maxResults=50, pageToken=next_page
+        ).execute()
+        for item in resp.get("items", []):
+            if item["snippet"]["title"] == target_title:
+                playlist_id = item["id"]
+                lang_playlists[level_key] = playlist_id
+                playlists[lang] = lang_playlists
+                save_playlists(playlists)
+                print(f"  [재생목록] 기존 발견: {target_title} ({playlist_id})")
+                return playlist_id
+        next_page = resp.get("nextPageToken")
+        if not next_page:
+            break
+
+    # 없으면 새로 생성
+    desc_tmpl = PLAYLIST_DESCS.get(lang, PLAYLIST_DESCS["EN"])
+    body = {
+        "snippet": {
+            "title": target_title,
+            "description": desc_tmpl.format(level=level),
+        },
+        "status": {"privacyStatus": "public"},
+    }
+    resp = youtube.playlists().insert(part="snippet,status", body=body).execute()
+    playlist_id = resp["id"]
+    print(f"  [재생목록] 새로 생성: {target_title} ({playlist_id})")
+
+    lang_playlists[level_key] = playlist_id
+    playlists[lang] = lang_playlists
+    save_playlists(playlists)
+    return playlist_id
+
+
+def add_to_playlist(youtube, playlist_id: str, video_id: str):
+    """영상을 재생목록에 추가"""
+    youtube.playlistItems().insert(
+        part="snippet",
+        body={
+            "snippet": {
+                "playlistId": playlist_id,
+                "resourceId": {
+                    "kind": "youtube#video",
+                    "videoId": video_id,
+                },
+            }
+        },
+    ).execute()
+    print(f"  [OK] 재생목록에 추가 완료 (playlist: {playlist_id})")
+
 
 # ─── 언어별 메타데이터 템플릿 ────────────────────────────────
 LANG_META = {
@@ -126,8 +256,8 @@ LANG_META = {
                  "tiếng Hàn mỗi ngày", "tiếng Hàn cho người mới",
                  "한국어", "토픽", "토픽단어", "tiếng Hàn cơ bản"],
     },
-    "SP": {
-        "sent_key": "sp",
+    "ES": {
+        "sent_key": "es",
         "default_lang": "ko",
         "level_fmt": lambda lv: f"Nivel {lv}",
         "title":   "[TOPIK {level}] {word} = {meaning} | Palabra coreana del día #{day}",
@@ -265,7 +395,7 @@ def upload_video(
             print(f"    업로드 진행: {progress}%")
     
     video_id = response["id"]
-    print(f"  ✓ 업로드 완료: https://youtube.com/watch?v={video_id}")
+    print(f"  [OK] 업로드 완료: https://youtube.com/watch?v={video_id}")
     
     # 썸네일 설정 (있는 경우)
     if thumbnail_path and os.path.exists(thumbnail_path):
@@ -273,7 +403,7 @@ def upload_video(
             videoId=video_id,
             media_body=MediaFileUpload(thumbnail_path)
         ).execute()
-        print(f"  ✓ 썸네일 설정 완료")
+        print(f"  [OK] 썸네일 설정 완료")
     
     return video_id
 
@@ -301,12 +431,12 @@ if __name__ == "__main__":
     parser.add_argument("--schedule-hours", type=int, default=0,
                         help="N시간 후 예약 발행 (0=즉시)")
     parser.add_argument("--thumbnail", default=None, help="썸네일 이미지 경로")
-    parser.add_argument("--lang", default="EN", choices=["EN","JP","CN","VN","SP"],
+    parser.add_argument("--lang", default="EN", choices=["EN","JP","CN","VN","ES"],
                         help="대상 언어 (제목/설명/태그 언어)")
     args = parser.parse_args()
 
     # 단어 로드
-    with open(args.db) as f:
+    with open(args.db, encoding="utf-8") as f:
         db = json.load(f)
     word = next((w for w in db if w["id"] == args.word_id), None)
     if not word:
@@ -327,7 +457,7 @@ if __name__ == "__main__":
         print(f"예약 발행: {publish_at.strftime('%Y-%m-%d %H:%M UTC')}")
     
     # 유튜브 클라이언트
-    youtube = get_youtube_client()
+    youtube = get_youtube_client(lang=args.lang)
     
     # 업로드
     video_id = upload_video(
@@ -335,17 +465,25 @@ if __name__ == "__main__":
         publish_at=publish_at,
         thumbnail_path=args.thumbnail
     )
-    
+
+    # 레벨별 재생목록에 추가
+    try:
+        playlist_id = get_or_create_playlist(youtube, args.lang, word["level"])
+        add_to_playlist(youtube, playlist_id, video_id)
+    except Exception as e:
+        print(f"  [WARN] 재생목록 추가 실패: {e}")
+
     # 로그 저장
     log["last_day"] = day_number
     log["uploaded"].append({
         "day": day_number,
         "word_id": args.word_id,
         "word": word["word"],
+        "level": word["level"],
         "video_id": video_id,
         "uploaded_at": datetime.now().isoformat(),
         "publish_at": publish_at.isoformat() if publish_at else "immediate",
     })
     save_upload_log(log, args.log)
     
-    print(f"\n✓ 완료! Day #{day_number}: {word['word']} = {word['meaning']}")
+    print(f"\n[DONE] Day #{day_number}: {word['word']} = {word['meaning']}")

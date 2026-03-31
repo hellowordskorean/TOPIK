@@ -7114,8 +7114,8 @@
         },
         {
           "situation": "국제 협약을 이야기할 때",
-          "ko": "유엔의 지속가능발전목표(SDGs)는 전 세계가 함께 달성해야 할 목표다.",
-          "vn": "Các Mục tiêu Phát triển Bền vững (SDGs) của LHQ là mục tiêu cả thế giới phải cùng đạt được."
+          "ko": "지속가능성을 위해 전 세계가 함께 노력해야 한다.",
+          "vn": "Cả thế giới phải cùng nhau nỗ lực vì tính bền vững."
         },
         {
           "situation": "소비 패턴을 이야기할 때",
@@ -7489,8 +7489,8 @@
         },
         {
           "situation": "청원을 이야기할 때",
-          "ko": "시민들이 온라인 청원을 통해 정책에 의견을 반영시킨다.",
-          "vn": "Công dân phản ánh ý kiến vào chính sách thông qua kiến nghị trực tuyến."
+          "ko": "시민참여를 통해 정책에 의견을 반영시킬 수 있다.",
+          "vn": "Thông qua sự tham gia của công dân có thể phản ánh ý kiến vào chính sách."
         },
         {
           "situation": "공청회를 이야기할 때",
@@ -8678,8 +8678,8 @@
         },
         {
           "situation": "기술 개발",
-          "ko": "자원고갈에 대비하여 대체 재료 개발 연구가 활발히 진행되고 있다.",
-          "vn": "Nghiên cứu phát triển vật liệu thay thế đang được tiến hành tích cực để chuẩn bị cho sự cạn kiệt tài nguyên."
+          "ko": "남획으로 인해 자원고갈이 빠르게 진행되고 있다.",
+          "vn": "Cạn kiệt tài nguyên đang diễn ra nhanh chóng do đánh bắt quá mức."
         },
         {
           "situation": "국제 갈등",
@@ -8698,8 +8698,8 @@
         },
         {
           "situation": "에너지 전환 — 자원고갈, vd9",
-          "ko": "석유와 가스의 자원고갈에 대비하여 재생 에너지 전환이 시급한다.",
-          "vn": "Chuyển đổi sang năng lượng tái tạo là cấp thiết để chuẩn bị cho sự cạn kiệt tài nguyên dầu mỏ và khí đốt."
+          "ko": "자원고갈로 인해 국가 간 분쟁이 증가할 수 있다.",
+          "vn": "Cạn kiệt tài nguyên có thể làm gia tăng tranh chấp giữa các quốc gia."
         },
         {
           "situation": "미래 세대 — 자원고갈, vd10",
@@ -9068,8 +9068,8 @@
         },
         {
           "situation": "학술 발표",
-          "ko": "교육 투자가 소득격차를 줄이는 데 효과적이라는 연구가 있다.",
-          "vn": "Có nghiên cứu cho thấy đầu tư vào giáo dục hiệu quả trong việc giảm khoảng cách thu nhập."
+          "ko": "소득격차가 아이들의 교육 기회에 큰 영향을 미친다.",
+          "vn": "Chênh lệch thu nhập ảnh hưởng lớn đến cơ hội giáo dục của trẻ em."
         },
         {
           "situation": "시사 토론",
@@ -9177,8 +9177,8 @@
         },
         {
           "situation": "동의를 이야기할 때",
-          "ko": "개인정보 수집 전에 반드시 당사자의 동의를 받아야 한다.",
-          "vn": "Phải có được sự đồng ý của cá nhân trước khi thu thập thông tin cá nhân."
+          "ko": "데이터보호를 위해 개인정보 수집 전에 반드시 동의를 받아야 한다.",
+          "vn": "Để bảo vệ dữ liệu, phải có sự đồng ý trước khi thu thập thông tin cá nhân."
         },
         {
           "situation": "AI를 이야기할 때 — 데이터보호, vd6",
@@ -16501,8 +16501,8 @@
         },
         {
           "situation": "사회 계층 — 식민지, vd9",
-          "ko": "식민지 사회에서는 지배자와 피지배자 사이의 계층 구조가 명확했다.",
-          "vn": "Trong xã hội thuộc địa, cấu trúc đẳng cấp giữa người thống trị và người bị trị rất rõ ràng."
+          "ko": "식민지 시대는 한국인들에게 큰 시련의 시대였다.",
+          "vn": "Thời kỳ thuộc địa là thời đại thử thách lớn đối với người Hàn Quốc."
         },
         {
           "situation": "현대 문제",
@@ -17469,8 +17469,8 @@
       "examples": [
         {
           "situation": "건강 검진",
-          "ko": "매년 건강 검사를 받는 것이 질병 예방에 도움이 된다.",
-          "vn": "Kiểm tra sức khỏe hàng năm giúp phòng ngừa bệnh tật."
+          "ko": "매년 건강 검사를 받아 건강 상태를 확인하는 것이 좋다.",
+          "vn": "Nên kiểm tra sức khỏe hàng năm để xác nhận tình trạng sức khỏe."
         },
         {
           "situation": "혈액 검사",
@@ -17509,8 +17509,8 @@
         },
         {
           "situation": "법의학",
-          "ko": "사건 해결을 위해 DNA 검사가 결정적인 증거를 제공했다.",
-          "vn": "Xét nghiệm DNA đã cung cấp bằng chứng quyết định để giải quyết vụ án."
+          "ko": "회사에서 매년 직원들을 대상으로 건강 검사를 실시한다.",
+          "vn": "Công ty tiến hành kiểm tra sức khỏe cho nhân viên hàng năm."
         },
         {
           "situation": "식품 안전 — 검사, vd10",
@@ -17640,8 +17640,8 @@
         },
         {
           "situation": "마약 문제",
-          "ko": "불법 약물 남용은 개인과 사회에 심각한 해악을 끼친다.",
-          "vn": "Lạm dụng thuốc bất hợp pháp gây hại nghiêm trọng cho cá nhân và xã hội."
+          "ko": "새로운 약물의 안전성과 효능을 확인하기 위해 임상 시험을 거쳐야 한다.",
+          "vn": "Phải trải qua thử nghiệm lâm sàng để xác nhận tính an toàn và hiệu quả của dược phẩm mới."
         }
       ]
     },
@@ -17798,8 +17798,8 @@
         },
         {
           "situation": "인슐린 치료",
-          "ko": "제1형 당뇨 환자는 인슐린 주사 치료가 필수적이다.",
-          "vn": "Bệnh nhân tiểu đường type 1 cần điều trị tiêm insulin bắt buộc."
+          "ko": "당뇨 환자는 하루에 여러 번 혈당 수치를 확인해야 한다.",
+          "vn": "Bệnh nhân tiểu đường phải kiểm tra mức đường huyết nhiều lần trong ngày."
         },
         {
           "situation": "예방 교육 — 당뇨, vd5",
@@ -17866,8 +17866,8 @@
         },
         {
           "situation": "치료 기술",
-          "ko": "현대 의학 기술로 심장 이식 수술도 가능해졌다.",
-          "vn": "Nhờ công nghệ y học hiện đại, phẫu thuật ghép tim cũng trở nên khả thi."
+          "ko": "심장병 환자는 관상동맥이 막힌 경우 수술을 받을 수 있다.",
+          "vn": "Bệnh nhân tim có thể phẫu thuật nếu động mạch vành bị tắc."
         },
         {
           "situation": "스트레스 영향",
@@ -18309,8 +18309,8 @@
         },
         {
           "situation": "뉴스 시청 — 저출산, vd6",
-          "ko": "저출산 고령화 사회에 대비한 복지 제도 개혁이 필요하다.",
-          "vn": "Cần cải cách hệ thống phúc lợi để chuẩn bị cho xã hội tỷ lệ sinh thấp và già hóa."
+          "ko": "저출산 문제로 아이를 낳지 않는 가정이 늘고 있다.",
+          "vn": "Do vấn đề tỷ lệ sinh thấp, ngày càng nhiều gia đình không sinh con."
         },
         {
           "situation": "가족 대화 — 저출산, vd7",
@@ -18366,8 +18366,8 @@
         },
         {
           "situation": "복지 기사",
-          "ko": "고령화 사회에서는 노인 의료 서비스에 대한 수요가 증가한다.",
-          "vn": "Trong xã hội già hóa, nhu cầu về dịch vụ y tế cho người cao tuổi tăng lên."
+          "ko": "고령화로 인해 전체 인구의 20%가 65세 이상이 될 것으로 전망된다.",
+          "vn": "Do già hóa, dự kiến 20% tổng dân số sẽ từ 65 tuổi trở lên."
         },
         {
           "situation": "가족 대화 — 고령화, vd6",

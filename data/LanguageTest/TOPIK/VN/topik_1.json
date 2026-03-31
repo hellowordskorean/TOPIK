@@ -34,8 +34,8 @@
         },
         {
           "situation": "가게 위치 묻기",
-          "ko": "근처에 편의점이 있어요?",
-          "vn": "Gần đây có cửa hàng tiện lợi không?"
+          "ko": "근처에 가게가 있어요?",
+          "vn": "Gần đây có cửa hàng không?"
         },
         {
           "situation": "쇼핑 후 대화",
@@ -59,8 +59,8 @@
         },
         {
           "situation": "길 안내",
-          "ko": "약국 옆에 빵집이 있다.",
-          "vn": "Có một tiệm bánh mì bên cạnh tiệm thuốc."
+          "ko": "약국 옆에 작은 가게가 있다.",
+          "vn": "Có một cửa hàng nhỏ bên cạnh tiệm thuốc."
         }
       ]
     },
@@ -16756,9 +16756,9 @@
           "vn": "Bạn bao nhiêu tuổi?"
         },
         {
-          "situation": "자신의 나이를 말할 때",
-          "ko": "저는 스무 살이다.",
-          "vn": "Tôi hai mươi tuổi."
+          "situation": "나이 묻기",
+          "ko": "나이가 어떻게 되세요?",
+          "vn": "Bạn bao nhiêu tuổi?"
         },
         {
           "situation": "나이가 많을 때",

@@ -8162,8 +8162,8 @@
         },
         {
           "situation": "해산물 손질",
-          "ko": "조개류는 요리하기 전에 해감을 시켜야 한다.",
-          "vn": "Động vật có vỏ cần được ngâm cho nhả cát trước khi nấu."
+          "ko": "해산물은 요리하기 전에 깨끗이 손질해야 한다.",
+          "vn": "Hải sản phải được làm sạch trước khi nấu."
         },
         {
           "situation": "건강식 선택",
@@ -9277,8 +9277,8 @@
         },
         {
           "situation": "편도 비교",
-          "ko": "편도로만 예약하고 돌아올 때 따로 구매하는 게 나을까요?",
-          "vn": "Có nên chỉ đặt vé một chiều và mua vé về riêng không?"
+          "ko": "왕복 티켓을 사면 편도보다 더 저렴하다.",
+          "vn": "Mua vé khứ hồi sẽ rẻ hơn vé một chiều."
         },
         {
           "situation": "출장 준비 — 왕복, vd8",
@@ -15245,8 +15245,8 @@
         },
         {
           "situation": "우정",
-          "ko": "친구와 처음 만난 기념일을 챙기는 사람도 있다.",
-          "vn": "Có những người ghi nhớ ngày kỷ niệm lần đầu gặp bạn bè."
+          "ko": "삼일절은 중요한 국가 기념일이다.",
+          "vn": "Ngày 1 tháng 3 là ngày kỷ niệm quốc gia quan trọng."
         },
         {
           "situation": "단체 행사",
@@ -16294,8 +16294,8 @@
         },
         {
           "situation": "음식 — 다문화, vd6",
-          "ko": "다문화 축제에서 세계 각국의 음식을 즐겼다.",
-          "vn": "Tôi đã thưởng thức ẩm thực từ các quốc gia trên thế giới tại lễ hội đa văn hóa."
+          "ko": "다문화를 이해하면 더 넓은 시각을 가질 수 있다.",
+          "vn": "Hiểu đa văn hóa giúp bạn có góc nhìn rộng hơn."
         },
         {
           "situation": "직장 — 다문화, vd7",
@@ -17145,13 +17145,13 @@
         },
         {
           "situation": "소득세",
-          "ko": "매달 월급에서 소득세가 자동으로 빠져나간다.",
-          "vn": "Thuế thu nhập tự động được khấu trừ từ lương hàng tháng."
+          "ko": "매달 월급에서 세금이 자동으로 빠져나간다.",
+          "vn": "Thuế được tự động trừ từ lương hàng tháng."
         },
         {
           "situation": "부가가치세",
-          "ko": "물건을 살 때 부가가치세가 포함된 가격을 지불한다.",
-          "vn": "Khi mua hàng, bạn trả giá bao gồm thuế giá trị gia tăng."
+          "ko": "물건을 살 때 세금이 포함된 가격을 지불한다.",
+          "vn": "Khi mua hàng, bạn trả giá đã bao gồm thuế."
         },
         {
           "situation": "세금 환급",
@@ -17160,8 +17160,8 @@
         },
         {
           "situation": "세금 신고 — 세금, vd5",
-          "ko": "프리랜서는 매년 종합소득세를 신고해야 한다.",
-          "vn": "Người làm tự do phải khai báo thuế thu nhập tổng hợp mỗi năm."
+          "ko": "프리랜서는 매년 세금을 신고해야 한다.",
+          "vn": "Người làm tự do phải khai thuế hàng năm."
         },
         {
           "situation": "세금 절약",
@@ -17170,8 +17170,8 @@
         },
         {
           "situation": "재산세",
-          "ko": "집을 소유하면 매년 재산세를 내야 한다.",
-          "vn": "Nếu sở hữu nhà, phải nộp thuế tài sản hàng năm."
+          "ko": "집을 소유하면 매년 세금을 내야 한다.",
+          "vn": "Nếu sở hữu nhà, bạn phải nộp thuế hàng năm."
         },
         {
           "situation": "면세 혜택",

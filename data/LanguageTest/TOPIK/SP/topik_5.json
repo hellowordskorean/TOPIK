@@ -487,8 +487,8 @@
         },
         {
           "situation": "derechos de protección consular",
-          "ko": "해외 거주 국민에게는 영사 보호권이 보장된다.",
-          "es": "Se garantizan derechos de protección consular a los nacionales que viven en el extranjero."
+          "ko": "해외 거주 국민은 영사관을 통해 보호를 받을 수 있다.",
+          "es": "Los nacionales que viven en el extranjero pueden recibir protección a través del consulado."
         },
         {
           "situation": "Consulado honorario",
@@ -7065,8 +7065,8 @@
         },
         {
           "situation": "Declaración conjunta de la cumbre",
-          "ko": "회담 후 양 정상은 공동성명을 발표했다.",
-          "es": "Después de las conversaciones, los dos líderes emitieron una declaración conjunta."
+          "ko": "정상회담 후 양 정상은 공동성명을 발표했다.",
+          "es": "Tras la cumbre, los dos líderes emitieron una declaración conjunta."
         },
         {
           "situation": "Perspectivas de la cumbre",
@@ -7227,8 +7227,8 @@
         },
         {
           "situation": "Preparación de reuniones multilaterales",
-          "ko": "회의 개최국은 의제 설정과 운영에 중요한 역할을 한다.",
-          "es": "El país anfitrión desempeña un papel importante en el establecimiento y la gestión de la agenda."
+          "ko": "다자회의 개최국은 의제 설정과 운영에 중요한 역할을 한다.",
+          "es": "El país anfitrión de una reunión multilateral desempeña un papel importante en la definición de la agenda y la gestión."
         },
         {
           "situation": "Resultados de la reunión multilateral",
@@ -7443,8 +7443,8 @@
         },
         {
           "situation": "Condiciones para poner fin al aislamiento",
-          "ko": "국제 기준에 부합하는 정책 변화가 고립 탈피의 조건이다.",
-          "es": "Los cambios de políticas que cumplan con los estándares internacionales son condiciones para romper con el aislamiento."
+          "ko": "외교적 고립을 탈피하려면 국제 기준에 부합하는 정책 변화가 필요하다.",
+          "es": "Se necesitan cambios de política que cumplan con los estándares internacionales para salir del aislamiento diplomático."
         }
       ]
     },
@@ -9212,18 +9212,18 @@
         },
         {
           "situation": "Hablando de la legislatura",
-          "ko": "입법부인 국회가 법률을 제정하는 역할을 한다.",
-          "es": "La legislatura, la Asamblea Nacional, desempeña el papel de promulgar leyes."
+          "ko": "삼권분립에 따라 입법부인 국회가 법률을 제정하는 역할을 한다.",
+          "es": "Bajo la separación de poderes, la legislatura, la Asamblea Nacional, promulga leyes."
         },
         {
           "situation": "Hablando del poder ejecutivo",
-          "ko": "행정부인 정부가 법률을 집행하는 역할을 한다.",
-          "es": "El ejecutivo, el gobierno, desempeña el papel de hacer cumplir las leyes."
+          "ko": "삼권분립에 따라 행정부인 정부가 법률을 집행하는 역할을 한다.",
+          "es": "Bajo la separación de poderes, el poder ejecutivo aplica las leyes."
         },
         {
           "situation": "Hablando del poder judicial — separación de poderes, ej.6",
-          "ko": "사법부인 법원이 법률을 해석하고 판결하는 역할을 한다.",
-          "es": "El poder judicial, los tribunales, desempeñan el papel de interpretar las leyes y dictar sentencias."
+          "ko": "삼권분립에 따라 사법부인 법원이 법률을 해석하고 판결하는 역할을 한다.",
+          "es": "Bajo la separación de poderes, el poder judicial interpreta las leyes y emite sentencias."
         },
         {
           "situation": "Hablando de historia",
@@ -9394,8 +9394,8 @@
         },
         {
           "situation": "Responsabilidad por daños",
-          "ko": "고의 또는 과실로 타인에게 손해를 입힌 자는 배상 책임이 있다.",
-          "es": "Una persona que intencionalmente o por negligencia causa daño a otra es responsable de una indemnización."
+          "ko": "고의 또는 과실로 타인에게 손해를 입힌 자는 손해배상 책임이 있다.",
+          "es": "Una persona que cause daño a otra intencionalmente o por negligencia es responsable de la indemnización por daños."
         },
         {
           "situation": "pago de pensión alimenticia",
@@ -9650,8 +9650,8 @@
         },
         {
           "situation": "Conexión con la educación",
-          "ko": "교육 수준이 높을수록 건강 관리 능력이 좋다.",
-          "es": "Cuanto mayor sea el nivel educativo, mejor será la capacidad de gestión sanitaria."
+          "ko": "건강불평등은 교육 수준에 따라 건강 관리 능력이 달라지는 현상에서도 나타난다.",
+          "es": "La desigualdad en salud también se manifiesta en cómo la capacidad de gestión de la salud varía según el nivel educativo."
         },
         {
           "situation": "Hablando de políticas",
@@ -9743,8 +9743,8 @@
         },
         {
           "situation": "Motivación de la acción administrativa",
-          "ko": "행정 기관은 처분의 이유를 당사자에게 명확히 제시해야 한다.",
-          "es": "El órgano administrativo deberá exponer claramente a la parte los motivos de la disposición."
+          "ko": "행정처분의 이유를 당사자에게 명확히 제시해야 한다.",
+          "es": "Las razones de la sanción administrativa deben presentarse claramente a la parte."
         }
       ]
     },
@@ -13973,8 +13973,8 @@
         },
         {
           "situation": "Estudio de caso europeo",
-          "ko": "유럽 그린딜은 2050년까지 EU의 탄소중립을 목표로 한다.",
-          "es": "El Pacto Verde Europeo aspira a la neutralidad de carbono en la UE para 2050."
+          "ko": "유럽의 그린뉴딜은 2050년까지 탄소중립을 목표로 한다.",
+          "es": "El Green New Deal europeo tiene como objetivo la neutralidad de carbono para 2050."
         },
         {
           "situation": "post-COVID",
@@ -14588,8 +14588,8 @@
         },
         {
           "situation": "Prevención de daños por inundaciones",
-          "ko": "도시 식물과 공원은 빗물을 흡수해 도시 침수 피해를 줄인다.",
-          "es": "Las plantas y parques urbanos absorben el agua de lluvia, reduciendo los daños por inundaciones urbanas."
+          "ko": "도시녹화를 통해 빗물을 흡수하고 침수 피해를 줄일 수 있다.",
+          "es": "La ecologización urbana puede absorber agua de lluvia y reducir los daños por inundaciones."
         },
         {
           "situation": "Purificación del aire",
@@ -14697,8 +14697,8 @@
         },
         {
           "situation": "población vulnerable",
-          "ko": "저소득층과 유색인종 지역 사회가 환경 오염의 불균형한 피해를 입는다는 연구가 있다.",
-          "es": "Los estudios muestran que las comunidades minoritarias y de bajos ingresos sufren daños desproporcionados por la contaminación ambiental."
+          "ko": "환경정의의 관점에서, 저소득층이 환경 오염의 불균형한 피해를 입는 문제가 있다.",
+          "es": "Desde la perspectiva de la justicia ambiental, las comunidades de bajos ingresos sufren daños desproporcionados por la contaminación."
         },
         {
           "situation": "Justicia climática",
@@ -15796,8 +15796,8 @@
         },
         {
           "situation": "Investigación corporativa",
-          "ko": "성공적인 세대 교체와 지식 전수를 위해 기업들이 역멘토링 프로그램을 도입하고 있다.",
-          "es": "Las empresas están introduciendo programas de tutoría inversa para lograr una sucesión generacional exitosa y la transferencia de conocimientos."
+          "ko": "세대갈등을 해소하기 위해 기업들이 역멘토링 프로그램을 도입하고 있다.",
+          "es": "Las empresas están introduciendo programas de mentoría inversa para resolver el conflicto generacional."
         },
         {
           "situation": "Estudios culturales — conflicto generacional, ej.10",
@@ -16790,8 +16790,8 @@
         },
         {
           "situation": "Detención tras revocación",
-          "ko": "대법원은 원심 판결을 파기하고 항소법원으로 환송했다.",
-          "es": "La Corte Suprema anuló el fallo original y devolvió el caso al tribunal de apelaciones."
+          "ko": "대법원은 상고 심리 후 원심 판결을 파기하고 환송했다.",
+          "es": "El Tribunal Supremo anuló la sentencia original y remitió el caso tras revisar la apelación."
         },
         {
           "situation": "preparación de una apelación",
@@ -16890,8 +16890,8 @@
         },
         {
           "situation": "Judicial appointment",
-          "ko": "대법관은 대통령이 임명하며 국회의 동의를 받아야 한다.",
-          "es": "Nombramiento judicial: Los jueces de la Corte Suprema son nombrados por el presidente y deben recibir el consentimiento de la Asamblea Nacional."
+          "ko": "대법원 판사는 대통령이 임명하며 국회의 동의를 받아야 한다.",
+          "es": "Los jueces del Tribunal Supremo son nombrados por el presidente y deben recibir el consentimiento de la Asamblea Nacional."
         },
         {
           "situation": "Calificaciones de juez",
@@ -17358,8 +17358,8 @@
         },
         {
           "situation": "Court appearance",
-          "ko": "재판에 출석하지 않으면 결석 재판이 진행될 수 있다.",
-          "es": "Comparecencia ante el tribunal: Si uno no se presenta al juicio, se podrá celebrar un juicio en rebeldía."
+          "ko": "법원에 출석하지 않으면 결석 재판이 진행될 수 있다.",
+          "es": "Si no se presenta al tribunal, se puede proceder con un juicio en rebeldía."
         },
         {
           "situation": "Open court trial",

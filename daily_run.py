@@ -189,7 +189,7 @@ def main():
         if PUBLISH_DELAY_HOURS > 0:
             publish_at = datetime.now(timezone.utc) + timedelta(hours=PUBLISH_DELAY_HOURS)
         
-        youtube = get_youtube_client()
+        youtube = get_youtube_client(lang="EN")
         thumb_path = str(output_path).rsplit(".", 1)[0] + "_thumb.png"
         video_id = upload_video(youtube, str(output_path), metadata,
                                 publish_at=publish_at,

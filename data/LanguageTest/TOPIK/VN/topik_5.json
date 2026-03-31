@@ -487,8 +487,8 @@
         },
         {
           "situation": "영사 보호권",
-          "ko": "해외 거주 국민에게는 영사 보호권이 보장된다.",
-          "vn": "Quyền bảo hộ lãnh sự được đảm bảo cho công dân sống ở nước ngoài."
+          "ko": "해외 거주 국민은 영사관을 통해 보호를 받을 수 있다.",
+          "vn": "Công dân sống ở nước ngoài có thể được bảo vệ thông qua lãnh sự quán."
         },
         {
           "situation": "명예영사관",
@@ -7064,8 +7064,8 @@
         },
         {
           "situation": "정상회담 공동성명",
-          "ko": "회담 후 양 정상은 공동성명을 발표했다.",
-          "vn": "Sau hội đàm, hai nhà lãnh đạo đã ra tuyên bố chung."
+          "ko": "정상회담 후 양 정상은 공동성명을 발표했다.",
+          "vn": "Sau hội nghị thượng đỉnh, hai nhà lãnh đạo đã ra tuyên bố chung."
         },
         {
           "situation": "정상회담 전망",
@@ -7226,8 +7226,8 @@
         },
         {
           "situation": "다자회의 준비",
-          "ko": "회의 개최국은 의제 설정과 운영에 중요한 역할을 한다.",
-          "vn": "Nước chủ nhà đóng vai trò quan trọng trong việc đặt chương trình nghị sự và điều hành hội nghị."
+          "ko": "다자회의 개최국은 의제 설정과 운영에 중요한 역할을 한다.",
+          "vn": "Nước chủ nhà hội nghị đa phương đóng vai trò quan trọng trong thiết lập chương trình nghị sự và điều hành."
         },
         {
           "situation": "다자회의 성과",
@@ -7442,8 +7442,8 @@
         },
         {
           "situation": "고립 탈피 조건",
-          "ko": "국제 기준에 부합하는 정책 변화가 고립 탈피의 조건이다.",
-          "vn": "Thay đổi chính sách phù hợp với tiêu chuẩn quốc tế là điều kiện để thoát khỏi sự cô lập."
+          "ko": "외교적 고립을 탈피하려면 국제 기준에 부합하는 정책 변화가 필요하다.",
+          "vn": "Cần thay đổi chính sách phù hợp tiêu chuẩn quốc tế để thoát khỏi cô lập ngoại giao."
         }
       ]
     },
@@ -9211,18 +9211,18 @@
         },
         {
           "situation": "입법부를 이야기할 때",
-          "ko": "입법부인 국회가 법률을 제정하는 역할을 한다.",
-          "vn": "Cơ quan lập pháp, tức Quốc hội, đóng vai trò ban hành luật pháp."
+          "ko": "삼권분립에 따라 입법부인 국회가 법률을 제정하는 역할을 한다.",
+          "vn": "Theo tam quyền phân lập, quốc hội với tư cách cơ quan lập pháp có vai trò ban hành luật."
         },
         {
           "situation": "행정부를 이야기할 때",
-          "ko": "행정부인 정부가 법률을 집행하는 역할을 한다.",
-          "vn": "Cơ quan hành pháp, tức chính phủ, đóng vai trò thi hành pháp luật."
+          "ko": "삼권분립에 따라 행정부인 정부가 법률을 집행하는 역할을 한다.",
+          "vn": "Theo tam quyền phân lập, chính phủ với tư cách cơ quan hành pháp có vai trò thi hành luật."
         },
         {
           "situation": "사법부를 이야기할 때 — 삼권분립, vd6",
-          "ko": "사법부인 법원이 법률을 해석하고 판결하는 역할을 한다.",
-          "vn": "Cơ quan tư pháp, tức tòa án, đóng vai trò diễn giải pháp luật và ra phán quyết."
+          "ko": "삼권분립에 따라 사법부인 법원이 법률을 해석하고 판결하는 역할을 한다.",
+          "vn": "Theo tam quyền phân lập, tòa án với tư cách cơ quan tư pháp có vai trò giải thích luật và phán quyết."
         },
         {
           "situation": "역사를 이야기할 때",
@@ -9392,8 +9392,8 @@
         },
         {
           "situation": "계약 위반",
-          "ko": "계약을 어기면 상대방에게 손해배상 의무가 생긴다.",
-          "vn": "Khi vi phạm hợp đồng, phát sinh nghĩa vụ bồi thường thiệt hại cho bên kia."
+          "ko": "고의 또는 과실로 타인에게 손해를 입힌 자는 손해배상 책임이 있다.",
+          "vn": "Người cố ý hoặc vô ý gây thiệt hại cho người khác phải chịu trách nhiệm bồi thường thiệt hại."
         },
         {
           "situation": "의료 과실",
@@ -9645,8 +9645,8 @@
         },
         {
           "situation": "교육과 연결할 때",
-          "ko": "교육 수준이 높을수록 건강 관리 능력이 좋다.",
-          "vn": "Mức độ giáo dục càng cao, khả năng quản lý sức khỏe càng tốt."
+          "ko": "건강불평등은 교육 수준에 따라 건강 관리 능력이 달라지는 현상에서도 나타난다.",
+          "vn": "Bất bình đẳng sức khỏe cũng thể hiện qua việc khả năng quản lý sức khỏe khác nhau theo trình độ học vấn."
         },
         {
           "situation": "정책을 이야기할 때",
@@ -9737,8 +9737,8 @@
         },
         {
           "situation": "집행력",
-          "ko": "행정처분은 법적 강제력이 있어 상대방이 따라야 한다.",
-          "vn": "Quyết định hành chính có tính cưỡng chế pháp lý và phía kia phải tuân theo."
+          "ko": "행정처분의 이유를 당사자에게 명확히 제시해야 한다.",
+          "vn": "Phải trình bày rõ ràng lý do xử phạt hành chính cho đương sự."
         }
       ]
     },
@@ -13947,8 +13947,8 @@
         },
         {
           "situation": "유럽 ​​사례 연구",
-          "ko": "유럽 그린딜은 2050년까지 EU의 탄소중립을 목표로 한다.",
-          "vn": "Thỏa thuận Xanh châu Âu đặt mục tiêu trung hòa carbon của EU vào năm 2050."
+          "ko": "유럽의 그린뉴딜은 2050년까지 탄소중립을 목표로 한다.",
+          "vn": "Thỏa thuận Xanh Mới của châu Âu đặt mục tiêu trung hòa carbon vào năm 2050."
         },
         {
           "situation": "포스트 코로나",
@@ -14562,8 +14562,8 @@
         },
         {
           "situation": "홍수 피해 예방",
-          "ko": "도시 식물과 공원은 빗물을 흡수해 도시 침수 피해를 줄인다.",
-          "vn": "Cây cối và công viên đô thị hấp thụ nước mưa, giảm thiệt hại do ngập lụt đô thị."
+          "ko": "도시녹화를 통해 빗물을 흡수하고 침수 피해를 줄일 수 있다.",
+          "vn": "Phủ xanh đô thị có thể hấp thụ nước mưa và giảm thiệt hại do ngập lụt."
         },
         {
           "situation": "공기 정화",
@@ -14671,8 +14671,8 @@
         },
         {
           "situation": "취약한 인구",
-          "ko": "저소득층과 유색인종 지역 사회가 환경 오염의 불균형한 피해를 입는다는 연구가 있다.",
-          "vn": "Có các nghiên cứu cho thấy các cộng đồng thu nhập thấp và người da màu chịu thiệt hại không cân xứng từ ô nhiễm môi trường."
+          "ko": "환경정의의 관점에서, 저소득층이 환경 오염의 불균형한 피해를 입는 문제가 있다.",
+          "vn": "Từ góc độ công bằng môi trường, cộng đồng thu nhập thấp chịu thiệt hại không cân xứng từ ô nhiễm."
         },
         {
           "situation": "기후 정의",
@@ -15770,8 +15770,8 @@
         },
         {
           "situation": "기업 연구",
-          "ko": "성공적인 세대 교체와 지식 전수를 위해 기업들이 역멘토링 프로그램을 도입하고 있다.",
-          "vn": "Các doanh nghiệp đang áp dụng chương trình cố vấn ngược để kế thừa thế hệ thành công và chuyển giao kiến thức."
+          "ko": "세대갈등을 해소하기 위해 기업들이 역멘토링 프로그램을 도입하고 있다.",
+          "vn": "Các công ty đang áp dụng chương trình cố vấn ngược để giải quyết xung đột thế hệ."
         },
         {
           "situation": "문화 연구 — 세대갈등, vd10",
@@ -16762,8 +16762,8 @@
         },
         {
           "situation": "기간 제한",
-          "ko": "상고는 원심 판결을 받은 날로부터 정해진 기간 내에 해야 한다.",
-          "vn": "Kháng cáo lên tòa tối cao phải được thực hiện trong thời hạn quy định kể từ ngày nhận phán quyết ban đầu."
+          "ko": "대법원은 상고 심리 후 원심 판결을 파기하고 환송했다.",
+          "vn": "Tòa án tối cao đã hủy bản án sơ thẩm và trả hồ sơ sau khi xem xét kháng cáo."
         },
         {
           "situation": "법원 부담",
@@ -16861,8 +16861,8 @@
         },
         {
           "situation": "법관 임명",
-          "ko": "대법원 판사는 대통령이 임명하고 국회의 동의를 받다.",
-          "vn": "Thẩm phán tòa tối cao được tổng thống bổ nhiệm và được quốc hội chấp thuận."
+          "ko": "대법원 판사는 대통령이 임명하며 국회의 동의를 받아야 한다.",
+          "vn": "Thẩm phán Tòa án tối cao do tổng thống bổ nhiệm và phải được quốc hội đồng ý."
         },
         {
           "situation": "법관 독립",
@@ -17325,8 +17325,8 @@
         },
         {
           "situation": "사법 접근권",
-          "ko": "법원 이용 비용이 너무 높으면 사법 접근권이 제한된다.",
-          "vn": "Nếu chi phí sử dụng tòa án quá cao, quyền tiếp cận tư pháp sẽ bị hạn chế."
+          "ko": "법원에 출석하지 않으면 결석 재판이 진행될 수 있다.",
+          "vn": "Nếu không ra tòa án, phiên tòa xử vắng mặt có thể được tiến hành."
         },
         {
           "situation": "전자 재판",

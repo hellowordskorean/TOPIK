@@ -8165,8 +8165,8 @@
         },
         {
           "situation": "Preparación de mariscos",
-          "ko": "조개류는 요리하기 전에 해감을 시켜야 한다.",
-          "es": "Los mariscos deben limpiarse de arena antes de cocinarlos."
+          "ko": "해산물은 요리하기 전에 깨끗이 손질해야 한다.",
+          "es": "Los mariscos deben limpiarse bien antes de cocinarlos."
         },
         {
           "situation": "elegir alimentos saludables",
@@ -9280,8 +9280,8 @@
         },
         {
           "situation": "Comparando opciones de ida",
-          "ko": "편도로만 예약하고 돌아올 때 따로 구매하는 게 나을까요?",
-          "es": "¿Sería mejor reservar solo un trayecto y comprar la vuelta por separado?"
+          "ko": "왕복 티켓을 사면 편도보다 더 저렴하다.",
+          "es": "Un boleto de ida y vuelta es más barato que uno de ida."
         },
         {
           "situation": "Preparación para un viaje de negocios — ida y vuelta; yendo y volviend, ej.8",
@@ -15248,8 +15248,8 @@
         },
         {
           "situation": "clase de historia",
-          "ko": "삼일절은 3·1운동을 기념하는 날이다.",
-          "es": "1 de Marzo Día del Movimiento de Independencia que conmemora el Movimiento 1 de Marzo."
+          "ko": "삼일절은 중요한 국가 기념일이다.",
+          "es": "El Día del Movimiento de Independencia del 1 de marzo es un importante aniversario nacional."
         },
         {
           "situation": "marcar aniversario en el calendario",
@@ -16312,8 +16312,8 @@
         },
         {
           "situation": "entender el multiculturalismo",
-          "ko": "다른 문화를 이해하면 더 넓은 시각을 가질 수 있다.",
-          "es": "Comprender diferentes culturas te permite tener una perspectiva más amplia."
+          "ko": "다문화를 이해하면 더 넓은 시각을 가질 수 있다.",
+          "es": "Comprender el multiculturalismo permite tener una perspectiva más amplia."
         },
         {
           "situation": "Política multicultural",
@@ -17165,13 +17165,13 @@
         },
         {
           "situation": "impuesto sobre la renta",
-          "ko": "매달 월급에서 소득세가 자동으로 빠져나간다.",
-          "es": "El impuesto sobre la renta se deduce automáticamente del salario mensual."
+          "ko": "매달 월급에서 세금이 자동으로 빠져나간다.",
+          "es": "Los impuestos se deducen automáticamente del salario mensual."
         },
         {
           "situation": "impuesto al valor agregado",
-          "ko": "물건을 살 때 부가가치세가 포함된 가격을 지불한다.",
-          "es": "Al comprar bienes, usted paga el precio incluido el impuesto al valor agregado."
+          "ko": "물건을 살 때 세금이 포함된 가격을 지불한다.",
+          "es": "Al comprar productos, se paga el precio con impuestos incluidos."
         },
         {
           "situation": "reembolso de impuestos",
@@ -17180,8 +17180,8 @@
         },
         {
           "situation": "declaración de impuestos — impuesto, ej.5",
-          "ko": "프리랜서는 매년 종합소득세를 신고해야 한다.",
-          "es": "Los autónomos deben declarar el impuesto sobre la renta integral todos los años."
+          "ko": "프리랜서는 매년 세금을 신고해야 한다.",
+          "es": "Los freelancers deben declarar sus impuestos cada año."
         },
         {
           "situation": "Ahorro en impuestos",
@@ -17190,8 +17190,8 @@
         },
         {
           "situation": "Impuesto sobre la propiedad",
-          "ko": "집을 소유하면 매년 재산세를 내야 한다.",
-          "es": "Si es propietario de una casa, debe pagar el impuesto sobre la propiedad todos los años."
+          "ko": "집을 소유하면 매년 세금을 내야 한다.",
+          "es": "Si posee una casa, debe pagar impuestos cada año."
         },
         {
           "situation": "Beneficios libres de impuestos",

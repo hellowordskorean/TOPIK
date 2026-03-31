@@ -34,8 +34,8 @@
         },
         {
           "situation": "Preguntar por la ubicación de la tienda",
-          "ko": "근처에 편의점이 있어요?",
-          "es": "¿Hay una tienda de conveniencia cerca?"
+          "ko": "근처에 가게가 있어요?",
+          "es": "¿Hay una tienda cerca?"
         },
         {
           "situation": "Hablando después de comprar",
@@ -59,8 +59,8 @@
         },
         {
           "situation": "Dar indicaciones",
-          "ko": "약국 옆에 빵집이 있다.",
-          "es": "Hay una panadería al lado de la farmacia."
+          "ko": "약국 옆에 작은 가게가 있다.",
+          "es": "Hay una pequeña tienda al lado de la farmacia."
         }
       ]
     },
@@ -16756,9 +16756,9 @@
           "es": "¿Cuántos años tienes?"
         },
         {
-          "situation": "Diciendo tu edad — edad, ej.2",
-          "ko": "저는 스무 살이다.",
-          "es": "Tengo veinte años."
+          "situation": "Preguntar la edad",
+          "ko": "나이가 어떻게 되세요?",
+          "es": "¿Cuántos años tiene?"
         },
         {
           "situation": "Cuando alguien es mayor",

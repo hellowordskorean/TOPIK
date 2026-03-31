@@ -34,8 +34,8 @@
         },
         {
           "situation": "Asking for Store Location",
-          "ko": "근처에 편의점이 있어요?",
-          "en": "Is there a convenience store nearby?"
+          "ko": "근처에 가게가 있어요?",
+          "en": "Is there a store nearby?"
         },
         {
           "situation": "Talking After Shopping",
@@ -59,8 +59,8 @@
         },
         {
           "situation": "Giving Directions",
-          "ko": "약국 옆에 빵집이 있다.",
-          "en": "There is a bakery next to the pharmacy."
+          "ko": "약국 옆에 작은 가게가 있다.",
+          "en": "There is a small store next to the pharmacy."
         }
       ]
     },
@@ -16756,9 +16756,9 @@
           "en": "How old are you?"
         },
         {
-          "situation": "Saying Your Age — age, ex.2",
-          "ko": "저는 스무 살이다.",
-          "en": "I am twenty years old."
+          "situation": "Asking About Age",
+          "ko": "나이가 어떻게 되세요?",
+          "en": "How old are you?"
         },
         {
           "situation": "When Someone is Older",
