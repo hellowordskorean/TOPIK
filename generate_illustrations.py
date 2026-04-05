@@ -17,79 +17,621 @@
 
 import json
 import os
+import re
+import sys
+import io
 import time
 import argparse
-import traceback
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
+# Windows cp949 인코딩 문제 방지
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
+
+# .env 로드
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 from google import genai
 from google.genai import types
+
+# 이미지 생성 백엔드: "imagen" | "flux"
+_BACKEND = "imagen"
+# 생성 후 Gemini Vision으로 텍스트 검증 여부 (--vlm-verify 플래그로 활성화)
+_VLM_VERIFY = False
 
 OUTPUT_DIR    = Path("/app/assets/illustrations")
 PROMPTS_FILE  = Path("/app/data/LanguageTest/illustration_prompts.json")
 SCENE_CACHE   = Path("/app/data/LanguageTest/scene_cache.json")
 FLAGGED_FILE  = Path("/app/logs/illust_flagged.json")
+USAGE_FILE    = Path("/app/logs/illust_usage.json")
 
-# ── 스타일 공통 키워드 ────────────────────────────────────────
-_STYLE_SUFFIX = (
-    "hand-drawn illustration with soft watercolor textures, "
-    "gentle ink outlines, warm pastel color palette, "
-    "light cream background with subtle paper grain, "
-    "centered composition, charming expressive characters, "
-    "each person must have a distinctly different appearance such as different hairstyle and hair color and clothing and body type, "
-    "delicate brushstroke details, "
-    "completely text-free wordless illustration, "
-    "replace all text with universal symbols and pictograms: "
-    "use ★ ♥ ● ▲ ♪ ☀ ✿ arrows and simple geometric shapes instead of any writing, "
-    "shop signs show only icons like a cup symbol for cafe or scissors symbol for barber, "
-    "numbers are allowed on price tags and clocks, "
-    "books and papers are blank or have wavy lines only, "
-    "all screens show simple geometric icons only, "
-    "no speech bubbles, no dialogue, no floating text, "
-    "no letters, no words, no characters in any language, "
-    "square format, high quality"
+
+# ── 일일 사용량 추적 ────────────────────────────────────────
+def _load_usage() -> dict:
+    try:
+        if USAGE_FILE.exists():
+            with open(USAGE_FILE, encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_usage(data: dict):
+    try:
+        USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(USAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _track_usage(success: bool, exhausted: bool = False):
+    """API 호출 1회 기록"""
+    data = _load_usage()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if data.get("date") != today:
+        data = {"date": today, "calls": 0, "success": 0, "fail": 0, "exhausted": False, "exhausted_at": None}
+    data["calls"] += 1
+    if success:
+        data["success"] += 1
+    else:
+        data["fail"] += 1
+    if exhausted:
+        data["exhausted"] = True
+        data["exhausted_at"] = datetime.now().strftime("%H:%M:%S")
+    _save_usage(data)
+
+# ── 스타일 (일관성을 위해 캐릭터·컬러·기법을 엄격히 명세) ─────────
+_STYLE = (
+    # [아트 스타일] 일관된 그림책 플랫 일러스트
+    "flat vector picture-book illustration style, clean 2px ink outlines, "
+    "semi-flat cel shading with soft gradients — NOT watercolor, NOT painterly, NOT photorealistic, "
+    "same consistent art style as if drawn by a single illustrator, "
+
+    # [캐릭터 디자인 고정] 동일한 캐릭터 템플릿
+    "FIXED CHARACTER DESIGN: round-faced East Asian person, "
+    "head-to-body ratio 1:4.5 (head is 18-22% of total figure height), "
+    "large round eyes with small pupils, tiny round nose, small gentle smile, "
+    "smooth warm peach skin tone, dark rounded hair — "
+    "use IDENTICAL character proportions in every single image, "
+
+    # [스케일 & 비율 강제] 거인·소인 방지
+    "STRICT SCALE RULES: "
+    "standing adult human figure must occupy 50-65% of frame height (never 100%, never below 40%), "
+    "all objects correctly scaled to human: "
+    "chair seat at knee height, table top at hip height, "
+    "door frame 15% taller than person, counter at waist height, "
+    "coffee cup is hand-sized, bag is torso-sized, "
+    "NO objects larger than a human unless naturally so (building, tree), "
+
+    # [투시 고정] 일관된 시점
+    "CONSISTENT PERSPECTIVE: "
+    "natural eye-level camera at 150cm height, slight 3/4 angle view, "
+    "ground plane always visible, objects recede naturally into background, "
+    "foreground items slightly larger than background items, "
+    "horizon line at vertical center or lower-third, "
+    "NO extreme bird's eye view, NO worm's eye view, "
+
+    # [컬러 팔레트 고정]
+    "LOCKED COLOR PALETTE: warm cream-white background (#FFF8F0), "
+    "muted pastel blue for sky/clothing, sage green for plants/nature, "
+    "soft golden yellow for warmth, warm peach for skin, gentle coral accents — "
+    "NO neon colors, NO very dark or black-dominant backgrounds, "
+    "consistent warm overall tone, "
+
+    # [구도]
+    "centered balanced composition, one clear focal point, square 1:1 format, "
+    "maximum 2 characters per scene, "
+
+    # [텍스트 완전 금지]
+    "ABSOLUTE NO TEXT: zero letters, zero numbers, zero characters in any language, "
+    "no speech bubbles, no labels, no signs, no captions, "
+    "all surfaces and objects must be completely blank or show only simple abstract shapes"
 )
 
-STYLE_PROMPT = (
-    "clear accurate illustration of {meaning}, "
-    "detailed and recognizable, "
-    + _STYLE_SUFFIX
-)
+# ── AI 장면 생성 시스템 ───────────────────────────────────────
+# 품사별 시각화 가이드
+_POS_GUIDE = {
+    "명사": (
+        "Show the object/place/person in its most recognizable natural context. "
+        "The noun itself must be the unmistakable focal point."
+    ),
+    "동사": (
+        "Capture the PEAK ACTION MOMENT — body mid-motion, objects involved, "
+        "clear cause-and-effect visible. Not before, not after — the exact moment."
+    ),
+    "형용사": (
+        "Show the quality through a CONCRETE EXAMPLE using contrast: "
+        "place two objects or two characters side by side to make the quality unmistakable. "
+        "E.g. for 'heavy': one person lifting a feather vs straining to lift a boulder."
+    ),
+    "부사": (
+        "DO NOT show a generic scene. Instead use a VISUAL METAPHOR or COMPARISON: "
+        "frequency adverbs → calendar/clock comparison; "
+        "degree adverbs → a scale/spectrum with 3 intensity levels; "
+        "manner adverbs → exaggerated body posture/speed lines showing HOW."
+    ),
+    "관형사": (
+        "Show a concrete scene where the determiner's meaning is the unmistakable focus. "
+        "Use labeled groups, quantities, or pointing to make the concept clear."
+    ),
+    "대명사": (
+        "Show a character POINTING at or gesturing toward the referent — "
+        "self-pointing for 나/저, outward pointing for 너, "
+        "circling group gesture for 우리/저희."
+    ),
+    "감탄사": (
+        "Show a character's FULL-BODY EMOTIONAL REACTION that embodies this exclamation — "
+        "extreme facial expression, dramatic hand gesture, body posture. "
+        "The emotion must be instantly readable."
+    ),
+    "접속사": (
+        "Show TWO distinct scenes connected visually — "
+        "use arrows, bridges, or sequential panels to show the logical connection."
+    ),
+}
 
-SENTENCE_STYLE_PROMPT = (
-    "clear accurate illustration: {scene}. "
-    + _STYLE_SUFFIX
-)
+# ── 단어별 시각화 앵커 (알려진 어려운 단어에 정확한 장면 지정) ───
+_WORD_VISUAL_ANCHORS: dict[str, str] = {
+    # ── 1-2급 빈도 부사 ──────────────────────────────────────
+    "가끔":   "A monthly calendar pinned to a wall: most days are blank, but only 2-3 days have a small circle drawn on them — showing 'sometimes'.",
+    "가장":   "Three children standing in a row by height — shortest, medium, tallest — with a gold star crown floating above the tallest one.",
+    "갑자기": "A person mid-stride on a path, body frozen in sudden shock — coffee cup flying from hand, liquid mid-air, eyes wide.",
+    "같이":   "Two friends walking side by side on a sunny path, arms linked, matching steps.",
+    "거의":   "A tall glass of water filled to 95%, a tiny sliver of empty space at the very top.",
+    "계속":   "A person jogging on a track, with a circular arrow looping back to the starting point — showing continuous repetition.",
+    "꼭":     "A person gripping a pencil with extreme concentration, circling an important item on a list — fingers tight, brow furrowed.",
+    "너무":   "A small cup completely overflowing — water cascading over the edges in all directions, creating a puddle below.",
+    "늘":     "A daily calendar with every single day checked off in sequence — not one day missed.",
+    "다시":   "A person rewinding a spool of film or rewinding a tape — arrow clearly pointing backward to start.",
+    "더":     "Two stacks of coins side by side — left stack is 3 coins high, right stack is 6 coins high — clearly more.",
+    "매우":   "A thermometer with the mercury at the absolute maximum, red line at the very top, small steam wisps rising.",
+    "모두":   "A basket with 10 identical apples — every single one taken out and laid in a neat row, empty basket tipped over.",
+    "바로":   "A person snapping fingers, and in the very next instant (shown side by side) the result appears instantly — no delay.",
+    "빨리":   "A running figure with exaggerated speed lines streaming behind, feet barely touching ground.",
+    "아직":   "An hourglass with sand still falling — halfway done, clearly not finished yet.",
+    "이미":   "An empty plate with only crumbs remaining, a satisfied person leaning back — the meal already done.",
+    "자주":   "A monthly calendar with nearly every other day circled — showing frequent occurrence.",
+    "잘":     "A person presenting their completed project — a neat stack of papers, everything aligned perfectly, small sparkle.",
+    "정말":   "A person with hands on cheeks, eyes wide, mouth open — genuine disbelief and astonishment.",
+    "제일":   "A podium with three places — gold/silver/bronze — a figure standing proudly on the tallest gold platform.",
+    "조금":   "A tiny pinch of salt between two fingers, hovering over a bowl — minuscule amount.",
+    "천천히": "A turtle walking alongside a footpath, with slow relaxed steps and gentle expression.",
+    "함께":   "Four hands from different directions joining together in the center — forming a unified grip.",
+    "혼자":   "A single small figure sitting at a large empty table with many chairs — all other seats vacant.",
+    "각":     "A row of 5 gift boxes, each with a different colored ribbon — one box per person, individual and distinct.",
+    "간단히": "A complex tangled rope on the left, and the same rope neatly tied in one simple knot on the right.",
+    "다":     "An open bag tipped over with ALL its contents spread out — every item visible, nothing left inside.",
+    "또":     "A person eating a sandwich, then shown again eating another sandwich — two sequential panels with an 'again' arrow.",
+    "특히":   "A row of identical apples, but one in the center glowing with a spotlight — highlighted and special.",
+
+    # ── 1-2급 감탄사 ─────────────────────────────────────────
+    "네":     "A person nodding vigorously with a wide smile and a big thumbs-up — enthusiastic agreement.",
+    "아이고": "A person with both hands pressed to cheeks, eyes wide, mouth in an 'O' — classic flustered reaction.",
+    "와":     "A person with arms thrown wide open, head tilted back — pure amazement and delight.",
+    "아":     "A person with mouth open wide in sudden realization — the 'aha' moment, one finger raised.",
+
+    # ── 1-2급 대명사 ─────────────────────────────────────────
+    "나":     "A person pointing both thumbs at their own chest with a confident smile.",
+    "저":     "A person pointing one thumb at their own chest with a humble, gentle bow.",
+    "너":     "A person pointing one index finger directly forward — at the viewer — with a friendly expression.",
+    "우리":   "A small group of three friends standing together, arms around each other's shoulders.",
+    "저희":   "A small group bowing slightly together in a polite, humble group gesture.",
+    "그것":   "A person pointing at a nearby object (a box) with one finger, eyes directed at it.",
+
+    # ── 4급 심리/감정 추상명사 ───────────────────────────────
+    "자존감":  "A person standing tall in front of a full-length mirror — their reflection glows with a warm aura, shoulders back, chin up, confident smile.",
+    "불안감":  "A person sitting hunched on a chair, hands tightly wringing in lap, shoulders tense — a swirling gray cloud floating above their head.",
+    "압박감":  "A small figure visibly straining, arms braced upward — a massive invisible weight pressing down from above, flattening the ground under their feet.",
+    "열등감":  "Two figures standing side by side — one tall and glowing, one shorter with shoulders dropped, eyes cast downward at own feet.",
+    "집중력":  "A person bent over a desk in a tight spotlight — everything outside the circle of light is dim, their eyes locked on the single task.",
+    "성취감":  "A person standing at the peak of a mountain with arms raised triumphantly — sunrise behind them, climbing path visible below.",
+    "당혹감":  "A person with bright red flushed cheeks, perspiration drops, eyes darting sideways — visible embarrassment.",
+    "감정이입":"Two people: one is crying with tears, the second person leans in with a hand on their shoulder — second person's eyes also glistening with tears.",
+    "감정":    "A single face split into four quadrants — each quarter showing a different clear emotion: joy, sadness, anger, surprise.",
+    "정서":    "A warm family scene at a dinner table — soft light, gentle smiles, hands close together — the calm feeling of emotional belonging.",
+    "감성":    "A person standing in rain, eyes closed, face tilted up — a single tear mixed with raindrops, surrounded by falling autumn leaves.",
+
+    # ── 5급 외교/국제관계 ────────────────────────────────────
+    "외교":    "Two formally dressed representatives from different nations shaking hands across a table — two small flags on either side of the table.",
+    "협상":    "Two parties seated at opposite ends of a long table, both leaning slightly toward the center — papers spread between them, a gap still visible in the middle.",
+    "조약":    "An official scroll document laid flat with an ornate wax seal — two fountain pens hovering over the signature lines, about to sign.",
+    "협약":    "Two hands from different sides reaching toward the center and clasping in a firm handshake — a small document beneath the joined hands.",
+    "동맹":    "Five arms reaching in from different corners of the frame, all joining at the center in a unified group handshake.",
+    "제재":    "A cargo ship approaching a port — a large red barrier gate lowered across the entrance, blocking passage.",
+    "외교관":  "A formally dressed figure carrying a briefcase, walking toward an official building entrance — small national flags flanking the doorway.",
+    "영사관":  "An official building exterior with a national flag on a pole and a small emblem above the door — a visitor approaching the entrance.",
+    "유엔":    "A circular table with many small flags from different countries arranged around it — globe motif in the center.",
+    "국제법":  "A large open book with a globe resting on top — scales of justice balanced beside it on a formal desk.",
+    "중재하다":"A person standing calmly between two groups who face away from each other — the mediator has both hands gently extended toward each group.",
+    "인식하다":"A person turning their head with wide eyes and a sudden expression of clarity — a lightbulb moment shown as a small bright dot near their eye.",
+    "주장하다":"A person standing at a podium with one hand raised firmly making a point — confident posture, clear gesture of assertion.",
+    "검증하다":"A scientist figure holding up a test tube, peering through a magnifying glass at its contents — checklist partially completed nearby.",
+    "구축하다":"Hands placing the final brick on top of a carefully built wall — structure rising from foundation, clearly assembled piece by piece.",
+    "타당하다":"A balance scale in perfect equilibrium — both sides level, no tipping — representing soundness and validity.",
+    "합리적이다":"A person at a crossroads choosing the straight clear path over the winding tangled one — calm and logical expression.",
+    "체계적이다":"A neat organizational chart on paper — boxes connected by clear lines, everything in logical order from top to bottom.",
+
+    # ── 6급 철학/논리학 ──────────────────────────────────────
+    "경험론":  "Two hands reaching out and directly touching, smelling, and tasting real objects — an apple, a flame, a piece of fabric — raw sensory contact with reality.",
+    "공리계":  "A row of dominoes standing in sequence — the first one has just fallen, triggering a chain reaction, all others falling in logical order.",
+    "정합성":  "A jigsaw puzzle nearly complete — the final piece hovering over the one remaining gap, a perfect fit about to be made.",
+    "주체성":  "A person standing at a fork in a road — confidently choosing one path despite two pointing arrows pulling in different directions.",
+    "개연성":  "A single die mid-roll — multiple ghosted faces visible showing possible outcomes, one face slightly larger/brighter indicating higher likelihood.",
+    "변증법적":"Two opposing arrows colliding in the center — and from the collision point, a new single upward arrow emerging, representing synthesis.",
+    "선험적":  "A person sitting with eyes closed in pure thought — lightbulb appearing in their mind, with no real-world objects present, just abstract shapes.",
+    "존재론적":"A mirror showing a reflection — but the reflection is slightly different from reality, raising the question of what is real existence.",
+    "타당성":  "A scale of justice with both sides perfectly balanced — solid geometric shapes on each side, stable and level.",
+    "논거":    "A simple logical flow diagram: one statement box connected by an arrow to a conclusion box — clear cause-and-effect structure.",
+    "도출":    "A funnel with multiple items entering the wide top — one clear, refined result emerging from the narrow bottom spout.",
+    "귀결하다":"A maze shown with all paths leading inevitably to one single exit — no other way out, logical inevitability.",
+    "고찰하다":"A person sitting quietly at a desk, chin resting on hand, gazing thoughtfully at a single object placed before them.",
+    "성찰하다":"A person looking into a still pond — their reflection gazes back — visual metaphor of looking inward at oneself.",
+    "논증하다":"A chalkboard (blank) with arrows showing logical steps from premise to conclusion — geometric proof style layout.",
+    "규정하다":"A clear boundary line drawn on the ground — objects on each side sorted into distinct categories.",
+    "포괄하다":"A large circle drawn with many smaller shapes (triangle, square, star) all contained within it — all encompassed.",
+    "서술하다":"A person gesturing expressively while a simple storyboard of sequential images unfolds beside them.",
+}
 
 
-def _sanitize_prompt(content: str) -> str:
-    """텍스트 유발 요소를 기호/아이콘 표현으로 대체"""
-    import re
-    replacements = [
-        (r'\b(sign\s+saying|sign\s+reading|sign\s+that\s+reads)\b[^,]*', 'sign with a simple icon symbol'),
-        (r'\b(shop\s+sign|store\s+sign)\b', 'sign with a pictogram icon'),
-        (r'\b(menu\s+board|chalkboard\s+menu|price\s+list)\b', 'board with colorful dot symbols'),
-        (r'\b(name\s+tag|label\s+reading)\b', 'tag with a symbol'),
-        (r'\b(receipt|invoice)\b', 'small paper with wavy lines'),
-        (r'\b(document\s+with|form\s+with)\b', 'paper with wavy lines and'),
-        (r'\b(book\s+titled?|newspaper|magazine\s+cover)\b', 'book with geometric pattern cover'),
-        (r'\b(screen\s+showing|display\s+reading)\b', 'screen showing simple geometric icons'),
-        (r'\b(clock\s+showing|clock\s+reading)\b', 'clock showing'),
-        (r'\b(calendar)\b', 'calendar'),
-        (r'\b(letter|mail|envelope\s+with)\b', 'envelope with heart symbol'),
-        (r'\b(written|labeled|reads|reading|says|titled)\b', 'marked with symbols'),
-        (r'\b(banner|poster|notice|flyer)\b', 'decorative panel with geometric shapes'),
-    ]
-    for pattern, replacement in replacements:
-        content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
-    return content
+def _classify_word_visual_type(word: dict) -> tuple[str, str]:
+    """단어 유형 분류 → (유형코드, 시각화 전략 힌트) 반환.
+    어려운 단어에 맞춤 전략을 제공해 AI 프롬프트 품질을 높임."""
+    pos     = word.get("pos", "명사")
+    meaning = word.get("meaning", "").lower()
+    level   = word.get("level", 1)
+    korean  = word.get("word", "")
+
+    # 0. 앵커 사전에 정확한 장면이 있으면 최우선
+    if korean in _WORD_VISUAL_ANCHORS:
+        return "anchored", _WORD_VISUAL_ANCHORS[korean]
+
+    # 1. 부사 세분화
+    if pos in ("부사", "접속사"):
+        freq = ["sometimes", "occasionally", "rarely", "often", "always", "never",
+                "usually", "frequently", "regularly", "seldom", "constantly"]
+        deg  = ["very", "too", "extremely", "most", "more", "less", "so", "quite",
+                "rather", "fairly", "pretty", "really", "truly", "highly"]
+        mann = ["suddenly", "quickly", "slowly", "carefully", "together",
+                "again", "already", "still", "immediately", "directly",
+                "simply", "easily", "quietly", "loudly", "strongly"]
+        if any(x in meaning for x in freq):
+            return "adverb_freq", (
+                "Use a CALENDAR or CLOCK visual: show the action happening on "
+                "only a few days vs many days to make frequency instantly visible."
+            )
+        if any(x in meaning for x in deg):
+            return "adverb_deg", (
+                "Show a 3-STEP SCALE: three objects of increasing intensity "
+                "(small/medium/overflowing, dim/bright/blazing). "
+                "Highlight the relevant degree level clearly."
+            )
+        if any(x in meaning for x in mann):
+            return "adverb_manner", (
+                "Exaggerate the MANNER of action through extreme body posture, "
+                "motion lines, or a direct visual comparison — "
+                "the HOW must be unmistakable."
+            )
+        return "adverb_general", (
+            "Use a visual metaphor or before/after comparison to show "
+            "what this adverb means in practice."
+        )
+
+    # 2. 관형사/대명사/감탄사
+    if pos == "관형사":
+        return "determiner", (
+            "Show a clear GROUPING or SELECTION scene: items in a row, "
+            "one highlighted, or groups separated — the determiner's meaning "
+            "visible through spatial arrangement."
+        )
+    if pos == "대명사":
+        return "pronoun", (
+            "Show a character POINTING or GESTURING at the referent — "
+            "self-pointing for 나/저, outward for 너, group gesture for 우리."
+        )
+    if pos == "감탄사":
+        return "exclamation", (
+            "Show a character's FULL-BODY REACTION: extreme facial expression, "
+            "arm position, body language — the emotion must be instantly readable."
+        )
+
+    # 3. 4급+ 심리/감정 추상명사
+    psych_neg = ["anxiety", "stress", "inferiority", "pressure", "depression",
+                 "embarrass", "unease", "worry", "fear", "frustration", "burden"]
+    psych_pos = ["self-esteem", "confidence", "achievement", "satisfaction",
+                 "motivation", "pride", "joy", "happiness", "gratitude"]
+    psych_neu = ["emotion", "feeling", "sensibility", "empathy", "sentiment",
+                 "affective", "mood", "temperament", "attachment"]
+    if any(x in meaning for x in psych_neg):
+        return "emotion_neg", (
+            "Show the PHYSICAL MANIFESTATION of this negative state: "
+            "specific body posture (hunched/tense/collapsed), facial cues, "
+            "and an environmental metaphor (weight, shadow, barrier) that "
+            "makes the emotion UNMISTAKABLY different from other negative states."
+        )
+    if any(x in meaning for x in psych_pos):
+        return "emotion_pos", (
+            "Show the FULL-BODY EXPRESSION of this positive state: "
+            "open posture, upward motion, warm light, achievement cue. "
+            "Must be visually distinct from other positive emotions."
+        )
+    if any(x in meaning for x in psych_neu):
+        return "emotion_neu", (
+            "Show this emotional concept through a SPLIT or CONTRASTING scene "
+            "that makes the specific nuance clear."
+        )
+
+    # 4. 5급 외교/국제관계
+    diplomacy_kw = ["diplomacy", "treaty", "alliance", "negotiation", "sanction",
+                    "sovereign", "coalition", "consulate", "diplomat", "mediat",
+                    "international", "ratif", "multilateral", "bilateral"]
+    if level >= 5 and any(x in meaning for x in diplomacy_kw):
+        return "diplomacy", (
+            "Show a SPECIFIC DIPLOMATIC MOMENT with unique visual elements "
+            "that distinguish this word from other diplomatic terms. "
+            "Do NOT use a generic handshake — be precise to this word's meaning."
+        )
+
+    # 5. 6급 철학/논리학
+    philosophy_kw = ["empiricism", "axiomatic", "coherence", "subjectivity",
+                     "dialectic", "ontolog", "probability", "validity", "a priori",
+                     "proposition", "syllogism", "deduction", "induction",
+                     "phenomenolog", "epistemolog", "methodology", "postcolonial"]
+    if level >= 6 and any(x in meaning for x in philosophy_kw):
+        return "philosophy", (
+            "Create a TANGIBLE PHYSICAL METAPHOR using everyday objects. "
+            "Do NOT use books, professors, or classrooms. "
+            "Map the abstract concept to a concrete visual: "
+            "chain reaction for logical systems, "
+            "hands touching objects for empirical knowledge, "
+            "puzzle pieces for coherence, "
+            "fork-in-road for agency."
+        )
+
+    return "standard", ""
+
+# situation 키워드 → 물리적 배경 (fallback용)
+_SETTINGS = {
+    "transport": "city street near a transit stop",
+    "subway": "underground platform with warm overhead lights",
+    "bus": "inside a bus looking out a window",
+    "school": "bright classroom with wooden desks",
+    "home": "cozy living room with sofa and warm lamps",
+    "kitchen": "home kitchen with pots and cooking utensils",
+    "shopping": "room with neat product shelves",
+    "market": "outdoor market with colorful fresh produce",
+    "restaurant": "dining table with steaming bowls and chopsticks",
+    "cafe": "warm wooden counter with coffee and ceramic mugs",
+    "hospital": "clean bright medical room",
+    "office": "tidy modern room with desks",
+    "work": "bright office with desk and computer",
+    "travel": "scenic outdoor destination",
+    "park": "sunny green park with trees",
+    "gym": "sports area with exercise equipment",
+    "bank": "clean formal room with counter",
+    "airport": "bright hall with travelers and luggage",
+    "hotel": "tidy room with bed and nightstand",
+    "library": "quiet reading room with tall shelves",
+}
+
+def _fallback_setting(situation: str) -> str:
+    if not situation:
+        return "everyday Korean setting"
+    low = situation.lower()
+    for key, desc in _SETTINGS.items():
+        if key in low:
+            return desc
+    return "everyday Korean setting"
+
+
+def _ai_word_scene(word: dict, client) -> str:
+    """Gemini Flash로 단어에 최적화된 구체적 시각 장면 생성.
+    캐시 우선 사용. client=None이면 fallback 사용.
+    앵커 사전에 있는 단어는 API 호출 없이 즉시 반환."""
+    cache_key = f"word_{word['id']}"
+    if cache_key in _scene_cache:
+        return _scene_cache[cache_key]
+
+    # 앵커 사전 우선 확인 (API 호출 없이 반환)
+    visual_type, strategy = _classify_word_visual_type(word)
+    if visual_type == "anchored":
+        _scene_cache[cache_key] = strategy
+        _save_scene_cache()
+        return strategy
+
+    if client is None:
+        return _word_prompt_fallback(word["meaning"])
+
+    korean   = word["word"]
+    meaning  = word["meaning"]
+    pos      = word.get("pos", "명사")
+    synonyms = ", ".join((word.get("synonyms") or [])[:3])
+    pos_guide = _POS_GUIDE.get(pos, _POS_GUIDE["명사"])
+
+    # 전략 힌트를 프롬프트에 포함 (분류 유형에 따라 특화 안내)
+    strategy_block = f"VISUALIZATION STRATEGY: {strategy}\n" if strategy else ""
+
+    try:
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[(
+                "You are an illustration director for a Korean vocabulary learning app.\n"
+                "Design ONE concrete visual scene for a square flashcard illustration.\n\n"
+                f"Korean word: {korean}\n"
+                f"Part of speech: {pos}\n"
+                f"English meaning: {meaning}\n"
+                f"Korean synonyms: {synonyms}\n\n"
+                f"{strategy_block}"
+                "RULES:\n"
+                f"1. {pos_guide}\n"
+                "2. A student must INSTANTLY understand what this word means just from the image\n"
+                "3. Be HYPER-SPECIFIC — exact objects, exact action, exact positions\n"
+                "   WRONG: 'A person doing something in a room'\n"
+                "   RIGHT: 'A young woman standing at a produce stand, holding up a red apple with one hand "
+                "while counting coins in her palm with the other, colorful fruits arranged in baskets around her'\n"
+                "4. Maximum 2 people. One clear focal point.\n"
+                "5. NO text, signs, labels, or writing anywhere\n\n"
+                "Output: 2-3 sentences ONLY. Start with the main subject and action. "
+                "No preamble, no explanation."
+            )]
+        )
+        scene = resp.text.strip()
+        _scene_cache[cache_key] = scene
+        _save_scene_cache()
+        return scene
+    except Exception as e:
+        print(f"  [AI 장면 생성 실패: {e}] fallback 사용")
+        return _word_prompt_fallback(meaning)
+
+
+def _ai_sentence_scene(word: dict, sent: dict, sent_idx: int, client) -> str:
+    """Gemini Flash로 예문에 최적화된 구체적 시각 장면 생성."""
+    cache_key = f"sent_{word['id']}_{sent_idx}"
+    if cache_key in _scene_cache:
+        return _scene_cache[cache_key]
+
+    if client is None:
+        return _sentence_scene_fallback(word, sent)
+
+    korean    = word["word"]
+    meaning   = word["meaning"]
+    situation = sent.get("situation", "")
+    ko        = sent.get("ko", "")
+    en        = sent.get("en", "")
+
+    # 단어 분류로 문장 장면에도 전략 힌트 활용
+    visual_type, strategy = _classify_word_visual_type(word)
+    # 앵커 단어는 단어 뜻 장면을 기반으로 문장 상황 추가
+    if visual_type == "anchored":
+        anchor_hint = (
+            f"The core word concept is: {strategy} "
+            f"Now adapt this to the specific sentence context below."
+        )
+    elif strategy:
+        anchor_hint = f"WORD VISUALIZATION HINT: {strategy}"
+    else:
+        anchor_hint = ""
+
+    try:
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[(
+                "You are an illustration director for a Korean vocabulary learning app.\n"
+                "Design ONE concrete visual scene showing this example sentence in use.\n\n"
+                f"Korean word: {korean} (meaning: {meaning})\n"
+                f"Situation: {situation}\n"
+                f"Korean sentence: {ko}\n"
+                f"English sentence: {en}\n"
+                + (f"\n{anchor_hint}\n" if anchor_hint else "") +
+                "\nRULES:\n"
+                f"1. Show the SPECIFIC MOMENT described in the sentence — not before, not after\n"
+                f"2. Make '{korean}' ({meaning.split(',')[0].strip()}) VISUALLY OBVIOUS as the focal concept\n"
+                "3. Be HYPER-SPECIFIC — exact WHO, exact WHAT action, exact WHERE, exact OBJECTS\n"
+                "   WRONG: 'A person in a room'\n"
+                "   RIGHT: 'A man in an apron behind a market counter, carefully weighing bananas on "
+                "a hanging scale, a customer watching with a basket of groceries in hand'\n"
+                "4. Maximum 2 people. No text or signs anywhere.\n\n"
+                "Output: 2-3 sentences ONLY. Start with WHO and their action. No preamble."
+            )]
+        )
+        scene = resp.text.strip()
+        _scene_cache[cache_key] = scene
+        _save_scene_cache()
+        return scene
+    except Exception as e:
+        print(f"  [AI 장면 생성 실패: {e}] fallback 사용")
+        return _sentence_scene_fallback(word, sent)
+
+
+def _ai_improve_scene(original_scene: str, issues: list[str],
+                      word: dict, sent: dict | None, client) -> str:
+    """VLM 피드백 기반으로 Gemini가 장면 설명 개선."""
+    if client is None:
+        return original_scene
+
+    korean  = word["word"]
+    meaning = word["meaning"]
+    issue_text = "; ".join(issues)
+    ctx = f"Korean sentence: {sent.get('ko','')} / {sent.get('en','')}" if sent else ""
+
+    try:
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[(
+                f"You wrote this illustration prompt:\n{original_scene}\n\n"
+                f"A quality checker found these problems: {issue_text}\n\n"
+                f"This image is for the Korean word '{korean}' (meaning: {meaning}). {ctx}\n\n"
+                "Rewrite the prompt to FIX ALL the listed problems while keeping educational clarity.\n"
+                "Keep the same core concept but fix anatomy, scale, perspective, style issues.\n"
+                "Output ONLY the improved prompt. 2-3 sentences. No preamble."
+            )]
+        )
+        return resp.text.strip()
+    except Exception as e:
+        print(f"  [AI 프롬프트 개선 실패: {e}]")
+        return original_scene
+
+
+# ── Fallback 프롬프트 (client 없을 때) ───────────────────────
+def _word_prompt_fallback(meaning: str) -> str:
+    keyword = meaning.split(",")[0].strip()
+    return (
+        f"A clear picture-book illustration showing the concept '{keyword}'. "
+        f"One specific concrete moment with objects and setting that immediately "
+        f"communicates '{keyword}' without any text."
+    )
+
+def _sentence_scene_fallback(word: dict, sent: dict) -> str:
+    main = word["meaning"].split(",")[0].strip()
+    situation = sent.get("situation", "")
+    setting = _fallback_setting(situation)
+    return (
+        f"A specific scene showing '{main}' in action — "
+        f"concrete objects and clear body language tell the story, {setting}, no dialogue"
+    )
+
+
+# ── 텍스트 유발 토큰 치환 ─────────────────────────────────────
+_BANNED_SUBSTITUTIONS = [
+    (r'\bshop\b',           'room with product shelves'),
+    (r'\bstore\b',          'room with displayed items'),
+    (r'\bstorefront\b',     'plain building exterior'),
+    (r'\bfacade\b',         'plain building front'),
+    (r'\bsign\b',           'blank placard'),
+    (r'\blabel\b',          'tag with a simple icon'),
+    (r'\bbanner\b',         'hanging cloth decoration'),
+    (r'\bposter\b',         'framed picture on the wall'),
+    (r'\bmenu board\b',     'blank chalkboard'),
+    (r'\bprice tag\b',      'small hanging tag'),
+    (r'\bsmartphone\b',     'small flat device'),
+    (r'\blaptop\b',         'open portable computer'),
+    (r'\bnewspaper\b',      'folded paper with wavy lines'),
+    (r'\bmagazine\b',       'illustrated booklet'),
+    (r'\bscreen\b',         'glowing rectangular surface'),
+    (r'\bawning\b',         'striped overhead cover'),
+    (r'\bentrance\b',       'open doorway'),
+    (r'\bbookshelves?\b',   'tall shelves'),
+    (r'\bcaf[eé]\b',        'warm counter with hot drinks'),
+]
+
+def _lint_prompt(prompt: str) -> str:
+    """banned 토큰을 텍스트 유발 없는 안전한 표현으로 치환"""
+    for pattern, replacement in _BANNED_SUBSTITUTIONS:
+        prompt = re.sub(pattern, replacement, prompt, flags=re.IGNORECASE)
+    return prompt
+
 
 def _apply_style(content: str) -> str:
-    """커스텀 content 설명 + 스타일 키워드 조합"""
-    content = _sanitize_prompt(content)
-    return f"clear accurate illustration of {content}. {_STYLE_SUFFIX}"
+    """커스텀 프롬프트 + lint + 스타일"""
+    return f"{_lint_prompt(content)}. {_STYLE}"
 
 
 # ── 장면 캐시 ────────────────────────────────────────────────
@@ -108,92 +650,7 @@ def _save_scene_cache():
         json.dump(_scene_cache, f, ensure_ascii=False, indent=2)
 
 
-# ── Claude API: 문장 -> 시각 장면 변환 ────────────────────────
-_SCENE_SYSTEM = """You are a visual scene designer for language learning illustrations.
-Convert the given sentence into a VISUAL SCENE DESCRIPTION for an illustrator.
 
-Rules:
-- Describe ONLY what can be seen: actions, objects, expressions, settings
-- NEVER include speech bubbles, dialogue, or floating text
-- Replace conversations with body language and gestures
-- ABSOLUTELY NO TEXT of any kind: no signs with words, no labels, no menus with writing, no price tags with numbers, no shop names, no book titles, no screen text
-- Replace ALL text with universal symbols: ★ ♥ ● ▲ ♪ arrows, pictogram icons, geometric shapes
-- Shop signs → icon only (cup icon for cafe, scissors for barber, fork-and-knife for restaurant)
-- Numbers ARE allowed (price tags, clocks, calendars can show numbers)
-- Books/papers → wavy lines or geometric patterns instead of words
-- Be specific about body positions, facial expressions, and surroundings
-- Keep it to 1-2 sentences, under 50 words
-- The scene must make the sentence's meaning understandable without any dialogue
-
-Respond with ONLY the scene description, nothing else."""
-
-def sentence_to_visual_scene(word: dict, sent: dict, sent_idx: int) -> str | None:
-    """Claude API로 영어 문장 -> 시각 장면 변환 (캐시 포함)"""
-    ko = sent.get("ko", "")
-    en = sent.get("en", "")
-    if not en:
-        return None
-    cache_key = f"{word['id']}_{sent_idx}"
-    if cache_key in _scene_cache:
-        return _scene_cache[cache_key]
-    try:
-        claude = anthropic.Anthropic()
-        resp = claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=150,
-            system=_SCENE_SYSTEM,
-            messages=[{"role": "user", "content":
-                f"Korean: {ko}\nEnglish: {en}\n"
-                f"Target word: {word['word']} ({word['meaning']})"}],
-        )
-        scene = resp.content[0].text.strip()
-        if scene:
-            _scene_cache[cache_key] = scene
-            if len(_scene_cache) % 10 == 0:
-                _save_scene_cache()
-            return scene
-    except Exception as e:
-        print(f"    Claude 장면 변환 실패: {e}")
-    return None
-
-
-# ── Gemini Vision 텍스트 검증 ─────────────────────────────────
-_VERIFY_PROMPT = """Analyze this illustration for clearly readable text.
-
-Check 1 - Speech bubbles: Are there speech bubbles or dialogue balloons with text inside? (FAIL if yes)
-Check 2 - Readable words: Are there any clearly readable words or sentences in any language (Korean, Chinese, Japanese, English)? Only FAIL if you can actually read specific words — do NOT fail for vague squiggles, decorative lines, or abstract patterns that merely resemble letters.
-Check 3 - Prominent signs: Are there large, prominent signs with clearly legible text? (FAIL if yes — small decorative marks on distant signs are OK)
-
-IMPORTANT: This is a hand-drawn watercolor illustration. Decorative brush strokes, abstract patterns, and tiny indistinct marks are NORMAL and should PASS. Only FAIL for text that a viewer would actually try to read.
-
-Respond in JSON only:
-{
-  "has_dialogue": true/false,
-  "texts": [
-    {"location": "shop sign", "content": "BAKERY", "readable": true}
-  ],
-  "pass": true/false,
-  "reason": "short explanation if failed"
-}"""
-
-def _verify_image(image_path: Path, client) -> dict:
-    try:
-        img_bytes = image_path.read_bytes()
-        resp = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                _VERIFY_PROMPT,
-            ],
-        )
-        text = resp.text.strip()
-        if "```" in text:
-            text = text.split("```json")[-1].split("```")[0].strip()
-            if not text:
-                text = resp.text.split("```")[1].strip()
-        return json.loads(text)
-    except Exception as e:
-        return {"pass": True, "reason": f"verify error: {e}"}
 
 def _flag_image(word: dict, sent_idx: int, prompt: str, reason: str):
     try:
@@ -271,11 +728,46 @@ def _log_error(msg: str):
         pass
 
 
+def _generate_once_flux(prompt: str, output_path: Path) -> bool:
+    """Flux Schnell (Replicate API)로 이미지 생성"""
+    try:
+        import replicate
+        import urllib.request
+        output = replicate.run(
+            "black-forest-labs/flux-schnell",
+            input={
+                "prompt": prompt,
+                "num_outputs": 1,
+                "aspect_ratio": "1:1",
+                "output_format": "png",
+                "output_quality": 90,
+                "go_fast": True,
+                "megapixels": "1",
+            },
+        )
+        if output:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(str(output[0]), str(output_path))
+            _track_usage(success=True)
+            return True
+        _log_error(f"Flux 빈 응답: {output_path.name} | prompt: {prompt[:100]}")
+        _track_usage(success=False)
+        return False
+    except Exception as e:
+        _log_error(f"Flux 생성 오류: {e} | {output_path.name} | prompt: {prompt[:100]}")
+        print(f"  Flux 생성 오류: {e}")
+        _track_usage(success=False)
+        return False
+
+
 def _generate_once(prompt: str, output_path: Path, client) -> bool:
-    """단일 이미지 생성 (검증 없이)"""
+    """단일 이미지 생성 — 백엔드에 따라 Imagen / Flux 분기"""
+    if _BACKEND == "flux":
+        return _generate_once_flux(prompt, output_path)
+    # ── Imagen 4 Fast ──────────────────────────────────────
     try:
         response = client.models.generate_images(
-            model="imagen-4.0-generate-001",
+            model="imagen-4.0-fast-generate-001",
             prompt=prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
@@ -285,107 +777,381 @@ def _generate_once(prompt: str, output_path: Path, client) -> bool:
         if response.generated_images:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             response.generated_images[0].image.save(str(output_path))
+            _track_usage(success=True)
             return True
         _log_error(f"빈 응답 (이미지 없음): {output_path.name} | prompt: {prompt[:100]}")
+        _track_usage(success=False)
         return False
     except Exception as e:
         _log_error(f"생성 오류: {e} | {output_path.name} | prompt: {prompt[:100]}")
         print(f"  생성 오류: {e}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            _track_usage(success=False, exhausted=True)
             print("\n[중단] API 일일 할당량 초과 — 내일 다시 시도하세요.")
             raise SystemExit(1)
+        _track_usage(success=False)
         return False
 
+def _parse_vlm_json(raw: str) -> dict:
+    """VLM 응답에서 JSON 추출"""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw[raw.index("\n") + 1:]
+        if raw.endswith("```"):
+            raw = raw[:-3].strip()
+    return json.loads(raw)
+
+
+def _verify_image_vlm(image_path: Path, client) -> tuple[bool, str]:
+    """Gemini Vision으로 이미지 내 텍스트 감지. 텍스트 없으면 (True, '') 반환"""
+    if client is None:
+        return True, ""
+    try:
+        import PIL.Image
+        img = PIL.Image.open(str(image_path))
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                img,
+                (
+                    "Does this image contain ANY visible text, letters, numbers, "
+                    "characters (in any language), speech bubbles, or captions? "
+                    "Answer ONLY with JSON (no markdown): "
+                    "{\"has_text\": true/false, \"details\": \"brief description or none\"}"
+                ),
+            ],
+        )
+        result = _parse_vlm_json(response.text or "")
+        has_text = result.get("has_text", False)
+        return not has_text, result.get("details", "")
+    except Exception as e:
+        return True, f"검증 오류 (통과 처리): {e}"
+
+
+def _verify_image_style(image_path: Path, client) -> tuple[bool, str]:
+    """Gemini Vision으로 스타일·비율·투시·해부학적 이상·물리적 오류 종합 검증.
+    Returns (passed, issues_str)."""
+    if client is None:
+        return True, ""
+    try:
+        import PIL.Image
+        img = PIL.Image.open(str(image_path))
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                img,
+                (
+                    "You are a strict quality checker for children's book illustrations. "
+                    "Carefully examine every part of this image and answer ONLY with JSON (no markdown):\n"
+                    "{\n"
+                    "  \"has_person\": true/false,\n"
+
+                    # 비율
+                    "  \"proportion_ok\": true if no person present OR standing person height is 40-70% of frame height,\n"
+                    "  \"scale_ok\": true if objects are correctly sized relative to humans "
+                    "(chair seat at knee height, table at hip height, door taller than person — "
+                    "no person dwarfed by a coffee cup, no person larger than a building interior wall),\n"
+
+                    # 투시
+                    "  \"perspective_ok\": true if camera is roughly eye-level, "
+                    "no extreme distortion, objects recede naturally,\n"
+
+                    # 스타일/팔레트
+                    "  \"style_ok\": true if flat/semi-flat illustration (NOT photorealistic, NOT oil painting),\n"
+                    "  \"palette_ok\": true if overall tone is warm/light/pastel (NOT dark or black-dominant),\n"
+
+                    # 해부학적 이상
+                    "  \"anatomy_ok\": true if all human figures have correct anatomy — "
+                    "exactly 2 arms, 2 legs, 1 head, normal hand/finger count, "
+                    "no extra limbs, no missing limbs, no floating body parts, "
+                    "no fused or merged figures, normal facial features (2 eyes, 1 nose, 1 mouth),\n"
+
+                    # 물리적/논리적 이상
+                    "  \"physics_ok\": true if all objects follow physical logic — "
+                    "no upside-down objects that should be right-side-up (cups, plates, furniture), "
+                    "no objects passing through other solid objects, "
+                    "no doors or windows opening impossibly (e.g. two doors colliding into each other), "
+                    "no floating objects without context, "
+                    "objects rest on surfaces correctly,\n"
+
+                    # 구체적 문제 목록
+                    "  \"issues\": \"concise comma-separated list of specific problems found "
+                    "(e.g. '3 arms on person', 'cup is upside-down', 'person is 10% of frame', "
+                    "'two doors opening into each other'), or empty string if none\"\n"
+                    "}"
+                ),
+            ],
+        )
+        result = _parse_vlm_json(response.text or "")
+        failed = []
+        if not result.get("proportion_ok", True):
+            failed.append("proportion")
+        if not result.get("scale_ok", True):
+            failed.append("scale")
+        if not result.get("perspective_ok", True):
+            failed.append("perspective")
+        if not result.get("style_ok", True):
+            failed.append("style")
+        if not result.get("palette_ok", True):
+            failed.append("palette")
+        if not result.get("anatomy_ok", True):
+            failed.append("anatomy")
+        if not result.get("physics_ok", True):
+            failed.append("physics")
+        issues = result.get("issues", "")
+        if failed:
+            return False, f"[{','.join(failed)}] {issues}"
+        return True, ""
+    except Exception as e:
+        return True, f"스타일 검증 오류 (통과 처리): {e}"
+
+
+def _verify_image_educational(image_path: Path, word: dict, client) -> tuple[bool, str]:
+    """이미지가 단어 의미를 교육적으로 명확하게 전달하는지 검증.
+    학생이 텍스트 없이 이미지만 보고 단어 뜻을 추측할 수 있어야 함."""
+    if client is None:
+        return True, ""
+    try:
+        import PIL.Image
+        img = PIL.Image.open(str(image_path))
+        korean  = word["word"]
+        meaning = word["meaning"].split(",")[0].strip()
+        pos     = word.get("pos", "명사")
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                img,
+                (
+                    f"This illustration is for a Korean vocabulary flashcard.\n"
+                    f"Korean word: '{korean}' | English meaning: '{meaning}' | Part of speech: {pos}\n\n"
+                    f"Evaluate strictly. Answer ONLY with JSON (no markdown):\n"
+                    "{\n"
+                    f"  \"recognizable\": true if a student could guess this image represents "
+                    f"'{meaning}' without seeing any text (must be clear and unambiguous),\n"
+                    f"  \"concept_visible\": true if the core concept of '{meaning}' is the "
+                    f"clear visual focus (not hidden in background or secondary),\n"
+                    f"  \"specific\": true if the scene is specific and concrete "
+                    f"(NOT vague, NOT overly abstract, NOT a generic person doing nothing clear),\n"
+                    f"  \"clarity_score\": integer 1-5 "
+                    f"(5=instantly obvious, 3=guessable, 1=impossible to guess),\n"
+                    f"  \"issues\": \"specific description of what is unclear or wrong, or empty string\"\n"
+                    "}"
+                ),
+            ],
+        )
+        result = _parse_vlm_json(response.text or "")
+        score = result.get("clarity_score", 3)
+        ok = (
+            result.get("recognizable", True)
+            and result.get("concept_visible", True)
+            and result.get("specific", True)
+            and score >= 3
+        )
+        issues = result.get("issues", "")
+        if not ok:
+            return False, f"[educational,score={score}] {issues}"
+        return True, f"score={score}"
+    except Exception as e:
+        return True, f"교육 검증 오류 (통과): {e}"
+
+
+def _verify_image_full(image_path: Path, client,
+                       word: dict = None) -> tuple[bool, list[str]]:
+    """텍스트 + 스타일/비율/해부/물리 + 교육적 품질 통합 검증.
+    Returns (passed, [issue_strings])"""
+    issues = []
+    text_ok, text_detail = _verify_image_vlm(image_path, client)
+    if not text_ok:
+        issues.append(f"text:{text_detail}")
+    style_ok, style_detail = _verify_image_style(image_path, client)
+    if not style_ok:
+        issues.append(f"style:{style_detail}")
+    if word:
+        edu_ok, edu_detail = _verify_image_educational(image_path, word, client)
+        if not edu_ok:
+            issues.append(f"educational:{edu_detail}")
+    return len(issues) == 0, issues
+
+
+def _reinforce_no_text(prompt: str) -> str:
+    """재생성 시 텍스트 금지 지시 강화"""
+    return (
+        prompt
+        + " CRITICAL OVERRIDE: absolutely zero visible text, zero letters, zero digits, "
+        "zero characters in any language, all surfaces completely blank or abstract shapes only"
+    )
+
+
+def _reinforce_scale(prompt: str) -> str:
+    """재생성 시 비율/투시 강화"""
+    return (
+        prompt
+        + " SCALE FIX: human figure must be exactly 50-65% of frame height — "
+        "not a giant filling the whole frame, not a tiny dwarf. "
+        "Eye-level perspective. Objects (chairs, tables, doors) correctly sized next to person."
+    )
+
+
+def _reinforce_style(prompt: str) -> str:
+    """재생성 시 스타일 강화"""
+    return (
+        prompt
+        + " STYLE FIX: flat vector illustration style only — "
+        "NOT watercolor, NOT oil painting, NOT photorealistic. "
+        "Warm light pastel background, consistent clean outlines."
+    )
+
+
+def _reinforce_anatomy(prompt: str) -> str:
+    """재생성 시 해부학적 정확성 강화"""
+    return (
+        prompt
+        + " ANATOMY FIX: every human figure must have EXACTLY 2 arms, 2 legs, 1 head, "
+        "2 eyes, 1 nose, 1 mouth, normal 5-fingered hands — "
+        "absolutely no extra limbs, no missing limbs, no fused bodies, "
+        "no floating detached body parts. Simple clean anatomy."
+    )
+
+
+def _reinforce_physics(prompt: str) -> str:
+    """재생성 시 물리적 논리성 강화"""
+    return (
+        prompt
+        + " PHYSICS FIX: all objects must obey normal physical logic — "
+        "cups and plates right-side-up, furniture on the floor, "
+        "doors open in one direction only, objects rest on surfaces, "
+        "no items floating in mid-air without reason, "
+        "no objects passing through walls or each other."
+    )
+
+
 def generate_image(prompt: str, output_path: Path, client,
-                   word: dict = None, sent_idx: int = -1) -> bool:
-    """이미지 생성 + 텍스트 검증 + 재생성 (최대 2회)"""
+                   word: dict = None, sent_idx: int = -1,
+                   sent: dict = None) -> bool:
+    """이미지 생성 + VLM 하네스 루프 (--vlm-verify 활성화 시)
+    검증: 텍스트 / 스타일·비율·해부·물리 / 교육적 명확성
+    실패 시: 문제 유형별 프롬프트 강화 → AI 개선 → 재생성 반복"""
     if output_path.exists():
         return True
-    original_prompt = prompt
-    reason = ""
-    for attempt in range(3):
-        if attempt > 0:
-            prompt = original_prompt
-            print(f"    재생성 {attempt}/2...")
-            if attempt == 1:
-                prompt = _sanitize_prompt(prompt)
-                prompt += (
-                    ", use symbols ★ ♥ ● ▲ ♪ and pictogram icons instead of any text, "
-                    "numbers are OK but no letters or words, "
-                    "all signs show only simple icon symbols")
-            elif attempt == 2:
-                import re
-                prompt = re.sub(r'\b(sign|label|text|letter|word|read|written|menu|board|tag|receipt|banner|poster|notice|headline|title|caption|name)\b',
-                               'symbolic decoration', prompt, flags=re.IGNORECASE)
-                prompt += (
-                    ", replace all writing with universal symbols and geometric shapes, "
-                    "★ ● ▲ ♪ ♥ arrows and numbers only, "
-                    "pure visual illustration using pictograms instead of any letters or words")
-        if not _generate_once(prompt, output_path, client):
-            continue
-        result = _verify_image(output_path, client)
-        if result.get("pass", True):
+
+    max_attempts = 5 if _VLM_VERIFY else 1
+    # 커스텀 프롬프트는 이미 _apply_style 처리됨 → 중복 방지
+    is_full_prompt = _STYLE[:30] in prompt
+    current_scene = prompt
+    current_prompt = prompt if is_full_prompt else _apply_style(_lint_prompt(prompt))
+
+    for attempt in range(max_attempts):
+        ok = _generate_once(current_prompt, output_path, client)
+        if not ok:
+            if word:
+                _flag_image(word, sent_idx, current_prompt, "generation failed")
+            return False
+
+        if not _VLM_VERIFY:
             return True
-        reason = result.get("reason", "unknown")
-        print(f"    검증 실패: {reason}")
+
+        # ── 통합 VLM 검증 ──────────────────────────────────
+        passed, issues = _verify_image_full(output_path, client, word=word)
+        if passed:
+            print(f"  [VLM ✓] 모든 검사 통과")
+            return True
+
+        issue_str = " | ".join(issues)
+        remaining = max_attempts - attempt - 1
+        print(f"  [VLM ✗] {issue_str} — 재시도 {remaining}회 남음")
+        _flag_image(word, sent_idx, current_prompt, issue_str)
         if output_path.exists():
             output_path.unlink()
-    print(f"    검증 3회 실패 -> 건너뜀 (텍스트 포함 이미지 저장 안 함)")
+
+        if remaining == 0:
+            break
+
+        # ── 프롬프트 개선 전략 ──────────────────────────────
+        # 1단계: 룰 기반 강화 (빠름)
+        if attempt < 2:
+            reinforced = _lint_prompt(current_scene)
+            if any("text" in i for i in issues):
+                reinforced = _reinforce_no_text(reinforced)
+            if any("scale" in i or "proportion" in i for i in issues):
+                reinforced = _reinforce_scale(reinforced)
+            if any("style" in i or "palette" in i for i in issues):
+                reinforced = _reinforce_style(reinforced)
+            if any("anatomy" in i for i in issues):
+                reinforced = _reinforce_anatomy(reinforced)
+            if any("physics" in i for i in issues):
+                reinforced = _reinforce_physics(reinforced)
+            current_scene = reinforced
+        else:
+            # 2단계: AI 기반 장면 재설계 (깊은 개선)
+            print(f"  [AI] 장면 재설계 중...")
+            improved = _ai_improve_scene(current_scene, issues, word, sent, client)
+            current_scene = improved
+            # 장면 캐시 갱신
+            if word:
+                ck = f"word_{word['id']}" if sent_idx < 0 else f"sent_{word['id']}_{sent_idx}"
+                _scene_cache[ck] = improved
+                _save_scene_cache()
+
+        # 커스텀 프롬프트는 이미 _STYLE 포함 → 중복 방지
+        if is_full_prompt:
+            current_prompt = _lint_prompt(current_scene)
+        else:
+            current_prompt = _apply_style(_lint_prompt(current_scene))
+
     if word:
-        _flag_image(word, sent_idx, prompt, reason)
+        _flag_image(word, sent_idx, current_prompt, "harness failed after all retries")
     return False
 
 
 def generate_one(word: dict, client) -> bool:
-    """단어 일러스트 생성 → illustrations/lv{level}/{word}/word.png"""
-    word_id, korean_word = word["id"], word["word"]
-    meaning, level = word["meaning"], word["level"]
-    custom = get_word_custom_prompt(word_id)
-    if custom:
-        prompt = custom
+    """단어 일러스트 생성 → illustrations/lv{level}/{word}/word.png
+    우선순위: 커스텀 프롬프트 → AI 장면 생성 → fallback"""
+    korean_word = word["word"]
+    level = word["level"]
+    custom_full = get_word_custom_prompt(word["id"])
+    if custom_full:
         print(f"  [커스텀] {korean_word}")
-    else:
-        keyword = meaning.split(",")[0].strip().split()[0]
-        prompt = STYLE_PROMPT.format(meaning=keyword)
-    return generate_image(prompt, word_img_path(korean_word, level), client,
+        return generate_image(custom_full, word_img_path(korean_word, level), client,
+                              word=word, sent_idx=-1)
+    # AI 장면 생성 (캐시 활용)
+    scene = _ai_word_scene(word, client)
+    return generate_image(scene, word_img_path(korean_word, level), client,
                           word=word, sent_idx=-1)
 
 
 def build_sentence_prompt(word: dict, sent: dict, sent_idx: int = -1) -> str:
-    """예문 장면 프롬프트 생성
-    우선순위: 커스텀 -> Claude 장면 변환(캐시) -> 시각적 폴백"""
+    """예문 프롬프트 생성 — 우선순위: 커스텀 → AI 생성 (캐시 활용)
+    주의: client 없이는 fallback 사용. generate_sentences에서 직접 AI 호출 권장."""
     if sent_idx >= 0:
         custom = get_sentence_custom_prompt(word["id"], sent_idx)
         if custom:
             return custom
-    scene = sentence_to_visual_scene(word, sent, sent_idx)
-    if scene:
-        return SENTENCE_STYLE_PROMPT.format(scene=scene)
-    word_meaning = word["meaning"].split(",")[0].strip()
-    situation = sent.get("situation", "")
-    if situation:
-        scene = f"a person in a {situation.lower()} setting, related to {word_meaning}"
-    else:
-        scene = f"a person interacting with or experiencing {word_meaning} in daily life"
-    return SENTENCE_STYLE_PROMPT.format(scene=scene)
+    return _sentence_scene_fallback(word, sent)
 
 
 def generate_sentences(word: dict, client) -> tuple[int, int]:
-    """예문 일러스트 생성 → illustrations/lv{level}/{word}/{idx}.png"""
+    """예문 일러스트 생성 → illustrations/lv{level}/{word}/{idx}.png
+    AI 장면 생성 → 이미지 생성 → VLM 하네스 검증 루프"""
     done, fail = 0, 0
     for idx, sent in enumerate(word.get("sentences", [])):
         output_path = sent_img_path(word["word"], word["level"], idx)
         en = sent.get("en", "")
-        prompt = build_sentence_prompt(word, sent, sent_idx=idx)
+        # 우선순위: 커스텀 → AI 장면 생성
         custom = get_sentence_custom_prompt(word["id"], idx)
-        cache_key = f"{word['id']}_{idx}"
-        src = "커스텀" if custom else ("캐시" if cache_key in _scene_cache else "Claude")
-        print(f"  [{idx+1}/10] [{src}] '{en[:40]}' -> 생성 중...")
-        if generate_image(prompt, output_path, client, word=word, sent_idx=idx):
+        if custom:
+            scene = custom
+            src = "커스텀"
+        else:
+            scene = _ai_sentence_scene(word, sent, idx, client)
+            src = "AI"
+        print(f"  [{idx+1}/10] [{src}] '{en[:45]}' → 장면 생성 완료")
+        if generate_image(scene, output_path, client,
+                          word=word, sent_idx=idx, sent=sent):
             done += 1
-            print(f"    저장: {output_path}")
+            print(f"    [OK] {output_path.name}")
         else:
             fail += 1
+            print(f"    [FAIL] (스킵)")
         time.sleep(0.3)
     return done, fail
 
@@ -415,19 +1181,280 @@ def main():
     parser.add_argument("--sentences-only", action="store_true", help="예문 일러스트만")
     parser.add_argument("--sentences-for-id", type=int, default=None,
                         help="특정 단어 ID의 예문 일러스트만 생성")
+    parser.add_argument("--regen", type=int, default=None,
+                        help="특정 단어 ID의 이미지 재생성 (기존 삭제 후)")
+    parser.add_argument("--regen-idx", type=int, default=None,
+                        help="--regen과 함께: 재생성할 예문 인덱스 (0-9). 미지정시 word.png 재생성")
+    parser.add_argument("--backend", default="imagen", choices=["imagen", "flux"],
+                        help="이미지 생성 백엔드: imagen (기본) | flux (Flux Schnell/Replicate)")
+    parser.add_argument("--vlm-verify", action="store_true",
+                        help="생성 후 Gemini Vision으로 텍스트+비율+스타일 검증 + 자동 재생성 (권장)")
+    parser.add_argument("--style-audit", nargs="+", type=int, default=None, metavar="ID",
+                        help="기존 이미지 스타일 감사: --style-audit 1 5 10 (word_id 목록). "
+                             "생성 없이 이미지 품질만 검사하고 결과를 출력")
+    parser.add_argument("--style-audit-all", action="store_true",
+                        help="--start~--end 범위의 모든 생성된 이미지 감사")
+    parser.add_argument("--scan-prompts", action="store_true",
+                        help="API 호출 없이 모든 단어 시각화 전략 분류 및 통계 출력 (dry-run)")
+    parser.add_argument("--regen-audit-failed", action="store_true",
+                        help="style_audit.json의 실패 이미지를 --vlm-verify로 재생성")
     args = parser.parse_args()
 
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        print("오류: GEMINI_API_KEY 환경변수가 없습니다.")
-        return
+    global _BACKEND, _VLM_VERIFY
+    _BACKEND = args.backend
+    _VLM_VERIFY = args.vlm_verify
+    print(f"백엔드: {_BACKEND.upper()}")
+    if _VLM_VERIFY:
+        print("VLM 통합 검증: 활성화 (텍스트 + 비율 + 스타일)")
 
-    client = genai.Client(api_key=api_key)
+    if _BACKEND == "flux":
+        replicate_key = os.environ.get("REPLICATE_API_TOKEN", "")
+        if not replicate_key:
+            print("오류: REPLICATE_API_TOKEN 환경변수가 없습니다.")
+            print("  → https://replicate.com/account/api-tokens 에서 발급 후 .env에 추가")
+            return
+        os.environ["REPLICATE_API_TOKEN"] = replicate_key
+        client = None
+    else:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            print("오류: GEMINI_API_KEY 환경변수가 없습니다.")
+            return
+        client = genai.Client(api_key=api_key)
     _load_custom_prompts()
     _load_scene_cache()
 
     with open(args.db, encoding="utf-8") as f:
         db = json.load(f)
+
+    # ── 프롬프트 전략 스캔 모드 (dry-run) ──────────────────────
+    if args.scan_prompts:
+        with open(args.db, encoding="utf-8") as f:
+            db = json.load(f)
+        from collections import Counter
+        type_counts: dict[int, Counter] = {}
+        for w in db:
+            lv = w["level"]
+            vtype, _ = _classify_word_visual_type(w)
+            if lv not in type_counts:
+                type_counts[lv] = Counter()
+            type_counts[lv][vtype] += 1
+        print("\n=== 단어 시각화 전략 분류 통계 ===\n")
+        all_types: Counter = Counter()
+        for lv in sorted(type_counts):
+            c = type_counts[lv]
+            total_lv = sum(c.values())
+            anchored = c.get("anchored", 0)
+            print(f"  {lv}급 ({total_lv}개 단어):")
+            for t, n in sorted(c.items(), key=lambda x: -x[1]):
+                bar = "█" * (n * 20 // total_lv)
+                pct = n * 100 // total_lv
+                label = "✓ 앵커(API절약)" if t == "anchored" else t
+                print(f"    {label:30s} {n:3d}개 ({pct:2d}%) {bar}")
+            ai_calls = total_lv - anchored
+            print(f"    → AI 호출 필요: {ai_calls}개, 앵커 절약: {anchored}개\n")
+            all_types.update(c)
+        print(f"  전체 합계 ({sum(all_types.values())}개 단어):")
+        total_all = sum(all_types.values())
+        for t, n in sorted(all_types.items(), key=lambda x: -x[1]):
+            print(f"    {t:30s} {n:3d}개 ({n*100//total_all:2d}%)")
+        print(f"\n  앵커 커버리지: {all_types.get('anchored',0)}/{total_all} "
+              f"({all_types.get('anchored',0)*100//total_all}%) API 절약\n")
+        return
+
+    # ── 스타일 감사 모드 ─────────────────────────────────────────
+    if args.style_audit or args.style_audit_all:
+        if args.style_audit_all:
+            target_words = [w for w in db if args.start <= w["id"] <= args.end]
+        else:
+            target_words = [w for w in db if w["id"] in args.style_audit]
+        total_images = sum(1 + len(w.get("sentences", [])) for w in target_words)
+        print(f"\n=== 스타일 감사 시작: {len(target_words)}개 단어, {total_images}개 이미지 (단어+예문) ===\n")
+        audit_results = []
+        pass_count = fail_count = skip_count = 0
+        for w in target_words:
+            lv = w["level"]
+            # ── 단어 이미지 감사 ──────────────────────────────
+            wp = word_img_path(w["word"], lv)
+            label = f"[{w['id']}] {w['word']} (lv{lv}) word"
+            if not wp.exists():
+                print(f"  {label} — [SKIP] 이미지 없음")
+                skip_count += 1
+            else:
+                passed, issues_list = _verify_image_full(wp, client, word=w)
+                status = "OK" if passed else "FAIL"
+                issue_str = " | ".join(issues_list) if issues_list else "—"
+                print(f"  {label} [{status}] {issue_str}")
+                audit_results.append({
+                    "word_id": w["id"], "word": w["word"], "level": lv,
+                    "sent_idx": -1,
+                    "passed": passed, "issues": issue_str,
+                    "issue_types": [i.split(":")[0] for i in issues_list],
+                })
+                if passed:
+                    pass_count += 1
+                else:
+                    fail_count += 1
+                time.sleep(0.3)
+            # ── 예문 이미지 감사 ──────────────────────────────
+            for idx, sent in enumerate(w.get("sentences", [])):
+                sp = sent_img_path(w["word"], lv, idx)
+                slabel = f"[{w['id']}] {w['word']} (lv{lv}) sent[{idx}]"
+                if not sp.exists():
+                    print(f"  {slabel} — [SKIP] 이미지 없음")
+                    skip_count += 1
+                    continue
+                passed, issues_list = _verify_image_full(sp, client, word=w)
+                status = "OK" if passed else "FAIL"
+                issue_str = " | ".join(issues_list) if issues_list else "—"
+                print(f"  {slabel} [{status}] {issue_str}")
+                audit_results.append({
+                    "word_id": w["id"], "word": w["word"], "level": lv,
+                    "sent_idx": idx,
+                    "passed": passed, "issues": issue_str,
+                    "issue_types": [i.split(":")[0] for i in issues_list],
+                })
+                if passed:
+                    pass_count += 1
+                else:
+                    fail_count += 1
+                time.sleep(0.3)
+        print(f"\n=== 감사 완료: 통과 {pass_count} / 실패 {fail_count} / 스킵 {skip_count} ===")
+        # 결과를 JSON으로 저장
+        audit_path = Path("/app/logs/style_audit.json")
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(audit_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "audited_at": datetime.now().isoformat(),
+                "pass": pass_count, "fail": fail_count, "skip": skip_count,
+                "results": audit_results,
+            }, f, ensure_ascii=False, indent=2)
+        print(f"결과 저장: {audit_path}")
+        return
+
+    # ── 감사 실패 이미지 재생성 ──────────────────────────────────
+    if args.regen_audit_failed:
+        audit_path = Path("/app/logs/style_audit.json")
+        if not audit_path.exists():
+            print("오류: style_audit.json 없음 — 먼저 --style-audit-all 실행 필요")
+            return
+        with open(audit_path, encoding="utf-8") as f:
+            audit_data = json.load(f)
+        failed_entries = [r for r in audit_data.get("results", []) if not r["passed"]]
+        if not failed_entries:
+            print("재생성 대상 없음 (모두 통과)")
+            return
+        with open(args.db, encoding="utf-8") as f:
+            db = json.load(f)
+        id_to_word = {w["id"]: w for w in db}
+        global _VLM_VERIFY
+        _VLM_VERIFY = True  # 재생성 시 검증 강제 활성화
+        word_fails = [e for e in failed_entries if e.get("sent_idx", -1) == -1]
+        sent_fails = [e for e in failed_entries if e.get("sent_idx", -1) >= 0]
+        print(f"\n=== 감사 실패 재생성: 단어 {len(word_fails)}개, 예문 {len(sent_fails)}개 ===\n")
+        success = fail = 0
+        # ── 단어 이미지 재생성 ────────────────────────────────
+        for entry in word_fails:
+            wid = entry["word_id"]
+            word = id_to_word.get(wid)
+            if not word:
+                print(f"  [SKIP] ID {wid} DB에 없음")
+                continue
+            lv = word["level"]
+            target = word_img_path(word["word"], lv)
+            print(f"  [{wid}] {word['word']} (lv{lv}) word — {entry.get('issues','?')[:70]}")
+            if target.exists():
+                target.unlink()
+            ck = f"word_{word['id']}"
+            if ck in _scene_cache:
+                del _scene_cache[ck]
+                _save_scene_cache()
+            ok = generate_one(word, client)
+            if ok:
+                success += 1
+                print(f"    [OK]")
+            else:
+                fail += 1
+                print(f"    [FAIL]")
+            time.sleep(0.5)
+        # ── 예문 이미지 재생성 ────────────────────────────────
+        for entry in sent_fails:
+            wid = entry["word_id"]
+            idx = entry["sent_idx"]
+            word = id_to_word.get(wid)
+            if not word:
+                print(f"  [SKIP] ID {wid} DB에 없음")
+                continue
+            lv = word["level"]
+            sents = word.get("sentences", [])
+            if idx >= len(sents):
+                print(f"  [SKIP] ID {wid} 예문[{idx}] 없음")
+                continue
+            sent = sents[idx]
+            target = sent_img_path(word["word"], lv, idx)
+            print(f"  [{wid}] {word['word']} (lv{lv}) sent[{idx}] — {entry.get('issues','?')[:70]}")
+            if target.exists():
+                target.unlink()
+            ck = f"sent_{word['id']}_{idx}"
+            if ck in _scene_cache:
+                del _scene_cache[ck]
+                _save_scene_cache()
+            scene = _ai_sentence_scene(word, sent, idx, client)
+            ok = generate_image(scene, target, client, word=word, sent_idx=idx, sent=sent)
+            if ok:
+                success += 1
+                print(f"    [OK]")
+            else:
+                fail += 1
+                print(f"    [FAIL]")
+            time.sleep(0.5)
+        _save_scene_cache()
+        print(f"\n=== 재생성 완료: 성공 {success} / 실패 {fail} ===")
+        return
+
+    # ── 개별 재생성 모드 ────────────────────────────────────────
+    if args.regen is not None:
+        word = next((w for w in db if w["id"] == args.regen), None)
+        if not word:
+            print(f"단어 ID {args.regen}를 찾을 수 없습니다.")
+            return
+        lv = word["level"]
+        if args.regen_idx is not None:
+            # 예문 1장 재생성
+            idx = args.regen_idx
+            target = sent_img_path(word["word"], lv, idx)
+            if target.exists():
+                target.unlink()
+                print(f"기존 삭제: {target}")
+            # 장면 캐시 초기화 (신형 키) → AI가 새로 설계
+            cache_key = f"sent_{word['id']}_{idx}"
+            if cache_key in _scene_cache:
+                del _scene_cache[cache_key]
+                _save_scene_cache()
+                print(f"장면 캐시 초기화: {cache_key}")
+            sent = word.get("sentences", [])[idx] if idx < len(word.get("sentences", [])) else {}
+            # AI 장면 생성 (캐시 cleared이므로 새로 생성됨)
+            scene = _ai_sentence_scene(word, sent, idx, client)
+            print(f"재생성: {word['word']} 예문[{idx}]")
+            ok = generate_image(scene, target, client, word=word, sent_idx=idx, sent=sent)
+            _save_scene_cache()
+            print("성공" if ok else "실패")
+        else:
+            # 단어 이미지 재생성
+            target = word_img_path(word["word"], lv)
+            if target.exists():
+                target.unlink()
+                print(f"기존 삭제: {target}")
+            # 단어 장면 캐시 초기화 → AI가 새로 설계
+            cache_key = f"word_{word['id']}"
+            if cache_key in _scene_cache:
+                del _scene_cache[cache_key]
+                _save_scene_cache()
+                print(f"장면 캐시 초기화: {cache_key}")
+            print(f"재생성: {word['word']} 단어 이미지")
+            ok = generate_one(word, client)
+            print("성공" if ok else "실패")
+        return
 
     # ── 특정 단어 예문 모드 ───────────────────────────────────
     if args.sentences_for_id is not None:
@@ -458,63 +1485,90 @@ def main():
     ]
     total = len(need_word) + len(need_sent)
 
+    unit_cost = 0.003 if _BACKEND == "flux" else 0.02
     print(f"단어 일러스트 생성 필요: {len(need_word)}개")
     print(f"예문 일러스트 생성 필요: {len(need_sent)}개")
-    print(f"총 예상 비용: ${total * 0.02:.2f}\n")
+    print(f"총 예상 비용: ${total * unit_cost:.2f} ({_BACKEND.upper()})\n")
 
     done_word = 0
     done_sent = 0
     fail = 0
     completed = 0
+    last_word_id = args.start
 
-    for i, word in enumerate(words):
-        step_base = f"[{i+1}/{len(words)}] {word['word']}"
+    try:
+        for i, word in enumerate(words):
+            last_word_id = word["id"]
+            step_base = f"[{i+1}/{len(words)}] {word['word']}"
 
-        # ── 단어 일러스트 ──────────────────────────────────
-        if not args.sentences_only:
-            wpath = word_img_path(word["word"], word["level"])
-            if not wpath.exists():
-                src = "커스텀" if get_word_custom_prompt(word["id"]) else "기본"
-                keyword = word["meaning"].split(",")[0].strip().split()[0]
-                print(f"{step_base} [단어/{src}] '{keyword}' 생성 중...")
-                if generate_one(word, client):
-                    done_word += 1
-                    print(f"  [OK] {wpath.name}")
-                else:
-                    fail += 1
-                    print(f"  [FAIL] (스킵)")
-                completed += 1
-                time.sleep(0.3)
-                pct = int(completed / total * 100) if total else 100
-                _write_prog(pct, f"단어: {word['word']}", done_word, done_sent)
+            # ── 단어 일러스트 ──────────────────────────────────
+            if not args.sentences_only:
+                wpath = word_img_path(word["word"], word["level"])
+                if not wpath.exists():
+                    src = "커스텀" if get_word_custom_prompt(word["id"]) else "기본"
+                    keyword = word["meaning"].split(",")[0].strip().split()[0]
+                    print(f"{step_base} [단어/{src}] '{keyword}' 생성 중...")
+                    if generate_one(word, client):
+                        done_word += 1
+                        print(f"  [OK] {wpath.name}")
+                    else:
+                        fail += 1
+                        print(f"  [FAIL] (스킵)")
+                    completed += 1
+                    time.sleep(0.3)
+                    pct = int(completed / total * 100) if total else 100
+                    _write_prog(pct, f"단어: {word['word']}", done_word, done_sent)
 
-        # ── 예문 일러스트 ──────────────────────────────────
-        if not args.words_only:
-            sents = word.get("sentences", [])
-            for idx, sent in enumerate(sents):
-                spath = sent_img_path(word["word"], word["level"], idx)
-                if spath.exists():
-                    continue
-                prompt = build_sentence_prompt(word, sent, sent_idx=idx)
-                custom = get_sentence_custom_prompt(word["id"], idx)
-                cache_key = f"{word['id']}_{idx}"
-                src = "커스텀" if custom else ("캐시" if cache_key in _scene_cache else "Claude")
-                en = sent.get("en", "")
-                print(f"  [예문 {idx+1}/{len(sents)}] [{src}] {en[:40]}")
-                if generate_image(prompt, spath, client, word=word, sent_idx=idx):
-                    done_sent += 1
-                    print(f"    [OK] {spath.name}")
-                else:
-                    fail += 1
-                    print(f"    [FAIL] (스킵)")
-                completed += 1
-                time.sleep(0.3)
-                pct = int(completed / total * 100) if total else 100
-                _write_prog(pct, f"예문: {word['word']} [{idx+1}/{len(sents)}]", done_word, done_sent)
+            # ── 예문 일러스트 ──────────────────────────────────
+            if not args.words_only:
+                sents = word.get("sentences", [])
+                for idx, sent in enumerate(sents):
+                    spath = sent_img_path(word["word"], word["level"], idx)
+                    if spath.exists():
+                        continue
+                    custom = get_sentence_custom_prompt(word["id"], idx)
+                    if custom:
+                        scene = custom
+                        src = "커스텀"
+                    else:
+                        scene = _ai_sentence_scene(word, sent, idx, client)
+                        src = "AI"
+                    en = sent.get("en", "")
+                    print(f"  [예문 {idx+1}/{len(sents)}] [{src}] {en[:40]}")
+                    if generate_image(scene, spath, client, word=word, sent_idx=idx, sent=sent):
+                        done_sent += 1
+                        print(f"    [OK] {spath.name}")
+                    else:
+                        fail += 1
+                        print(f"    [FAIL] (스킵)")
+                    completed += 1
+                    time.sleep(0.3)
+                    pct = int(completed / total * 100) if total else 100
+                    _write_prog(pct, f"예문: {word['word']} [{idx+1}/{len(sents)}]", done_word, done_sent)
 
-        if (done_word + done_sent) > 0 and (done_word + done_sent) % 20 == 0:
-            _save_scene_cache()
-            print(f"\n--- 누계: 단어 {done_word}개, 예문 {done_sent}개 / ${(done_word+done_sent)*0.02:.2f} ---\n")
+            if (done_word + done_sent) > 0 and (done_word + done_sent) % 20 == 0:
+                _save_scene_cache()
+                print(f"\n--- 누계: 단어 {done_word}개, 예문 {done_sent}개 / ${(done_word+done_sent)*unit_cost:.2f} ---\n")
+
+    except KeyboardInterrupt:
+        print(f"\n\n[취소됨] Ctrl+C 감지 — 진행 상황 저장 중...")
+        _save_scene_cache()
+        try:
+            PROG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(PROG_FILE, "w", encoding="utf-8") as f:
+                json.dump({
+                    "status": "cancelled", "pct": int(completed / total * 100) if total else 0,
+                    "done_word": done_word, "done_sent": done_sent,
+                    "last_word_id": last_word_id,
+                    "cancelled_at": datetime.now().isoformat(),
+                }, f, ensure_ascii=False)
+        except Exception:
+            pass
+        print(f"  단어 일러스트: {done_word}개 생성")
+        print(f"  예문 일러스트: {done_sent}개 생성")
+        print(f"  마지막 단어 ID: {last_word_id}")
+        print(f"  이어서 실행: --start {last_word_id} --end {args.end}")
+        return
 
     _save_scene_cache()
 
@@ -534,7 +1588,7 @@ def main():
     print(f"  단어 일러스트: {done_word}개 생성")
     print(f"  예문 일러스트: {done_sent}개 생성")
     print(f"  실패: {fail}개")
-    print(f"  총 비용: ${(done_word+done_sent)*0.02:.2f}")
+    print(f"  총 비용: ${(done_word+done_sent)*unit_cost:.2f}")
 
 
 if __name__ == "__main__":
