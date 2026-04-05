@@ -1741,8 +1741,11 @@ function renderIllustStats(ill, prefix){
     renderIllustStats({...ill,progress:prog},'iv');
     const btns=['illust-gen-btn','illust-gen-btn2'];
     btns.forEach(id=>{const b=document.getElementById(id);if(b){
-      b.disabled=prog.status==='running';
-      b.textContent=prog.status==='running'?'⏳ 생성 중...':'🎨 생성';
+      const running=prog.status==='running';
+      b.disabled=running;
+      // 버튼이 이미 요청 중 상태면 텍스트 덮어쓰지 않음
+      if(running) b.textContent='⏳ 생성 중...';
+      else if(b.textContent==='⏳ 생성 중...'||b.textContent==='⏳ 요청 중...') b.textContent='🎨 생성';
     }});
   }
 }
@@ -1845,23 +1848,20 @@ document.getElementById('illust-start2').addEventListener('input',updateIllustCo
 document.getElementById('illust-end2').addEventListener('input',updateIllustCost2);
 
 async function _startIllust(start,end,mode){
-  const labels={both:'단어+예문',words:'단어만',sentences:'예문만'};
-  const c=_illustCost(end-start+1,mode);
   const btn=document.getElementById('illust-gen-btn2');
+  const cost2=document.getElementById('illust-cost2');
   if(btn){btn.disabled=true;btn.textContent='⏳ 요청 중...';}
   try{
     const r=await fetch('/api/illustrations/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start,end,mode})});
     const d=await r.json();
     if(!r.ok){
-      const cost2=document.getElementById('illust-cost2');
-      if(cost2) cost2.textContent='오류: '+(d.error||'알 수 없음');
-      cost2.style.color='#f87171';
+      if(cost2){cost2.textContent='오류: '+(d.error||'알 수 없음');cost2.style.color='#f87171';}
       if(btn){btn.disabled=false;btn.textContent='🎨 생성';}
     } else {
-      loadOverview();
+      // 1.5초 후 overview 갱신 (subprocess가 running 상태로 바뀔 시간 확보)
+      setTimeout(loadOverview, 1500);
     }
   }catch(e){
-    const cost2=document.getElementById('illust-cost2');
     if(cost2){cost2.textContent='연결 오류: '+e.message;cost2.style.color='#f87171';}
     if(btn){btn.disabled=false;btn.textContent='🎨 생성';}
   }
