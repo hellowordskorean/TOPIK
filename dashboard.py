@@ -888,6 +888,18 @@ def api_cancel_illustrations():
                               "cancelled_at": datetime.now().isoformat()})
     return jsonify({"status": "cancelled"})
 
+@app.route("/api/illustrations/reset", methods=["POST"])
+def api_reset_illust_progress():
+    """stuck된 running 상태를 강제 리셋"""
+    global _illust_proc, _illust_thread
+    if _illust_proc is not None:
+        try: _illust_proc.terminate()
+        except Exception: pass
+        _illust_proc = None
+    save_json(ILLUST_PROG_F, {"status": "idle", "pct": 0,
+                               "reset_at": datetime.now().isoformat()})
+    return jsonify({"status": "reset"})
+
 @app.route("/api/illustrations/generate", methods=["POST"])
 def api_generate_illustrations():
     global _illust_thread
@@ -1356,6 +1368,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <select id="illust-mode2" onchange="updateIllustCost2()" class="inp"><option value="both">단어+예문</option><option value="words">🖼 단어만</option><option value="sentences">📝 예문만</option></select>
       <button id="illust-gen-btn2" onclick="startIllustGen2()" class="btn btn-a">🎨 생성</button>
       <button id="illust-cancel-btn2" onclick="cancelIllustGen()" class="btn btn-d" style="display:none;">⏹ 취소</button>
+      <button id="illust-reset-btn2" onclick="resetIllustProgress()" class="btn btn-d" style="display:none;background:#7c3aed;">🔄 상태 초기화</button>
       <button onclick="setIllustRange2(1,1800)" class="btn btn-m">전체</button>
       <span id="illust-cost2" style="font-size:.72rem;color:var(--amber);font-weight:600;"></span>
     </div>
@@ -1834,17 +1847,29 @@ document.getElementById('illust-end2').addEventListener('input',updateIllustCost
 async function _startIllust(start,end,mode){
   const labels={both:'단어+예문',words:'단어만',sentences:'예문만'};
   const c=_illustCost(end-start+1,mode);
-  if(!confirm(`ID ${start}~${end} — ${labels[mode]}\n예상 ${c.cnt}장 / $${(c.cnt*0.02).toFixed(2)}\n계속할까요?`))return;
-  const r=await fetch('/api/illustrations/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start,end,mode})});
-  const d=await r.json();
-  if(!r.ok) alert('오류: '+(d.error||'알 수 없음'));
-  else loadOverview();
+  const btn=document.getElementById('illust-gen-btn2');
+  if(btn){btn.disabled=true;btn.textContent='⏳ 요청 중...';}
+  try{
+    const r=await fetch('/api/illustrations/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start,end,mode})});
+    const d=await r.json();
+    if(!r.ok){
+      const cost2=document.getElementById('illust-cost2');
+      if(cost2) cost2.textContent='오류: '+(d.error||'알 수 없음');
+      cost2.style.color='#f87171';
+      if(btn){btn.disabled=false;btn.textContent='🎨 생성';}
+    } else {
+      loadOverview();
+    }
+  }catch(e){
+    const cost2=document.getElementById('illust-cost2');
+    if(cost2){cost2.textContent='연결 오류: '+e.message;cost2.style.color='#f87171';}
+    if(btn){btn.disabled=false;btn.textContent='🎨 생성';}
+  }
 }
 async function startIllustGen(){ await _startIllust(+document.getElementById('illust-start').value||1,+document.getElementById('illust-end').value||10,document.getElementById('illust-mode').value); }
 async function startIllustGen2(){ await _startIllust(+document.getElementById('illust-start2').value||1,+document.getElementById('illust-end2').value||100,document.getElementById('illust-mode2').value); }
 
 async function cancelIllustGen(){
-  if(!confirm('일러스트 생성을 취소할까요?\n지금까지 생성된 이미지는 보존됩니다.')) return;
   const r = await fetch('/api/illustrations/cancel', {method:'POST'});
   const d = await r.json();
   if(!r.ok) alert('취소 실패: '+(d.error||'알 수 없음'));
@@ -1855,8 +1880,15 @@ function _updateIllustButtons(status){
   const running = status === 'running';
   const genBtn = document.getElementById('illust-gen-btn2');
   const cancelBtn = document.getElementById('illust-cancel-btn2');
+  const resetBtn = document.getElementById('illust-reset-btn2');
   if(genBtn) genBtn.style.display = running ? 'none' : '';
   if(cancelBtn) cancelBtn.style.display = running ? '' : 'none';
+  if(resetBtn) resetBtn.style.display = running ? '' : 'none';
+}
+
+async function resetIllustProgress(){
+  await fetch('/api/illustrations/reset',{method:'POST'});
+  loadOverview();
 }
 
 // ── 일러스트 브라우저 ────────────────────────────────────
@@ -1905,7 +1937,6 @@ function illustPreview(url){
 
 async function regenIllust(wordId,idx){
   const label=idx<0?'단어 이미지':`예문[${idx+1}]`;
-  if(!confirm(`${label} 재생성하시겠습니까?\n(기존 이미지 삭제 후 새로 생성)`))return;
   const btnId=idx<0?'regen-btn-w':`regen-btn-${idx}`;
   const btn=document.getElementById(btnId);
   if(btn){btn.disabled=true;btn.textContent='⏳ 생성 중...';}
