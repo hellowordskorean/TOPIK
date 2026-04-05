@@ -11,13 +11,14 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp_service_account.json
+      - REPLICATE_API_TOKEN=${REPLICATE_API_TOKEN:-}
 
       # ── 타임존 (한국) ────────────────────────────────
       - TZ=Asia/Seoul
 
     volumes:
       # 단어 DB, 로그, 영상 출력 → NAS 볼륨에 영구 저장
-      - ./data:/app/data
+      - ../data:/app/data
       - ./logs:/app/logs
       - ./output:/app/output
       - ./secrets:/app/secrets          # credentials.json, token.pickle, gcp 키
@@ -28,6 +29,11 @@ services:
       - ./daily_run.py:/app/daily_run.py
       - ./generate_sentences.py:/app/generate_sentences.py
       - ./generate_illustrations.py:/app/generate_illustrations.py
+      - ./generate_prompts.py:/app/generate_prompts.py
+      - ./retry_flagged.py:/app/retry_flagged.py
+      - ./verify_illustrations.py:/app/verify_illustrations.py
+      - ./audit.py:/app/audit.py
+      - ./make_thumbnail.py:/app/make_thumbnail.py
 
     # Synology는 메모리 제한 권장 (영상 렌더링 시 RAM 많이 사용)
     mem_limit: 3g
@@ -51,7 +57,7 @@ services:
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
       - YOUTUBE_CHANNEL_ID=${YOUTUBE_CHANNEL_ID:-}
     volumes:
-      - ./data:/app/data:ro
+      - ../data:/app/data:ro
       - ./logs:/app/logs
       - ./output:/app/output
       - ./assets:/app/assets          # 일러스트 생성 쓰기 필요

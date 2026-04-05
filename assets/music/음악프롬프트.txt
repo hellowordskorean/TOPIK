@@ -23,9 +23,25 @@
 --------------------------------------------------------------
 
 
+  # 1. 먼저 깨진 208개 재처리
+  docker compose run --rm topik-bot python3 retry_flagged.py
+
+  # 2. word.png 의미 검증 (빠르게, 1800회 ~$0.15)
+  docker compose run --rm topik-bot python3 verify_illustrations.py --word-only
+
+  # 3. 전체 예문까지 검증 (~$1.50)
+  docker compose run --rm topik-bot python3 verify_illustrations.py
+
+  # 4. 실패한 것들 재생성
+  docker compose run --rm topik-bot python3 verify_illustrations.py --fix --start 1 --end 1800
+
+  2번 먼저 돌리고 결과(logs/illust_semantic_fail.json) 보고 통과율 파악한 다음 4번 돌리는 게 좋습니다. 결과 나오면
+  알려주세요.
 
 
 
+
+Z:\Hellowords\youtube\data 파일들을 Z:\Hellowords\data 로 옮겼어. 앞으로 ㅛㅐ
 「Hello Words」
 で韓国語の単語を学ぼう。
 毎日1単語、TOPIK基準で — 例文10個・イラスト・ネイティブ発音付き。

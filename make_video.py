@@ -24,9 +24,23 @@ if sys.stdout.encoding != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+# .env 로드
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from google.cloud import texttospeech
+
+# ─── 앱 베이스 경로 (Docker: /app, 로컬: APP_BASE 환경변수) ────
+_APP_BASE = os.environ.get("APP_BASE", "/app")
+
+def _app_path(rel: str) -> str:
+    """'/app/...' Docker 경로를 현재 환경에 맞게 변환"""
+    return os.path.join(_APP_BASE, rel)
 
 # ─── 설정 ───────────────────────────────────────────────────
 def _detect_fonts():
@@ -105,22 +119,31 @@ def get_font(key: str, size: int) -> ImageFont.FreeTypeFont:
 # ─── TTS ────────────────────────────────────────────────────
 def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False):
     """Google Cloud TTS로 음성 파일 생성"""
+    # 서비스 계정 키 자동 설정
+    _sa = os.path.join(os.path.dirname(__file__), "secrets", "gcp_service_account.json")
+    if os.path.exists(_sa) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _sa
     client = texttospeech.TextToSpeechClient()
     
     synthesis_input = texttospeech.SynthesisInput(text=text)
     
-    if lang == "ko":
-        voice = texttospeech.VoiceSelectionParams(
-            language_code="ko-KR",
-            name="ko-KR-Neural2-A",  # 자연스러운 한국어 여성 음성
-            ssml_gender=texttospeech.SsmlVoiceGender.FEMALE,
-        )
-    else:
-        voice = texttospeech.VoiceSelectionParams(
-            language_code="en-US",
-            name="en-US-Neural2-F",
-            ssml_gender=texttospeech.SsmlVoiceGender.FEMALE,
-        )
+    _TTS_VOICES = {
+        "ko": ("ko-KR",  "ko-KR-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
+        "en": ("en-US",  "en-US-Neural2-F",  texttospeech.SsmlVoiceGender.FEMALE),
+        "jp": ("ja-JP",  "ja-JP-Neural2-B",  texttospeech.SsmlVoiceGender.FEMALE),
+        "ja": ("ja-JP",  "ja-JP-Neural2-B",  texttospeech.SsmlVoiceGender.FEMALE),
+        "es": ("es-US",  "es-US-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
+        "cn": ("cmn-CN", "cmn-CN-Wavenet-A", texttospeech.SsmlVoiceGender.FEMALE),
+        "zh": ("cmn-CN", "cmn-CN-Wavenet-A", texttospeech.SsmlVoiceGender.FEMALE),
+        "vn": ("vi-VN",  "vi-VN-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
+        "vi": ("vi-VN",  "vi-VN-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
+    }
+    lc, vname, gender = _TTS_VOICES.get(lang.lower(), _TTS_VOICES["en"])
+    voice = texttospeech.VoiceSelectionParams(
+        language_code=lc,
+        name=vname,
+        ssml_gender=gender,
+    )
     
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3,
@@ -137,7 +160,7 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False):
 
 def log_video(word: dict, output_path: str, music_src: str = None, file_size: int = 0):
     """logs/videos_log.json 에 영상 생성 기록 (음악 파일 포함)"""
-    log_path = "/app/logs/videos_log.json"
+    log_path = _app_path("logs/videos_log.json")
     try:
         log = []
         if os.path.exists(log_path):
@@ -158,7 +181,7 @@ def log_video(word: dict, output_path: str, music_src: str = None, file_size: in
         log = [x for x in log if x.get("word_id") != word["id"]]
         log.append(entry)
         log.sort(key=lambda x: x["word_id"])
-        os.makedirs("/app/logs", exist_ok=True)
+        os.makedirs(_app_path("logs"), exist_ok=True)
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(log, f, ensure_ascii=False, indent=2)
     except Exception:
@@ -179,8 +202,8 @@ def write_progress(step: str, pct: int = 0, word: dict = None, status: str = "ru
         data["meaning"] = word["meaning"]
         data["level"]   = word["level"]
     try:
-        os.makedirs("/app/logs", exist_ok=True)
-        with open("/app/logs/progress.json", "w", encoding="utf-8") as f:
+        os.makedirs(_app_path("logs"), exist_ok=True)
+        with open(_app_path("logs/progress.json"), "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
     except Exception:
         pass
@@ -371,7 +394,7 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     pb = draw.textbbox((0, 0), word["word"], font=font_pill)
     pw = pb[2] - pb[0] + pad_x * 2
     ph = pb[3] - pb[1] + pad_y * 2
-    px, py = 50, 142  # 전체 100px 하단 이동
+    px, py = 50, 90
 
     pill_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(pill_ov).rounded_rectangle(
@@ -401,17 +424,17 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     ic_x = 40
     ic_w = W - ic_x * 2        # 1000px
     ic_h = ic_w                 # 1:1 정사각형
-    ic_top = H - ic_h - 40     # 이미지 카드 시작 Y
+    ic_top = H - ic_h - 80     # 이미지 카드 시작 Y (위로 이동)
 
     # ── 텍스트: 상황 → 한국어 → 로마자 → 영어 (이미지 위 영역에 배치) ──
-    text_y = py + ph + 50  # pill 아래 여백
+    text_y = py + ph + 60  # pill 아래 여백
 
     situation = sentence.get("situation", "")
     if situation:
-        font_sit = get_font("english", 30)
+        font_sit = get_font("english", 38)
         draw.text((cx, text_y), f"#{situation}",
                   font=font_sit, fill=C["text_muted"], anchor="mm")
-        text_y += 50
+        text_y += 75
 
     # 한국어 예문 (90px bold)
     font_ko = get_font("korean_bold", 90)
@@ -439,14 +462,32 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
                   font=font_ipa, fill=C["text_muted"], anchor="mm")
         text_y += 44
 
-    text_y += 16
+    text_y += 36
 
-    # 영어 번역 (48px)
+    # 번역 텍스트 (48px) — 긴 문장 두 줄 허용
     font_en = get_font("english", 48)
-    en_text = sentence["en"]
+    _lc = word.get("language", "EN").upper()
+    _sk = {"EN": "en", "JP": "jp", "CN": "cn", "VN": "vn", "ES": "es"}.get(_lc, "en")
+    en_text = sentence.get(_sk) or sentence.get("en", "")
     en_hi = find_en_highlight(en_text, word["meaning"])
+
+    _max_en_w = W - 120
+    _tmp_draw = ImageDraw.Draw(img)
+    if _tmp_draw.textbbox((0, 0), en_text, font=font_en)[2] > _max_en_w:
+        en_words = en_text.split()
+        line1, split_idx = [], len(en_words)
+        for _wi, _ew in enumerate(en_words):
+            _test = ' '.join(line1 + [_ew])
+            if _tmp_draw.textbbox((0, 0), _test, font=font_en)[2] > _max_en_w and line1:
+                split_idx = _wi
+                break
+            line1.append(_ew)
+        en_text = ' '.join(en_words[:split_idx]) + '\n' + ' '.join(en_words[split_idx:])
+
+    en_lines = len(en_text.split('\n'))
+    lh_en = _tmp_draw.textbbox((0, 0), "Ag", font=font_en)[3] + 14
     draw_multiline_highlighted(
-        img, cx, text_y + 20, en_text, en_hi,
+        img, cx, text_y + (en_lines * lh_en) // 2, en_text, en_hi,
         font_en, C["text_secondary"], C["accent"]
     )
 
@@ -500,7 +541,7 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
 # ─── 배경 이미지 ─────────────────────────────────────────────
 def get_background(korean_word: str, meaning: str, level: int = 1, sentence_idx: int = None) -> str:
     """배경 이미지 경로 반환 (우선순위: 예문 일러스트 → 단어 일러스트 → Pexels → None)"""
-    base = f"/app/assets/illustrations/lv{level}/{korean_word}"
+    base = _app_path(f"assets/illustrations/lv{level}/{korean_word}")
 
     # 1순위: 예문별 일러스트 (lv{level}/{word}/{idx}.png)
     if sentence_idx is not None:
@@ -518,7 +559,7 @@ def get_background(korean_word: str, meaning: str, level: int = 1, sentence_idx:
     api_key = os.environ.get("PEXELS_API_KEY", "")
     if api_key:
         search_term = meaning.split(",")[0].strip().split()[0]
-        cache_dir = "/app/assets/backgrounds"
+        cache_dir = _app_path("assets/backgrounds")
         os.makedirs(cache_dir, exist_ok=True)
         safe_name = hashlib.md5(search_term.encode()).hexdigest()[:10]
         cache_path = os.path.join(cache_dir, f"{safe_name}.jpg")
@@ -548,7 +589,7 @@ def get_background_music(target_duration: float) -> str | None:
     - target 이상인 트랙 중 가장 짧은 것 (루프 없이 딱 맞음)
     - 전부 짧으면 가장 긴 것 (루프 횟수 최소화)
     """
-    music_dir = "/app/assets/music"
+    music_dir = _app_path("assets/music")
     if not os.path.isdir(music_dir):
         return None
     tracks = [
@@ -722,29 +763,36 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
     T = REELS_TIMING if is_reels else CONFIG["timing"]
     sentences = word["sentences"]
     if is_reels:
-        sentences = sentences[:4]
+        sentences = sentences[:5]
         word = {**word, "sentences": sentences}
+
+    # 대상 언어 코드 및 예문 키 결정
+    _lang_code = word.get("language", "EN").upper()
+    _SENT_KEY = {"EN": "en", "JP": "jp", "CN": "cn", "VN": "vn", "ES": "es"}
+    _tts_lang  = _lang_code.lower()  # TTS 함수에 넘길 키
+    _sent_key  = _SENT_KEY.get(_lang_code, "en")  # 예문 번역 키
 
     # 1. TTS 음성 파일 생성
     print("  1/4 TTS 음성 생성 중...")
     audio_files = []
-    
+
     # 단어 발음 (한국어, 느리게)
     word_audio = os.path.join(tmpdir, "word_ko.mp3")
     text_to_speech(word["word"], "ko", word_audio, slow=True)
-    
-    # 뜻 (영어)
-    meaning_audio = os.path.join(tmpdir, "word_en.mp3")
-    text_to_speech(word["meaning"], "en", meaning_audio)
-    
+
+    # 뜻 (대상 언어)
+    meaning_audio = os.path.join(tmpdir, "word_tl.mp3")
+    text_to_speech(word["meaning"], _tts_lang, meaning_audio)
+
     # 예문들
     sentence_audios = []
     for i, sent in enumerate(sentences):
         ko_path = os.path.join(tmpdir, f"sent_{i}_ko.mp3")
-        en_path = os.path.join(tmpdir, f"sent_{i}_en.mp3")
+        tl_path = os.path.join(tmpdir, f"sent_{i}_tl.mp3")
         text_to_speech(sent["ko"], "ko", ko_path)
-        text_to_speech(sent["en"], "en", en_path)
-        sentence_audios.append((ko_path, en_path))
+        tl_text = sent.get(_sent_key) or sent.get("en", "")
+        text_to_speech(tl_text, _tts_lang, tl_path)
+        sentence_audios.append((ko_path, tl_path))
     
     # 배경 이미지: 세그먼트별 (예문별 일러스트 → 단어 일러스트 → 그라디언트)
     lv = word["level"]
@@ -936,7 +984,7 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
 # ─── 엔트리포인트 ────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TOPIK 단어 영상 생성")
-    parser.add_argument("--db", default="data/LanguageTest/words_db.json", help="단어 DB")
+    parser.add_argument("--db", default="../data/LanguageTest/words_db.json", help="단어 DB")
     parser.add_argument("--id", type=int, required=True, help="단어 ID")
     parser.add_argument("--output", default="output/", help="출력 루트 폴더")
     parser.add_argument("--exam", default="TOPIK", help="시험 종류")

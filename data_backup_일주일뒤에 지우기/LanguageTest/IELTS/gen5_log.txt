@@ -1,0 +1,376 @@
+============================================================
+IELTS 5 ONLY Generator
+Target: 10 examples per word in ielts_5.json
+============================================================
+Total words: 300
+Already at 10: 140
+Still need examples: 160
+
+--- Batch 1: words 1 to 50 of 160 ---
+  [1/160] 'estimate': has 5, need 5 more
+    OK: added 5, total=10
+  [2/160] 'exceed': has 5, need 5 more
+    OK: added 5, total=10
+  [3/160] 'expand': has 5, need 5 more
+    OK: added 5, total=10
+  [4/160] 'expense': has 5, need 5 more
+    OK: added 5, total=10
+  [5/160] 'export': has 5, need 5 more
+    OK: added 5, total=10
+  [6/160] 'experience': has 5, need 5 more
+    OK: added 5, total=10
+  [7/160] 'expire': has 5, need 5 more
+    OK: added 5, total=10
+  [8/160] 'extend': has 5, need 5 more
+    OK: added 5, total=10
+  [9/160] 'facility': has 5, need 5 more
+    OK: added 5, total=10
+  [10/160] 'factor': has 5, need 5 more
+    OK: added 5, total=10
+  [11/160] 'feedback': has 5, need 5 more
+    OK: added 5, total=10
+  [12/160] 'file': has 5, need 5 more
+    OK: added 5, total=10
+  [13/160] 'finalize': has 5, need 5 more
+    OK: added 5, total=10
+  [14/160] 'finance': has 5, need 5 more
+    OK: added 5, total=10
+  [15/160] 'firm': has 5, need 5 more
+    OK: added 5, total=10
+  [16/160] 'flexible': has 5, need 5 more
+    OK: added 5, total=10
+  [17/160] 'forward': has 5, need 5 more
+    OK: added 5, total=10
+  [18/160] 'framework': has 5, need 5 more
+    OK: added 5, total=10
+  [19/160] 'fulfill': has 5, need 5 more
+    OK: added 5, total=10
+  [20/160] 'function': has 5, need 5 more
+    OK: added 5, total=10
+  [21/160] 'global': has 5, need 5 more
+    OK: added 5, total=10
+  [22/160] 'grant': has 5, need 5 more
+    OK: added 5, total=10
+  [23/160] 'guarantee': has 5, need 5 more
+    OK: added 5, total=10
+  [24/160] 'handle': has 5, need 5 more
+    OK: added 5, total=10
+  [25/160] 'headquarters': has 5, need 5 more
+    OK: added 5, total=10
+  [26/160] 'hire': has 5, need 5 more
+    OK: added 5, total=10
+  [27/160] 'identify': has 5, need 5 more
+    OK: added 5, total=10
+  [28/160] 'immediate': has 5, need 5 more
+    OK: added 5, total=10
+  [29/160] 'improve': has 5, need 5 more
+    OK: added 5, total=10
+  [30/160] 'income': has 5, need 5 more
+    OK: added 5, total=10
+  [31/160] 'increase': has 5, need 5 more
+    OK: added 5, total=10
+  [32/160] 'indicate': has 5, need 5 more
+    OK: added 5, total=10
+  [33/160] 'inform': has 5, need 5 more
+    OK: added 5, total=10
+  [34/160] 'initial': has 5, need 5 more
+    OK: added 5, total=10
+  [35/160] 'inspect': has 5, need 5 more
+    OK: added 5, total=10
+  [36/160] 'install': has 5, need 5 more
+    OK: added 5, total=10
+  [37/160] 'instruction': has 5, need 5 more
+    OK: added 5, total=10
+  [38/160] 'intend': has 5, need 5 more
+    OK: added 5, total=10
+  [39/160] 'interview': has 5, need 5 more
+    OK: added 5, total=10
+  [40/160] 'invoice': has 5, need 5 more
+    OK: added 5, total=10
+  [41/160] 'issue': has 5, need 5 more
+    OK: added 5, total=10
+  [42/160] 'launch': has 5, need 5 more
+    OK: added 5, total=10
+  [43/160] 'leadership': has 5, need 5 more
+    OK: added 5, total=10
+  [44/160] 'lease': has 5, need 5 more
+    OK: added 5, total=10
+  [45/160] 'legal': has 5, need 5 more
+    OK: added 5, total=10
+  [46/160] 'likely': has 5, need 5 more
+    OK: added 5, total=10
+  [47/160] 'local': has 5, need 5 more
+    OK: added 5, total=10
+  [48/160] 'location': has 5, need 5 more
+    OK: added 5, total=10
+  [49/160] 'maintain': has 5, need 5 more
+    OK: added 5, total=10
+  [50/160] 'manage': has 5, need 5 more
+    OK: added 5, total=10
+
+  BATCH 1 COMPLETE - Saved ielts_5.json
+  Progress: 190/300 words now have 10 examples
+  Processed: 50 OK, 0 errors
+  Elapsed: 514s
+  ETA: ~1130s more (110 words remaining)
+
+--- Batch 2: words 51 to 100 of 160 ---
+  [51/160] 'manufacture': has 5, need 5 more
+    OK: added 5, total=10
+  [52/160] 'measure': has 5, need 5 more
+    OK: added 5, total=10
+  [53/160] 'meet': has 5, need 5 more
+    OK: added 5, total=10
+  [54/160] 'mention': has 5, need 5 more
+    OK: added 5, total=10
+  [55/160] 'modify': has 5, need 5 more
+    OK: added 5, total=10
+  [56/160] 'negotiate': has 5, need 5 more
+    OK: added 5, total=10
+  [57/160] 'notify': has 5, need 5 more
+    OK: added 5, total=10
+  [58/160] 'obtain': has 5, need 5 more
+    OK: added 5, total=10
+  [59/160] 'offer': has 5, need 5 more
+    OK: added 5, total=10
+  [60/160] 'operate': has 5, need 5 more
+    OK: added 5, total=10
+  [61/160] 'opportunity': has 5, need 5 more
+    OK: added 5, total=10
+  [62/160] 'option': has 5, need 5 more
+    OK: added 5, total=10
+  [63/160] 'organize': has 5, need 5 more
+    OK: added 5, total=10
+  [64/160] 'original': has 5, need 5 more
+    OK: added 5, total=10
+  [65/160] 'outcome': has 5, need 5 more
+    OK: added 5, total=10
+  [66/160] 'participant': has 5, need 5 more
+    OK: added 5, total=10
+  [67/160] 'participate': has 5, need 5 more
+    OK: added 5, total=10
+  [68/160] 'penalty': has 5, need 5 more
+    OK: added 5, total=10
+  [69/160] 'permanent': has 5, need 5 more
+    OK: added 5, total=10
+  [70/160] 'permit': has 5, need 5 more
+    OK: added 5, total=10
+  [71/160] 'perspective': has 5, need 5 more
+    OK: added 5, total=10
+  [72/160] 'policy': has 5, need 5 more
+    OK: added 5, total=10
+  [73/160] 'position': has 5, need 5 more
+    OK: added 5, total=10
+  [74/160] 'potential': has 5, need 5 more
+    OK: added 5, total=10
+  [75/160] 'prepare': has 5, need 5 more
+    OK: added 5, total=10
+  [76/160] 'present': has 5, need 5 more
+    OK: added 5, total=10
+  [77/160] 'previous': has 5, need 5 more
+    OK: added 5, total=10
+  [78/160] 'proceed': has 5, need 5 more
+    OK: added 5, total=10
+  [79/160] 'priority': has 5, need 5 more
+    OK: added 5, total=10
+  [80/160] 'probation': has 5, need 5 more
+    OK: added 5, total=10
+  [81/160] 'process': has 5, need 5 more
+    OK: added 5, total=10
+  [82/160] 'produce': has 5, need 5 more
+    OK: added 5, total=10
+  [83/160] 'product': has 5, need 5 more
+    OK: added 5, total=10
+  [84/160] 'professional': has 5, need 5 more
+    OK: added 5, total=10
+  [85/160] 'profit': has 5, need 5 more
+    OK: added 5, total=10
+  [86/160] 'promote': has 5, need 5 more
+    OK: added 5, total=10
+  [87/160] 'promotion': has 5, need 5 more
+    OK: added 5, total=10
+  [88/160] 'provide': has 5, need 5 more
+    OK: added 5, total=10
+  [89/160] 'purchase': has 5, need 5 more
+    OK: added 5, total=10
+  [90/160] 'qualification': has 5, need 5 more
+    OK: added 5, total=10
+  [91/160] 'quality': has 5, need 5 more
+    OK: added 5, total=10
+  [92/160] 'quarter': has 5, need 5 more
+    OK: added 5, total=10
+  [93/160] 'quote': has 5, need 5 more
+    OK: added 5, total=10
+  [94/160] 'raise': has 5, need 5 more
+    OK: added 5, total=10
+  [95/160] 'reach': has 5, need 5 more
+    OK: added 5, total=10
+  [96/160] 'reasonable': has 5, need 5 more
+    OK: added 5, total=10
+  [97/160] 'receive': has 5, need 5 more
+    OK: added 5, total=10
+  [98/160] 'recommend': has 5, need 5 more
+    OK: added 5, total=10
+  [99/160] 'reduce': has 5, need 5 more
+    OK: added 5, total=10
+  [100/160] 'refund': has 5, need 5 more
+    OK: added 5, total=10
+
+  BATCH 2 COMPLETE - Saved ielts_5.json
+  Progress: 240/300 words now have 10 examples
+  Processed: 100 OK, 0 errors
+  Elapsed: 1031s
+  ETA: ~619s more (60 words remaining)
+
+--- Batch 3: words 101 to 150 of 160 ---
+  [101/160] 'register': has 5, need 5 more
+    OK: added 5, total=10
+  [102/160] 'regulation': has 5, need 5 more
+    OK: added 5, total=10
+  [103/160] 'reimburse': has 5, need 5 more
+    OK: added 5, total=10
+  [104/160] 'reimbursement': has 5, need 5 more
+    OK: added 5, total=10
+  [105/160] 'relevant': has 5, need 5 more
+    OK: added 5, total=10
+  [106/160] 'remind': has 5, need 5 more
+    OK: added 5, total=10
+  [107/160] 'reorganize': has 5, need 5 more
+    OK: added 5, total=10
+  [108/160] 'replace': has 5, need 5 more
+    OK: added 5, total=10
+  [109/160] 'report': has 5, need 5 more
+    OK: added 5, total=10
+  [110/160] 'represent': has 5, need 5 more
+    OK: added 5, total=10
+  [111/160] 'request': has 5, need 5 more
+    OK: added 5, total=10
+  [112/160] 'require': has 5, need 5 more
+    OK: added 5, total=10
+  [113/160] 'reserve': has 5, need 5 more
+    OK: added 5, total=10
+  [114/160] 'respond': has 5, need 5 more
+    OK: added 5, total=10
+  [115/160] 'responsibility': has 5, need 5 more
+    OK: added 5, total=10
+  [116/160] 'revenue': has 5, need 5 more
+    OK: added 5, total=10
+  [117/160] 'salary': has 5, need 5 more
+    OK: added 5, total=10
+  [118/160] 'satisfaction': has 5, need 5 more
+    OK: added 5, total=10
+  [119/160] 'satisfy': has 5, need 5 more
+    OK: added 5, total=10
+  [120/160] 'schedule': has 5, need 5 more
+    OK: added 5, total=10
+  [121/160] 'service': has 5, need 5 more
+    OK: added 5, total=10
+  [122/160] 'shipment': has 5, need 5 more
+    OK: added 5, total=10
+  [123/160] 'shortage': has 5, need 5 more
+    OK: added 5, total=10
+  [124/160] 'shortlist': has 5, need 5 more
+    OK: added 5, total=10
+  [125/160] 'significant': has 5, need 5 more
+    OK: added 5, total=10
+  [126/160] 'simplify': has 5, need 5 more
+    OK: added 5, total=10
+  [127/160] 'specialize': has 5, need 5 more
+    OK: added 5, total=10
+  [128/160] 'specific': has 5, need 5 more
+    OK: added 5, total=10
+  [129/160] 'stable': has 5, need 5 more
+    OK: added 5, total=10
+  [130/160] 'statement': has 5, need 5 more
+    OK: added 5, total=10
+  [131/160] 'storage': has 5, need 5 more
+    OK: added 5, total=10
+  [132/160] 'strategy': has 5, need 5 more
+    OK: added 5, total=10
+  [133/160] 'submit': has 5, need 5 more
+    OK: added 5, total=10
+  [134/160] 'substitute': has 5, need 5 more
+    OK: added 5, total=10
+  [135/160] 'successful': has 5, need 5 more
+    OK: added 5, total=10
+  [136/160] 'suitable': has 5, need 5 more
+    OK: added 5, total=10
+  [137/160] 'summarize': has 5, need 5 more
+    OK: added 5, total=10
+  [138/160] 'supervise': has 5, need 5 more
+    OK: added 5, total=10
+  [139/160] 'supply': has 5, need 5 more
+    OK: added 5, total=10
+  [140/160] 'support': has 5, need 5 more
+    OK: added 5, total=10
+  [141/160] 'target': has 5, need 5 more
+    OK: added 5, total=10
+  [142/160] 'task': has 5, need 5 more
+    OK: added 5, total=10
+  [143/160] 'technique': has 5, need 5 more
+    OK: added 5, total=10
+  [144/160] 'temporary': has 5, need 5 more
+    OK: added 5, total=10
+  [145/160] 'total': has 5, need 5 more
+    OK: added 5, total=10
+  [146/160] 'track': has 5, need 5 more
+    OK: added 5, total=10
+  [147/160] 'training': has 5, need 5 more
+    OK: added 5, total=10
+  [148/160] 'transfer': has 5, need 5 more
+    OK: added 5, total=10
+  [149/160] 'transition': has 5, need 5 more
+    OK: added 5, total=10
+  [150/160] 'turnover': has 5, need 5 more
+    OK: added 5, total=10
+
+  BATCH 3 COMPLETE - Saved ielts_5.json
+  Progress: 290/300 words now have 10 examples
+  Processed: 150 OK, 0 errors
+  Elapsed: 1564s
+  ETA: ~104s more (10 words remaining)
+
+--- Batch 4: words 151 to 160 of 160 ---
+  [151/160] 'urgent': has 5, need 5 more
+    OK: added 5, total=10
+  [152/160] 'uniform': has 5, need 5 more
+    OK: added 5, total=10
+  [153/160] 'update': has 5, need 5 more
+    OK: added 5, total=10
+  [154/160] 'valid': has 5, need 5 more
+    OK: added 5, total=10
+  [155/160] 'variety': has 5, need 5 more
+    OK: added 5, total=10
+  [156/160] 'visible': has 5, need 5 more
+    OK: added 5, total=10
+  [157/160] 'voluntary': has 5, need 5 more
+    OK: added 5, total=10
+  [158/160] 'warehouse': has 5, need 5 more
+    OK: added 5, total=10
+  [159/160] 'workload': has 5, need 5 more
+    OK: added 5, total=10
+  [160/160] 'verify': has 5, need 5 more
+    OK: added 5, total=10
+
+  BATCH 4 COMPLETE - Saved ielts_5.json
+  Progress: 300/300 words now have 10 examples
+  Processed: 160 OK, 0 errors
+  Elapsed: 1670s
+
+============================================================
+ielts_5.json COMPLETE!
+Total time: 1670s
+Words processed: 160
+Words with errors: 0
+Words still under 10: 0
+============================================================
+
+Final stats:
+  Total: 300 words
+  At exactly 10: 300
+  Average: 10.0
+  Min: 10, Max: 10
+rds
+  At exactly 10: 300
+  Average: 10.0
+  Min: 10, Max: 10

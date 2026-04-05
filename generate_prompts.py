@@ -34,9 +34,9 @@ if _env_path.exists():
 
 # ── 경로 ────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
-WORDS_DB = BASE_DIR / "data" / "LanguageTest" / "words_db.json"
-PROMPTS_FILE = BASE_DIR / "data" / "illustration_prompts.json"
-PROGRESS_FILE = BASE_DIR / "data" / "prompt_gen_progress.json"
+WORDS_DB = BASE_DIR.parent / "data" / "LanguageTest" / "words_db.json"
+PROMPTS_FILE = BASE_DIR.parent / "data" / "LanguageTest" / "illustration_prompts.json"
+PROGRESS_FILE = BASE_DIR.parent / "data" / "prompt_gen_progress.json"
 
 # ── Gemini API 설정 ─────────────────────────────────────────
 GEN_MODEL = "gemini-2.5-flash"
@@ -51,17 +51,15 @@ Your job: convert Korean words and example sentences into VISUAL SCENE DESCRIPTI
 1. Describe ONLY what can be SEEN: objects, actions, body language, facial expressions, settings, colors, positions
 2. NEVER include: speech bubbles, dialogue, floating text, captions, watermarks
 3. Replace any spoken/written communication with PHYSICAL ACTIONS and GESTURES
-4. ABSOLUTELY NO TEXT in any form — replace ALL text with universal symbols and pictograms:
-   - Shop signs → icon only (cup icon for cafe, scissors for barber, fork-and-knife for restaurant)
-   - Price tags → numbers are OK, but no words
-   - Books/papers → wavy lines or geometric patterns instead of words
-   - Menus → colorful dot symbols or numbers instead of text
-   - Clocks/calendars → numbers are OK
-   - Screens → simple geometric icons only
-   - Use ★ ♥ ● ▲ ♪ ☀ ✿ arrows and shapes to replace any writing
-5. NO Korean, Chinese, Japanese, English, or ANY language text visible — no letters or words (numbers are allowed)
-6. NO gibberish, made-up words, or letter-like shapes
-6b. NEVER describe objects as having readable content — instead of "sign saying Open" write "sign with a sun icon"
+4. NEVER describe building exteriors, storefronts, or facades — these ALWAYS generate unwanted text on signs
+   - Instead of "a shop with an awning" → "a room with shelves full of colorful products"
+   - Instead of "a store entrance" → "a person surrounded by neatly displayed merchandise"
+   - Instead of "a restaurant" → "a table with steaming dishes"
+   - Instead of "a cafe" → "a warm counter with a coffee machine"
+5. NEVER use these words in prompts: shop, store, sign, storefront, facade, entrance, awning, banner, poster, menu board
+6. Focus on INDOOR scenes and CLOSE-UP human actions — avoid wide shots of buildings
+7. NO text in any form, no letters, no words, no characters in any language (numbers on clocks are OK)
+8. Books/papers → wavy lines only. Screens → geometric shapes only.
 7. Be SPECIFIC about: body positions, facial expressions, surroundings, relative positions of objects, colors, lighting
 8. Each prompt must be SELF-EXPLANATORY — a viewer should understand the meaning without any text
 
@@ -72,6 +70,7 @@ Your job: convert Korean words and example sentences into VISUAL SCENE DESCRIPTI
 - For verbs: show a person MID-ACTION performing the activity with clear body posture
 - For adjectives: show objects/people clearly displaying that quality with visual contrast
 - For adverbs: show a scene where the manner/frequency is visually obvious
+- Use ONLY 1 person (2 maximum if needed) — keep the scene focused and simple
 - 1-3 sentences, 30-60 words
 - Must be visually distinct from other similar concepts
 
@@ -79,7 +78,9 @@ Your job: convert Korean words and example sentences into VISUAL SCENE DESCRIPTI
 - Create a scene that visually tells the COMPLETE story of the sentence
 - The TARGET WORD's concept must be the FOCAL POINT of the scene
 - Show the SITUATION described with appropriate setting, characters, and props
-- When multiple people appear in a scene, give each person DISTINCTLY DIFFERENT appearances: different hairstyles, hair colors, clothing styles, and body types — never draw identical-looking people
+- Use ONLY 1-2 people per scene (3 maximum if the sentence absolutely requires it) — NEVER more
+- Keep compositions simple and uncluttered with a single clear focal point
+- If people appear, give each person DISTINCTLY DIFFERENT appearances: different hairstyles, hair colors, clothing styles, and body types
 - Convey emotions through facial expressions and body language (smile, frown, wide eyes, slumped shoulders)
 - Convey communication through gestures (pointing, nodding, showing, handing over, shaking head)
 - 1-2 sentences, 25-50 words per sentence prompt
@@ -153,7 +154,10 @@ A previous prompt failed verification. Fix it to correctly and unambiguously con
 RULES:
 - ONLY visible elements: actions, objects, expressions, settings, colors, positions
 - NO speech bubbles, dialogue, floating text, captions
-- Signs/labels in ENGLISH ONLY (if essential)
+- ABSOLUTELY NO TEXT in any language — replace all signs with icon symbols (cup for cafe, scissors for barber)
+- Replace books/papers with "book with geometric pattern" or "paper with wavy lines"
+- Replace screens with "device showing colorful geometric icons"
+- NEVER use words like "reading", "written", "labeled", "titled", "says"
 - Be SPECIFIC about positions, expressions, surroundings
 - The scene must be SELF-EXPLANATORY without any text
 - Fix the SPECIFIC ISSUE identified in verification
@@ -175,6 +179,46 @@ def load_prompts() -> dict:
     return {}
 
 
+_LINT_PATTERNS = [
+    (r'\bshop\b',           'room with product shelves'),
+    (r'\bstore\b',          'room with displayed items'),
+    (r'\bstorefront\b',     'plain building exterior'),
+    (r'\bsign\b',           'blank placard'),
+    (r'\blabel\b',          'tag with a simple icon'),
+    (r'\bbanner\b',         'hanging cloth decoration'),
+    (r'\bposter\b',         'framed picture on the wall'),
+    (r'\bmenu board\b',     'blank chalkboard'),
+    (r'\bprice tag\b',      'small hanging tag'),
+    (r'\bsmartphone\b',     'small flat device'),
+    (r'\blaptop\b',         'open portable computer'),
+    (r'\bnewspaper\b',      'folded paper with wavy lines'),
+    (r'\bmagazine\b',       'illustrated booklet'),
+    (r'\bscreen\b',         'glowing rectangular surface'),
+    (r'\bawning\b',         'striped overhead cover'),
+    (r'\bentrance\b',       'open doorway'),
+    (r'\bbookshelves?\b',   'tall shelves'),
+    (r'\bcaf[eé]\b',        'warm counter with hot drinks'),
+]
+
+def _lint_prompts(prompts: dict) -> dict:
+    """저장 전 텍스트 유발 토큰을 안전한 표현으로 치환"""
+    import re
+    def _lint(text: str) -> str:
+        for pattern, replacement in _LINT_PATTERNS:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        return text
+
+    linted = {}
+    for key, entry in prompts.items():
+        new_entry = dict(entry)
+        if "word_prompt" in new_entry:
+            new_entry["word_prompt"] = _lint(new_entry["word_prompt"])
+        if "sentences" in new_entry:
+            new_entry["sentences"] = [_lint(s) for s in new_entry["sentences"]]
+        linted[key] = new_entry
+    return linted
+
+
 def save_prompts(prompts: dict):
     """디스크의 최신 파일을 읽고 merge 후 저장 (동시 실행 안전)"""
     if PROMPTS_FILE.exists():
@@ -188,8 +232,9 @@ def save_prompts(prompts: dict):
             if mem_sents >= disk_sents:
                 on_disk[key] = val
         prompts.update({k: v for k, v in on_disk.items() if k not in prompts})
+    PROMPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(PROMPTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(prompts, f, ensure_ascii=False, indent=2)
+        json.dump(_lint_prompts(prompts), f, ensure_ascii=False, indent=2)
 
 
 def load_progress() -> dict:

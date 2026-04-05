@@ -35,11 +35,15 @@ for p in _FFMPEG_DIR.glob("Gyan.FFmpeg*/ffmpeg*/bin"):
         break
 
 def _get_env():
-    """FFmpeg 경로 + APP_BASE를 환경변수에 추가"""
+    """FFmpeg 경로 + APP_BASE + GCP 인증을 환경변수에 추가"""
     env = os.environ.copy()
     if _FFMPEG_BIN:
         env["PATH"] = _FFMPEG_BIN + os.pathsep + env.get("PATH", "")
     env["APP_BASE"] = str(NAS_DRIVE)
+    # GCP 서비스 계정 인증 (TTS 등)
+    gcp_key = NAS_DRIVE / "secrets" / "gcp_service_account.json"
+    if gcp_key.exists():
+        env["GOOGLE_APPLICATION_CREDENTIALS"] = str(gcp_key)
     return env
 
 
@@ -101,12 +105,13 @@ def mark_failed(q: dict, reason: str):
 
 
 # ─── 렌더링 ──────────────────────────────────────────────────
-def render(word_id: int, db_path: str) -> bool:
+def render(word_id: int, db_path: str, exam: str = "TOPIK", lang: str = "EN") -> bool:
     # Docker 컨테이너 경로 → 로컬 경로 변환
-    local_db = db_path.replace("/app/", str(NAS_DRIVE) + "/").replace("/", os.sep)
+    # /app/data/ → Z:\Hellowords\data\ (공유 데이터는 youtube 상위 폴더)
+    local_db = db_path.replace("/app/data/", str(NAS_DRIVE.parent / "data") + "/").replace("/app/", str(NAS_DRIVE) + "/").replace("/", os.sep)
     if not Path(local_db).exists():
         # fallback: 기본 DB 경로
-        local_db = str(NAS_DRIVE / "data" / "LanguageTest" / "words_db.json")
+        local_db = str(NAS_DRIVE.parent / "data" / "LanguageTest" / "words_db.json")
     local_output = str(NAS_DRIVE / "output")
 
     cmd = [
@@ -114,6 +119,8 @@ def render(word_id: int, db_path: str) -> bool:
         "--db", local_db,
         "--id", str(word_id),
         "--output", local_output,
+        "--exam", exam,
+        "--lang", lang,
     ]
     log(f"렌더링 시작: word_id={word_id}  (native Python + FFmpeg)")
     log(f"명령어: {' '.join(cmd)}")
@@ -150,10 +157,12 @@ def main():
 
                 word_id = q.get("word_id")
                 db_path = q.get("db_path", "/app/data/LanguageTest/words_db.json")
-                log(f"대기 중인 작업 발견: word_id={word_id}")
+                exam = q.get("exam", "TOPIK")
+                lang = q.get("lang", "EN")
+                log(f"대기 중인 작업 발견: word_id={word_id} ({exam}/{lang})")
 
                 if claim_job(q):
-                    success = render(word_id, db_path)
+                    success = render(word_id, db_path, exam, lang)
                     q = read_queue()  # 다시 읽기 (NAS가 중간에 변경했을 수 있음)
                     if success:
                         mark_done(q)

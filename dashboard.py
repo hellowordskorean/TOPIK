@@ -3,7 +3,7 @@
 import glob, json, os, subprocess, sys, threading, time
 from datetime import datetime, timedelta
 from collections import defaultdict
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
 app = Flask(__name__)
 
@@ -20,6 +20,7 @@ RENDER_CONFIG   = f"{BASE}/logs/render_config.json"
 QUEUE_FILE      = f"{BASE}/logs/render_queue.json"
 SCHEDULE_CONFIG = f"{BASE}/logs/schedule_config.json"
 BATCH_QUEUE_F   = f"{BASE}/logs/batch_queue.json"
+ILLUST_USAGE_F  = f"{BASE}/logs/illust_usage.json"
 
 DEFAULT_SCHEDULE = {"slots": [
     {"exam":"TOPIK","lang":"EN","level":1},
@@ -174,6 +175,14 @@ def get_illustration_stats():
                 stats["sent_done"] += 1
                 stats["by_level"][lv]["sent_done"] += 1
     stats["progress"] = load_json(ILLUST_PROG_F, {"status": "idle", "pct": 0})
+    # 일일 사용량
+    from datetime import date as _date
+    usage = load_json(ILLUST_USAGE_F, {})
+    today = _date.today().isoformat()
+    if usage.get("date") == today:
+        stats["usage"] = usage
+    else:
+        stats["usage"] = {"date": today, "calls": 0, "success": 0, "fail": 0, "exhausted": False}
     return stats
 
 def get_node_stats(category, exam=None, lang=None):
@@ -363,6 +372,7 @@ def write_queue_job(word_id, db_path=None, exam="TOPIK", lang="EN"):
 
 _render_thread = None
 _illust_thread = None
+_illust_proc   = None   # 일러스트 생성 서브프로세스 (취소용)
 _batch_thread  = None
 
 def _is_batch_cancelled():
@@ -512,6 +522,7 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN"):
         return None
 
 def run_illustration_generation(start, end, mode="both"):
+    global _illust_proc
     try:
         save_json(ILLUST_PROG_F, {"status":"running","start":start,"end":end,"mode":mode,
             "pct":0,"done_word":0,"done_sent":0,"started_at":datetime.now().isoformat()})
@@ -522,13 +533,18 @@ def run_illustration_generation(start, end, mode="both"):
             cmd.append("--words-only")
         elif mode == "sentences":
             cmd.append("--sentences-only")
-        r = subprocess.run(cmd)
+        _illust_proc = subprocess.Popen(cmd)
+        _illust_proc.wait()
+        rc = _illust_proc.returncode
+        _illust_proc = None
         final = load_json(ILLUST_PROG_F, {})
         if final.get("status") == "running":
             save_json(ILLUST_PROG_F, {**final,
-                "status":"done" if r.returncode==0 else "failed",
-                "pct":100,"completed_at":datetime.now().isoformat()})
+                "status": "cancelled" if rc == -15 else ("done" if rc == 0 else "failed"),
+                "pct": final.get("pct", 0),
+                "completed_at": datetime.now().isoformat()})
     except Exception as e:
+        _illust_proc = None
         save_json(ILLUST_PROG_F, {"status":"failed","error":str(e)})
 
 # ─── API ─────────────────────────────────────────────────────
@@ -793,6 +809,85 @@ def api_render_custom():
     return jsonify({"status":"started","count":len(word_ids),"target":target,
                     "words":[{"id":w["id"],"word":w["word"]} for w in words]})
 
+@app.route("/api/illustrations/word/<int:word_id>")
+def api_illust_word(word_id):
+    """단어별 일러스트 상태 조회 (썸네일 경로 + 존재 여부)"""
+    level = request.args.get("level", type=int)
+    db = get_db()
+    word = next((w for w in db if w["id"] == word_id and (level is None or w.get("level") == level)), None)
+    if not word:
+        return jsonify({"error": "단어 없음"}), 404
+    lv = word.get("level", 1)
+    korean = word["word"]
+    base = f"{ILLUST_DIR}/lv{lv}/{korean}"
+    sents = word.get("sentences", [])
+    items = []
+    # word.png
+    wp = f"{base}/word.png"
+    items.append({"idx": -1, "type": "word", "exists": os.path.exists(wp),
+                  "url": f"/illust/{lv}/{korean}/word.png"})
+    # 예문 0~9
+    for i, s in enumerate(sents):
+        sp = f"{base}/{i}.png"
+        items.append({"idx": i, "type": "sentence", "exists": os.path.exists(sp),
+                      "url": f"/illust/{lv}/{korean}/{i}.png",
+                      "ko": s.get("ko", ""), "en": s.get("en", "")})
+    return jsonify({"word_id": word_id, "word": korean,
+                    "meaning": word.get("meaning", ""), "level": lv, "items": items})
+
+@app.route("/illust/<int:lv>/<word>/<filename>")
+def serve_illust(lv, word, filename):
+    """일러스트 이미지 서빙"""
+    dirpath = f"{ILLUST_DIR}/lv{lv}/{word}"
+    return send_from_directory(dirpath, filename)
+
+_regen_thread = None
+
+def _run_regen(word_id, idx):
+    """단일 이미지 재생성 (백그라운드 스레드) — VLM 통합 검증 포함"""
+    cmd = [sys.executable, "/app/generate_illustrations.py",
+           "--db", "/app/data/LanguageTest/words_db.json",
+           "--regen", str(word_id),
+           "--vlm-verify"]  # 재생성 시 항상 텍스트+비율+스타일 검증
+    if idx is not None and idx >= 0:
+        cmd += ["--regen-idx", str(idx)]
+    subprocess.run(cmd)
+
+@app.route("/api/illustrations/regen", methods=["POST"])
+def api_illust_regen():
+    """개별 이미지 재생성: {"word_id": 301, "idx": 3}  (idx=-1 또는 미지정이면 word.png)"""
+    global _regen_thread
+    data = request.get_json(silent=True) or {}
+    word_id = int(data.get("word_id", 0))
+    idx = data.get("idx")  # None=word, 0~9=sentence
+    if not word_id:
+        return jsonify({"error": "word_id 필요"}), 400
+    if _regen_thread and _regen_thread.is_alive():
+        return jsonify({"error": "재생성 진행 중"}), 409
+    regen_idx = int(idx) if idx is not None and int(idx) >= 0 else None
+    _regen_thread = threading.Thread(target=_run_regen, args=(word_id, regen_idx), daemon=True)
+    _regen_thread.start()
+    label = f"예문[{regen_idx}]" if regen_idx is not None else "단어"
+    return jsonify({"status": "started", "word_id": word_id, "target": label})
+
+@app.route("/api/illustrations/cancel", methods=["POST"])
+def api_cancel_illustrations():
+    global _illust_proc
+    prog = load_json(ILLUST_PROG_F, {})
+    # 프로세스가 살아있으면 종료
+    if _illust_proc is not None:
+        try:
+            _illust_proc.terminate()
+        except Exception:
+            pass
+        _illust_proc = None
+    elif prog.get("status") != "running":
+        return jsonify({"error": "생성 중인 작업 없음"}), 409
+    # progress 파일을 cancelled로 업데이트 (프로세스 유무 무관)
+    save_json(ILLUST_PROG_F, {**prog, "status": "cancelled",
+                              "cancelled_at": datetime.now().isoformat()})
+    return jsonify({"status": "cancelled"})
+
 @app.route("/api/illustrations/generate", methods=["POST"])
 def api_generate_illustrations():
     global _illust_thread
@@ -804,6 +899,37 @@ def api_generate_illustrations():
     _illust_thread = threading.Thread(target=run_illustration_generation,args=(start,end,mode),daemon=True)
     _illust_thread.start()
     return jsonify({"status":"started","start":start,"end":end,"mode":mode})
+
+AUDIT_FILE = f"{BASE}/logs/style_audit.json"
+_audit_thread = None
+
+def _run_style_audit(word_ids):
+    """스타일 감사 백그라운드 실행"""
+    cmd = [sys.executable, "/app/generate_illustrations.py",
+           "--db", "/app/data/LanguageTest/words_db.json",
+           "--style-audit"] + [str(i) for i in word_ids]
+    subprocess.run(cmd)
+
+@app.route("/api/illustrations/audit", methods=["POST"])
+def api_style_audit():
+    global _audit_thread
+    if _audit_thread and _audit_thread.is_alive():
+        return jsonify({"error": "감사 진행 중"}), 409
+    data = request.get_json(silent=True) or {}
+    word_ids = data.get("word_ids", [])
+    if not word_ids:
+        return jsonify({"error": "word_ids 필요"}), 400
+    _audit_thread = threading.Thread(target=_run_style_audit, args=(word_ids,), daemon=True)
+    _audit_thread.start()
+    return jsonify({"status": "started", "count": len(word_ids)})
+
+@app.route("/api/illustrations/audit/results")
+def api_audit_results():
+    data = load_json(AUDIT_FILE, None)
+    if data is None:
+        return jsonify({"error": "감사 결과 없음"}), 404
+    running = bool(_audit_thread and _audit_thread.is_alive())
+    return jsonify({**data, "running": running})
 
 # ─── HTML ─────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
@@ -991,6 +1117,15 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <div class="pbar-bg" style="height:4px;margin-bottom:10px;"><div id="ov-illust-word-bar" class="pbar" style="height:4px;background:var(--amber);width:0%;"></div></div>
       <div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--muted);margin-bottom:3px;"><span>📝 일러스트 (예문)</span><span id="ov-illust-sent-txt">–</span></div>
       <div class="pbar-bg" style="height:4px;"><div id="ov-illust-sent-bar" class="pbar" style="height:4px;background:#a855f7;width:0%;"></div></div>
+      <!-- 일일 사용량 -->
+      <div id="ov-illust-usage" style="margin-top:12px;background:var(--bg3);border-radius:7px;padding:8px 10px;border:1px solid var(--border2);">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:.72rem;color:var(--muted);">오늘 Imagen API</span>
+          <span id="ov-illust-usage-txt" style="font-size:.72rem;font-weight:700;">–</span>
+        </div>
+        <div id="ov-illust-usage-detail" style="font-size:.65rem;color:var(--muted);margin-top:2px;"></div>
+        <div id="ov-illust-exhausted" style="display:none;margin-top:6px;padding:5px 8px;border-radius:5px;background:#dc262622;border:1px solid #dc262644;font-size:.7rem;color:#f87171;font-weight:600;text-align:center;"></div>
+      </div>
       <!-- 일러스트 생성 진행 (숨김) -->
       <div id="ov-illust-gen-progress" style="display:none;margin-top:12px;background:var(--bg3);border-radius:7px;padding:8px 10px;border:1px solid var(--border2);">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span id="ov-illust-gen-label" style="font-size:.7rem;font-weight:600;color:var(--amber);">생성 중...</span><span id="ov-illust-gen-pct" style="font-size:.7rem;font-weight:700;color:var(--amber);">0%</span></div>
@@ -1025,6 +1160,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     </div>
   </div>
   <!-- 히든 엘리먼트 (일러스트 등급별 — 개요에서는 숨김, 일러스트 뷰에서 사용) -->
+  <div id="ov-illust-summary" style="display:none;"></div>
   <div id="ov-illust-levels" style="display:none;"></div>
   <div id="ov-illust-badge" style="display:none;"></div>
   <div id="ov-illust-word-pct" style="display:none;"></div>
@@ -1179,19 +1315,76 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <div class="pbar-bg" style="height:6px;margin-bottom:10px;"><div id="illust-view-word-bar" class="pbar" style="height:6px;width:0%;background:linear-gradient(90deg,#f59e0b,#f97316);"></div></div>
     <div style="display:flex;justify-content:space-between;font-size:.74rem;color:var(--muted);margin-bottom:3px;"><span>📝 예문 일러스트</span><span id="illust-view-sent-txt">–</span><span id="illust-view-sent-pct" style="margin-left:auto;padding-left:8px;">0%</span></div>
     <div class="pbar-bg" style="height:6px;margin-bottom:14px;"><div id="illust-view-sent-bar" class="pbar" style="height:6px;width:0%;background:linear-gradient(90deg,#818cf8,#a855f7);"></div></div>
+    <div id="illust-view-summary" style="margin-bottom:10px;padding:8px 12px;background:var(--bg);border-radius:7px;border:1px solid var(--border2);"></div>
     <div class="g6" id="illust-view-levels" style="margin-bottom:14px;"></div>
     <div id="illust-view-log" style="display:none;background:var(--bg);border-radius:6px;padding:10px;font-size:.7rem;color:var(--muted);font-family:monospace;max-height:100px;overflow:auto;margin-bottom:14px;white-space:pre-wrap;"></div>
+    <!-- 일일 사용량 (일러스트 뷰) -->
+    <div id="illust-view-usage" style="margin-top:14px;background:var(--bg);border-radius:8px;padding:12px 14px;border:1px solid var(--border2);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:.78rem;font-weight:600;">오늘 Imagen API 사용량</span>
+        <span id="illust-view-usage-txt" style="font-size:.82rem;font-weight:700;">–</span>
+      </div>
+      <div id="illust-view-usage-detail" style="font-size:.7rem;color:var(--muted);"></div>
+      <div id="illust-view-exhausted" style="display:none;margin-top:8px;padding:6px 10px;border-radius:6px;background:#dc262622;border:1px solid #dc262644;font-size:.75rem;color:#f87171;font-weight:600;text-align:center;"></div>
+    </div>
+  </div>
+  <!-- 개별 일러스트 브라우저 -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="sec">일러스트 미리보기 / 재생성</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+      <span style="font-size:.74rem;color:var(--muted);">등급:</span>
+      <select id="illust-browse-level" class="inp" style="width:60px;" onchange="loadIllustBrowse()">
+        <option value="1">1급</option><option value="2">2급</option><option value="3">3급</option>
+        <option value="4">4급</option><option value="5">5급</option><option value="6">6급</option>
+      </select>
+      <span style="font-size:.74rem;color:var(--muted);">단어 ID:</span>
+      <input id="illust-browse-id" class="num-input" type="number" value="1" min="1" max="300" style="width:70px;">
+      <button onclick="loadIllustBrowse()" class="btn btn-a">조회</button>
+      <button onclick="illustBrowseNav(-1)" class="btn btn-m">&lt; 이전</button>
+      <button onclick="illustBrowseNav(1)" class="btn btn-m">다음 &gt;</button>
+      <span id="illust-browse-info" style="font-size:.78rem;font-weight:600;margin-left:8px;"></span>
+    </div>
+    <div id="illust-browse-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;"></div>
+    <div id="illust-regen-status" style="display:none;margin-top:10px;padding:8px 12px;border-radius:6px;background:var(--bg);font-size:.74rem;color:var(--amber);font-weight:600;"></div>
   </div>
   <div class="card">
-    <div class="sec">일러스트 생성</div>
+    <div class="sec">일러스트 배치 생성</div>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <span style="font-size:.74rem;color:var(--muted);">ID 범위:</span>
       <input id="illust-start2" class="num-input" type="number" value="1"><span style="color:var(--muted);">~</span>
       <input id="illust-end2" class="num-input" type="number" value="100">
       <select id="illust-mode2" onchange="updateIllustCost2()" class="inp"><option value="both">단어+예문</option><option value="words">🖼 단어만</option><option value="sentences">📝 예문만</option></select>
       <button id="illust-gen-btn2" onclick="startIllustGen2()" class="btn btn-a">🎨 생성</button>
+      <button id="illust-cancel-btn2" onclick="cancelIllustGen()" class="btn btn-d" style="display:none;">⏹ 취소</button>
       <button onclick="setIllustRange2(1,1800)" class="btn btn-m">전체</button>
       <span id="illust-cost2" style="font-size:.72rem;color:var(--amber);font-weight:600;"></span>
+    </div>
+  </div>
+  <!-- 스타일 감사 -->
+  <div class="card">
+    <div class="sec">🔍 스타일 감사 (VLM 하네스)</div>
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:10px;">
+      생성된 이미지를 Gemini Vision으로 분석 — 텍스트 침투 / 인물 비율 / 투시 / 스타일 일관성 검사
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      <span style="font-size:.74rem;color:var(--muted);">감사할 ID (콤마 구분):</span>
+      <input id="audit-ids" class="inp" type="text" placeholder="예: 1,2,3,5,10" style="width:180px;font-size:.75rem;">
+      <button onclick="runStyleAudit()" class="btn btn-a" id="audit-run-btn">🔍 감사 시작</button>
+      <button onclick="loadAuditResults()" class="btn btn-m">결과 새로고침</button>
+    </div>
+    <div id="audit-status" style="display:none;margin-bottom:8px;font-size:.74rem;color:var(--amber);font-weight:600;"></div>
+    <div id="audit-summary" style="display:none;margin-bottom:10px;padding:8px 12px;border-radius:6px;background:var(--bg);font-size:.75rem;"></div>
+    <div id="audit-results" style="display:none;overflow-x:auto;">
+      <table style="width:100%;font-size:.72rem;">
+        <thead><tr style="color:var(--muted);">
+          <th style="text-align:left;padding:4px 8px;">ID</th>
+          <th style="text-align:left;padding:4px 8px;">단어</th>
+          <th style="text-align:left;padding:4px 8px;">급</th>
+          <th style="text-align:left;padding:4px 8px;">결과</th>
+          <th style="text-align:left;padding:4px 8px;">문제</th>
+        </tr></thead>
+        <tbody id="audit-tbody"></tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -1438,16 +1631,30 @@ function renderIllustStats(ill, prefix){
   const stotal=ill.sent_total||0, sdone=ill.sent_done||0, spct=stotal?Math.round(sdone/stotal*100):0;
 
   // 단어 일러스트 바
-  setEl(P+'-word-txt', wdone+' / '+t);
+  setEl(P+'-word-txt', wdone+' / '+t+' ('+wpct+'%)');
   setEl(P+'-word-pct', wpct+'%');
   const wb=document.getElementById(P+'-word-bar');
   if(wb) wb.style.width=wpct+'%';
 
   // 예문 일러스트 바
-  setEl(P+'-sent-txt', sdone+' / '+stotal);
+  setEl(P+'-sent-txt', sdone+' / '+stotal+' ('+spct+'%)');
   setEl(P+'-sent-pct', spct+'%');
   const sb=document.getElementById(P+'-sent-bar');
   if(sb) sb.style.width=spct+'%';
+
+  // 전체 요약
+  const sumEl=document.getElementById(P+'-summary');
+  if(sumEl){
+    const totalImg=wdone+sdone, totalAll=t+stotal;
+    const totalPct=totalAll?Math.round(totalImg/totalAll*100):0;
+    const cost=(totalImg*0.02).toFixed(2);
+    const remain=totalAll-totalImg;
+    const remainCost=(remain*0.02).toFixed(2);
+    sumEl.innerHTML=`<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+      <div><span style="font-size:.72rem;color:var(--muted);">전체</span> <b style="font-size:.9rem;">${totalImg}</b><span style="font-size:.72rem;color:var(--muted);">/${totalAll}장</span> <span style="font-size:.72rem;font-weight:700;color:var(--amber);">${totalPct}%</span></div>
+      <div style="font-size:.72rem;color:var(--muted);">💰 사용 $${cost} · 남은 $${remainCost} (${remain}장)</div>
+    </div>`;
+  }
 
   // 등급별
   const lvEl=document.getElementById(P+'-levels');
@@ -1457,14 +1664,14 @@ function renderIllustStats(ill, prefix){
       const wp=info.total?Math.round(info.word_done/info.total*100):0;
       const sp=info.sent_total?Math.round(info.sent_done/info.sent_total*100):0;
       const c=LVC[lv];
+      const allDone=info.word_done+info.sent_done, allTotal=info.total+info.sent_total;
       return `<div style="background:#21262d;border-radius:8px;padding:8px;text-align:center;">
         <div style="color:${c};font-weight:700;font-size:.8rem;">${lv}급</div>
-        <div style="font-size:.75rem;font-weight:600;margin-top:2px;">🖼 ${info.word_done}</div>
-        <div style="font-size:.65rem;color:var(--muted);">${wp}%</div>
-        <div class="pbar-bg" style="height:2px;margin:3px 0;"><div class="pbar" style="height:2px;width:${wp}%;background:${c};"></div></div>
-        <div style="font-size:.75rem;font-weight:600;">📝 ${info.sent_done}</div>
-        <div style="font-size:.65rem;color:var(--muted);">${sp}%</div>
-        <div class="pbar-bg" style="height:2px;margin-top:3px;"><div class="pbar" style="height:2px;width:${sp}%;background:#818cf8;"></div></div>
+        <div style="font-size:.72rem;font-weight:600;margin-top:2px;">🖼 ${info.word_done}<span style="color:var(--muted);font-weight:400;">/${info.total}</span></div>
+        <div class="pbar-bg" style="height:3px;margin:3px 0;"><div class="pbar" style="height:3px;width:${wp}%;background:${c};"></div></div>
+        <div style="font-size:.72rem;font-weight:600;">📝 ${info.sent_done}<span style="color:var(--muted);font-weight:400;">/${info.sent_total}</span></div>
+        <div class="pbar-bg" style="height:3px;margin:3px 0;"><div class="pbar" style="height:3px;width:${sp}%;background:#818cf8;"></div></div>
+        <div style="font-size:.62rem;color:var(--muted);margin-top:2px;">${allDone}/${allTotal}</div>
       </div>`;}).join('');
   }
 
@@ -1477,8 +1684,11 @@ function renderIllustStats(ill, prefix){
       badge.textContent=`● 생성 중 (${prog.pct||0}%)${step}`;
       badge.className='badge badge-run pulse';
     } else if(prog.status==='done'){badge.textContent='✅ 완료';badge.className='badge badge-done';}
+    else if(prog.status==='cancelled'){badge.textContent='⏹ 취소됨';badge.className='badge badge-idle';}
     else{badge.textContent='대기 중';badge.className='badge badge-idle';}
   }
+  // 생성/취소 버튼 토글
+  if(prefix==='ov') _updateIllustButtons(prog.status);
   // 일러스트 생성 게이지
   const gp=document.getElementById('ov-illust-gen-progress');
   if(gp){
@@ -1494,6 +1704,24 @@ function renderIllustStats(ill, prefix){
       gp.style.display='none';
     }
   }
+
+  // 일일 사용량 렌더
+  const usage=ill.usage||{};
+  const uCalls=usage.calls||0, uOk=usage.success||0, uFail=usage.fail||0;
+  const uCost=(uCalls*0.02).toFixed(2);
+  [P, prefix==='ov'?'illust-view':null].filter(Boolean).forEach(pfx=>{
+    const id=pfx==='ov-illust'?'ov-illust':'illust-view';
+    setEl(id+'-usage-txt', uOk+'장 (API '+uCalls+'회) · $'+uCost);
+    const detail=document.getElementById(id+'-usage-detail');
+    if(detail) detail.textContent=uFail?'성공 '+uOk+' · 실패 '+uFail+' (검증 재시도 포함)':'성공 '+uOk+'장';
+    const exEl=document.getElementById(id+'-exhausted');
+    if(exEl){
+      if(usage.exhausted){
+        exEl.style.display='block';
+        exEl.textContent='⛔ 일일 할당량 소진 ('+( usage.exhausted_at||'')+'시 초과) — 내일 자동 리셋';
+      } else { exEl.style.display='none'; }
+    }
+  });
 
   // ov → illustrations view 동기화
   if(prefix==='ov'){
@@ -1614,6 +1842,182 @@ async function _startIllust(start,end,mode){
 }
 async function startIllustGen(){ await _startIllust(+document.getElementById('illust-start').value||1,+document.getElementById('illust-end').value||10,document.getElementById('illust-mode').value); }
 async function startIllustGen2(){ await _startIllust(+document.getElementById('illust-start2').value||1,+document.getElementById('illust-end2').value||100,document.getElementById('illust-mode2').value); }
+
+async function cancelIllustGen(){
+  if(!confirm('일러스트 생성을 취소할까요?\n지금까지 생성된 이미지는 보존됩니다.')) return;
+  const r = await fetch('/api/illustrations/cancel', {method:'POST'});
+  const d = await r.json();
+  if(!r.ok) alert('취소 실패: '+(d.error||'알 수 없음'));
+  else { setEl('illust-cancel-btn2',''); loadOverview(); }
+}
+
+function _updateIllustButtons(status){
+  const running = status === 'running';
+  const genBtn = document.getElementById('illust-gen-btn2');
+  const cancelBtn = document.getElementById('illust-cancel-btn2');
+  if(genBtn) genBtn.style.display = running ? 'none' : '';
+  if(cancelBtn) cancelBtn.style.display = running ? '' : 'none';
+}
+
+// ── 일러스트 브라우저 ────────────────────────────────────
+let _illustBrowseData=null;
+let _regenPoll=null;
+
+async function loadIllustBrowse(){
+  const id=+document.getElementById('illust-browse-id').value||1;
+  const lv=document.getElementById('illust-browse-level').value||1;
+  const r=await fetch('/api/illustrations/word/'+id+'?level='+lv);
+  if(!r.ok){document.getElementById('illust-browse-info').textContent='단어 없음';document.getElementById('illust-browse-grid').innerHTML='';return;}
+  const d=await r.json();
+  _illustBrowseData=d;
+  const c=LVC[d.level]||'#8b949e';
+  document.getElementById('illust-browse-info').innerHTML=`<span style="color:${c}">${d.level}급</span> <b>${d.word}</b> — ${d.meaning}`;
+  const grid=document.getElementById('illust-browse-grid');
+  const ts=Date.now();
+  grid.innerHTML=d.items.map(it=>{
+    const label=it.type==='word'?'단어 이미지':`예문 ${it.idx+1}`;
+    const sub=it.type==='sentence'?`<div style="font-size:.6rem;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(it.ko||'')}">${it.ko||''}</div>`:'';
+    const img=it.exists
+      ?`<img src="${it.url}?t=${ts}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="illustPreview('${it.url}?t=${ts}')">`
+      :`<div style="width:100%;aspect-ratio:1;background:var(--bg);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.7rem;">미생성</div>`;
+    const btnId=`regen-btn-${it.type==='word'?'w':it.idx}`;
+    return `<div style="background:var(--bg3);border-radius:8px;padding:8px;text-align:center;">
+      <div style="font-size:.7rem;font-weight:600;margin-bottom:4px;">${label}</div>
+      ${img}${sub}
+      <button id="${btnId}" onclick="regenIllust(${d.word_id},${it.idx})" class="btn btn-m" style="margin-top:6px;font-size:.65rem;width:100%;padding:3px 0;">🔄 재생성</button>
+    </div>`;
+  }).join('');
+}
+
+function illustBrowseNav(dir){
+  const inp=document.getElementById('illust-browse-id');
+  inp.value=Math.min(300,Math.max(1,(+inp.value||1)+dir));
+  loadIllustBrowse();
+}
+
+function illustPreview(url){
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:pointer;';
+  overlay.onclick=()=>overlay.remove();
+  overlay.innerHTML=`<img src="${url}" style="max-width:90vw;max-height:90vh;border-radius:12px;">`;
+  document.body.appendChild(overlay);
+}
+
+async function regenIllust(wordId,idx){
+  const label=idx<0?'단어 이미지':`예문[${idx+1}]`;
+  if(!confirm(`${label} 재생성하시겠습니까?\n(기존 이미지 삭제 후 새로 생성)`))return;
+  const btnId=idx<0?'regen-btn-w':`regen-btn-${idx}`;
+  const btn=document.getElementById(btnId);
+  if(btn){btn.disabled=true;btn.textContent='⏳ 생성 중...';}
+  const st=document.getElementById('illust-regen-status');
+  st.style.display='block';st.textContent=`🔄 ${label} 재생성 중...`;
+  const r=await fetch('/api/illustrations/regen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word_id:wordId,idx:idx})});
+  const d=await r.json();
+  if(!r.ok){st.textContent='오류: '+(d.error||'');if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}return;}
+  // 폴링: 완료 대기
+  const _regenLv=document.getElementById('illust-browse-level').value||1;
+  if(_regenPoll)clearInterval(_regenPoll);
+  _regenPoll=setInterval(async()=>{
+    const cr=await fetch('/api/illustrations/word/'+wordId+'?level='+_regenLv);
+    if(!cr.ok)return;
+    const cd=await cr.json();
+    const item=cd.items.find(i=>i.idx===idx);
+    if(item&&item.exists){
+      clearInterval(_regenPoll);_regenPoll=null;
+      st.textContent=`✅ ${label} 재생성 완료!`;
+      setTimeout(()=>{st.style.display='none';},3000);
+      loadIllustBrowse();
+      loadOverview();
+    }
+  },2000);
+  // 타임아웃 60초
+  setTimeout(()=>{
+    if(_regenPoll){clearInterval(_regenPoll);_regenPoll=null;
+      st.textContent='⚠ 시간 초과 — 새로고침하여 확인하세요';
+      if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}
+    }
+  },60000);
+}
+
+// ── 스타일 감사 ────────────────────────────────────────────
+async function runStyleAudit(){
+  const raw=document.getElementById('audit-ids').value.trim();
+  if(!raw){alert('감사할 단어 ID를 입력하세요 (예: 1,2,3)');return;}
+  const ids=raw.split(',').map(s=>parseInt(s.trim())).filter(n=>!isNaN(n));
+  if(!ids.length){alert('유효한 ID가 없습니다');return;}
+  const btn=document.getElementById('audit-run-btn');
+  btn.disabled=true;btn.textContent='⏳ 감사 중...';
+  const st=document.getElementById('audit-status');
+  st.style.display='block';st.textContent=`🔍 ${ids.length}개 이미지 감사 중... (Gemini Vision 분석)`;
+  const r=await fetch('/api/illustrations/audit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word_ids:ids})});
+  const d=await r.json();
+  if(!r.ok){st.textContent='오류: '+(d.error||'');btn.disabled=false;btn.textContent='🔍 감사 시작';return;}
+  // 폴링
+  const poll=setInterval(async()=>{
+    const cr=await fetch('/api/illustrations/audit/results');
+    if(!cr.ok)return;
+    const cd=await cr.json();
+    if(!cd.running){
+      clearInterval(poll);
+      btn.disabled=false;btn.textContent='🔍 감사 시작';
+      st.style.display='none';
+      _renderAuditResults(cd);
+    }
+  },2000);
+}
+async function loadAuditResults(){
+  const r=await fetch('/api/illustrations/audit/results');
+  if(!r.ok){alert('감사 결과 없음 — 먼저 감사를 실행하세요');return;}
+  _renderAuditResults(await r.json());
+}
+function _renderAuditResults(d){
+  const summary=document.getElementById('audit-summary');
+  const total=(d.pass||0)+(d.fail||0)+(d.skip||0);
+  const passRate=total>0?Math.round((d.pass||0)/total*100):0;
+  const color=(d.fail||0)===0?'var(--green)':(d.fail||0)>total*0.3?'var(--red)':'var(--amber)';
+  summary.style.display='block';
+  summary.innerHTML=`<span style="color:${color};font-weight:700;">통과 ${d.pass||0} / 실패 ${d.fail||0} / 스킵 ${d.skip||0}</span>`+
+    ` <span style="color:var(--muted);">(통과율 ${passRate}%)</span>`+
+    (d.audited_at?` <span style="color:var(--muted2);font-size:.68rem;">${d.audited_at.slice(0,16)}</span>`:'');
+  const tbody=document.getElementById('audit-tbody');
+  // 문제 유형별 뱃지 색상
+  const _tagColor={
+    text:'#f87171', proportion:'#fb923c', scale:'#fb923c',
+    perspective:'#60a5fa', style:'#a78bfa', palette:'#a78bfa',
+    anatomy:'#f43f5e', physics:'#f43f5e',
+  };
+  const _tagLabel={
+    text:'텍스트', proportion:'비율', scale:'크기불균형',
+    perspective:'투시', style:'스타일', palette:'색상',
+    anatomy:'해부학이상', physics:'물리오류',
+  };
+  const rows=(d.results||[]).map(r=>{
+    const ok=r.passed;
+    const badge=ok
+      ?`<span style="color:var(--green);font-weight:700;">✓ OK</span>`
+      :`<span style="color:var(--red);font-weight:700;">✗ FAIL</span>`;
+    // [anatomy,scale,...] 태그 파싱
+    const tagMatch=(r.issues||'').match(/\[([^\]]+)\]/);
+    const tags=tagMatch?tagMatch[1].split(',').map(s=>s.trim()):[];
+    const detail=(r.issues||'').replace(/\[[^\]]+\]\s*/,'');
+    const tagBadges=tags.map(t=>{
+      const c=_tagColor[t]||'#8b949e';
+      const l=_tagLabel[t]||t;
+      return `<span style="display:inline-block;background:${c}22;color:${c};border:1px solid ${c}55;border-radius:4px;padding:1px 6px;font-size:.63rem;font-weight:700;margin-right:3px;">${l}</span>`;
+    }).join('');
+    const issueText=detail?`<div style="font-size:.67rem;color:var(--muted);margin-top:3px;">${detail}</div>`:'';
+    const issuesCell=ok?`<span style="color:var(--muted2);">—</span>`:`${tagBadges}${issueText}`;
+    return `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:4px 8px;">${r.word_id}</td>
+      <td style="padding:4px 8px;font-weight:600;">${r.word}</td>
+      <td style="padding:4px 8px;">${r.level}급</td>
+      <td style="padding:4px 8px;">${badge}</td>
+      <td style="padding:6px 8px;max-width:360px;">${issuesCell}</td>
+    </tr>`;
+  }).join('');
+  tbody.innerHTML=rows||'<tr><td colspan="5" style="padding:12px;text-align:center;color:var(--muted);">결과 없음</td></tr>';
+  document.getElementById('audit-results').style.display='block';
+}
 
 function setEl(id,val){const e=document.getElementById(id);if(e)e.textContent=val;}
 
@@ -1990,4 +2394,9 @@ setInterval(()=>{if(_currentView==='render'&&_rpTab==='batch')loadBatchData();},
 def index(): return render_template_string(HTML)
 
 if __name__ == "__main__":
+    # 재시작 시 stale 'running' 상태 정리
+    prog = load_json(ILLUST_PROG_F, {})
+    if prog.get("status") == "running":
+        save_json(ILLUST_PROG_F, {**prog, "status": "cancelled",
+                                  "cancelled_at": datetime.now().isoformat()})
     app.run(host="0.0.0.0", port=8765, debug=False)

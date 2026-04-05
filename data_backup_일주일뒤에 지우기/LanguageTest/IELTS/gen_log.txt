@@ -1,0 +1,158 @@
+IELTS Example Generator
+Target: exactly 10 examples per word
+
+============================================================
+Processing ielts_5.json (IELTS Level 5)
+============================================================
+Words needing examples: 235
+
+Batch 1: words 1-25 of 235
+  [1/235] 'carrier': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [2/235] 'category': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [3/235] 'chain': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [4/235] 'chairperson': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [5/235] 'charge': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [6/235] 'checkout': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [7/235] 'circulate': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [8/235] 'claim': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [9/235] 'collaboration': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [10/235] 'colleague': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [11/235] 'collection': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [12/235] 'comment': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [13/235] 'commitment': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [14/235] 'commodity': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [15/235] 'compare': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [16/235] 'compete': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [17/235] 'competitor': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [18/235] 'compile': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [19/235] 'complaint': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [20/235] 'complete': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [21/235] 'completion': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [22/235] 'complex': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [23/235] 'component': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [24/235] 'conduct': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [25/235] 'conference': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+
+  [Batch 1 saved to ielts_5.json]
+
+Batch 2: words 26-50 of 235
+  [26/235] 'confirm': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [27/235] 'connect': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [28/235] 'consequence': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [29/235] 'consideration': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [30/235] 'construction': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [31/235] 'consult': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [32/235] 'contact': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [33/235] 'contract': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [34/235] 'convenience': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [35/235] 'cooperation': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [36/235] 'correspond': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [37/235] 'coverage': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [38/235] 'current': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [39/235] 'currently': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [40/235] 'customer': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [41/235] 'deadline': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [42/235] 'deal': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [43/235] 'decline': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [44/235] 'decrease': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [45/235] 'delay': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [46/235] 'deliver': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [47/235] 'demand': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [48/235] 'department': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [49/235] 'deposit': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [50/235] 'description': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+
+  [Batch 2 saved to ielts_5.json]
+
+Batch 3: words 51-75 of 235
+  [51/235] 'designate': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [52/235] 'direction': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [53/235] 'disability': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [54/235] 'discount': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [55/235] 'discuss': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [56/235] 'dispatch': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [57/235] 'distribute': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [58/235] 'document': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [59/235] 'domestic': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [60/235] 'draw': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [61/235] 'duplicate': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [62/235] 'durable': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [63/235] 'duration': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [64/235] 'earn': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [65/235] 'effective': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [66/235] 'efficient': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [67/235] 'eligible': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [68/235] 'employee': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [69/235] 'employer': 5 -> 10 (need 5)
+    OK: added 5, total now 10
+  [70/235] 'encourage': 5 -> 10 (need 5)
+dded 5, total now 10
+  [70/235] 'encourage': 5 -> 10 (need 5)

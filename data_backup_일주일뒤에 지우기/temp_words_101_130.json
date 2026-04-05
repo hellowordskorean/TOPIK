@@ -1,0 +1,1812 @@
+{
+  "101": {
+    "id": 101,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "When Talking About Weather",
+        "ko": "한국에는 네 계절이 있어요.",
+        "en": "Korea has four seasons."
+      },
+      {
+        "situation": "Asking About Favorite Seasons",
+        "ko": "어떤 계절을 좋아해요?",
+        "en": "What season do you like?"
+      },
+      {
+        "situation": "Describing Spring Season",
+        "ko": "봄은 제가 가장 좋아하는 계절이에요.",
+        "en": "Spring is my favorite season."
+      },
+      {
+        "situation": "Explaining Seasonal Changes",
+        "ko": "계절이 바뀌면 날씨도 달라져요.",
+        "en": "When the season changes, the weather changes too."
+      },
+      {
+        "situation": "Expressing Summer Heat",
+        "ko": "여름 계절에는 정말 더워요.",
+        "en": "Summer is really hot."
+      },
+      {
+        "situation": "Describing Autumn Weather",
+        "ko": "가을 계절에 단풍이 예뻐요.",
+        "en": "The autumn leaves are beautiful in fall."
+      },
+      {
+        "situation": "Describing Winter Weather",
+        "ko": "겨울 계절에는 눈이 내려요.",
+        "en": "It snows in winter."
+      },
+      {
+        "situation": "Talking About Seasonal Dishes",
+        "ko": "계절마다 맛있는 음식이 달라요.",
+        "en": "Delicious food varies by season."
+      },
+      {
+        "situation": "Making Travel Plans",
+        "ko": "어느 계절에 여행하고 싶어요?",
+        "en": "In which season do you want to travel?"
+      },
+      {
+        "situation": "Health and Seasonal Connection",
+        "ko": "계절이 바뀔 때 감기에 걸리기 쉬워요.",
+        "en": "It's easy to catch a cold when the season changes."
+      }
+    ],
+    "word": "계절",
+    "meaning": "season"
+  },
+  "102": {
+    "id": 102,
+    "pos": "명사",
+    "synonyms": [
+      "예정",
+      "일정"
+    ],
+    "examples": [
+      {
+        "situation": "Asking About Weekend Plans",
+        "ko": "주말에 무슨 계획이 있어요?",
+        "en": "Do you have any plans for the weekend?"
+      },
+      {
+        "situation": "Making Travel Plans",
+        "ko": "여름 방학에 여행 계획을 세웠어요.",
+        "en": "I made travel plans for summer vacation."
+      },
+      {
+        "situation": "Talking About Study Plans",
+        "ko": "오늘 공부 계획이 있어요.",
+        "en": "I have a study plan for today."
+      },
+      {
+        "situation": "Talking About Future Plans",
+        "ko": "졸업 후에 계획이 있어요?",
+        "en": "Do you have plans after graduation?"
+      },
+      {
+        "situation": "Explaining a Plan Change",
+        "ko": "비가 와서 계획이 바뀌었어요.",
+        "en": "The plan changed because it rained."
+      },
+      {
+        "situation": "Confirming Plans",
+        "ko": "내일 계획을 확인해 주세요.",
+        "en": "Please confirm tomorrow's plan."
+      },
+      {
+        "situation": "Scheduling Plans with a Friend",
+        "ko": "이번 주에 같이 밥 먹을 계획이에요.",
+        "en": "I'm planning to have a meal together this week."
+      },
+      {
+        "situation": "Talking About Work Tasks",
+        "ko": "이번 달 계획을 잘 지켰어요.",
+        "en": "I followed this month's plan well."
+      },
+      {
+        "situation": "Preparing a Birthday Party",
+        "ko": "친구 생일 파티 계획을 세우고 있어요.",
+        "en": "I'm making plans for a friend's birthday party."
+      },
+      {
+        "situation": "Talking About New Year Plans",
+        "ko": "새해에 운동하는 계획을 세웠어요.",
+        "en": "I made a plan to exercise in the new year."
+      }
+    ],
+    "word": "계획",
+    "meaning": "plan"
+  },
+  "103": {
+    "id": 103,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Ordering at a Restaurant",
+        "ko": "고기 두 인분 주세요.",
+        "en": "Please give us two servings of meat."
+      },
+      {
+        "situation": "Stating Food Preferences",
+        "ko": "저는 고기를 좋아해요.",
+        "en": "I like meat."
+      },
+      {
+        "situation": "Talking About Ingredients",
+        "ko": "오늘 저녁에 고기를 구워 먹을 거예요.",
+        "en": "I'm going to grill some meat for dinner tonight."
+      },
+      {
+        "situation": "Grocery Shopping at the Market",
+        "ko": "마트에서 고기를 샀어요.",
+        "en": "I bought meat at the supermarket."
+      },
+      {
+        "situation": "Describing a Vegetarian",
+        "ko": "저는 고기를 먹지 않아요.",
+        "en": "I don't eat meat."
+      },
+      {
+        "situation": "Eating Samgyeopsal",
+        "ko": "삼겹살은 제가 제일 좋아하는 고기예요.",
+        "en": "Samgyeopsal is my favorite meat."
+      },
+      {
+        "situation": "Eating Out with a Friend",
+        "ko": "친구들과 고기를 먹으러 갔어요.",
+        "en": "I went to eat meat with friends."
+      },
+      {
+        "situation": "Checking Meat Freshness",
+        "ko": "이 고기가 신선해요?",
+        "en": "Is this meat fresh?"
+      },
+      {
+        "situation": "Asking How to Cook",
+        "ko": "고기를 어떻게 요리해요?",
+        "en": "How do you cook meat?"
+      },
+      {
+        "situation": "Checking the Refrigerator",
+        "ko": "냉장고에 고기가 없어요.",
+        "en": "There is no meat in the refrigerator."
+      }
+    ],
+    "word": "고기",
+    "meaning": "meat"
+  },
+  "104": {
+    "id": 104,
+    "pos": "명사",
+    "synonyms": [
+      "고교"
+    ],
+    "examples": [
+      {
+        "situation": "Introducing the School",
+        "ko": "저는 서울 고등학교에 다녀요.",
+        "en": "I attend Seoul High School."
+      },
+      {
+        "situation": "Past School Days",
+        "ko": "고등학교 때 친구를 많이 사귀었어요.",
+        "en": "I made many friends in high school."
+      },
+      {
+        "situation": "Asking About Academic Plans",
+        "ko": "고등학교 졸업 후 대학에 가고 싶어요.",
+        "en": "I want to go to university after graduating high school."
+      },
+      {
+        "situation": "Talking About School Life",
+        "ko": "고등학교 생활이 즐거웠어요.",
+        "en": "High school life was enjoyable."
+      },
+      {
+        "situation": "Talking About Exam Preparation",
+        "ko": "고등학교 시험이 어려워요.",
+        "en": "High school exams are difficult."
+      },
+      {
+        "situation": "After-school Activities",
+        "ko": "고등학교에서 축구 동아리에 들었어요.",
+        "en": "I joined a soccer club in high school."
+      },
+      {
+        "situation": "Asking About School Location",
+        "ko": "고등학교가 집에서 가까워요?",
+        "en": "Is the high school close to your home?"
+      },
+      {
+        "situation": "Talking About School Uniforms",
+        "ko": "고등학교에서는 교복을 입어요.",
+        "en": "We wear uniforms in high school."
+      },
+      {
+        "situation": "Talking About a Graduation Ceremony",
+        "ko": "고등학교 졸업식이 언제예요?",
+        "en": "When is the high school graduation ceremony?"
+      },
+      {
+        "situation": "Introducing a Teacher",
+        "ko": "고등학교 선생님이 정말 좋았어요.",
+        "en": "The high school teacher was really nice."
+      }
+    ],
+    "word": "고등학교",
+    "meaning": "high school"
+  },
+  "105": {
+    "id": 105,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Introducing Yourself",
+        "ko": "저는 고등학생이에요.",
+        "en": "I am a high school student."
+      },
+      {
+        "situation": "Confirming Someone's Age",
+        "ko": "고등학생은 보통 몇 살이에요?",
+        "en": "How old are high school students usually?"
+      },
+      {
+        "situation": "Getting a Student Discount",
+        "ko": "고등학생은 요금이 달라요.",
+        "en": "The fare is different for high school students."
+      },
+      {
+        "situation": "Talking About Studying",
+        "ko": "고등학생 때 공부를 열심히 했어요.",
+        "en": "I studied hard when I was a high school student."
+      },
+      {
+        "situation": "Asking About Someone's Dream",
+        "ko": "고등학생의 꿈이 뭐예요?",
+        "en": "What is a high school student's dream?"
+      },
+      {
+        "situation": "After-school Activities",
+        "ko": "고등학생들이 도서관에서 공부해요.",
+        "en": "High school students study at the library."
+      },
+      {
+        "situation": "Career Counseling",
+        "ko": "고등학생은 대학 준비를 해요.",
+        "en": "High school students prepare for university."
+      },
+      {
+        "situation": "Talking About Allowance",
+        "ko": "고등학생 용돈이 얼마예요?",
+        "en": "How much allowance do high school students get?"
+      },
+      {
+        "situation": "Talking About Traffic",
+        "ko": "고등학생은 버스를 자주 타요.",
+        "en": "High school students often take the bus."
+      },
+      {
+        "situation": "Talking About Stress",
+        "ko": "고등학생은 시험 때 스트레스를 받아요.",
+        "en": "High school students get stressed during exams."
+      }
+    ],
+    "word": "고등학생",
+    "meaning": "high school student"
+  },
+  "106": {
+    "id": 106,
+    "pos": "동사",
+    "synonyms": [
+      "선택하다",
+      "뽑다"
+    ],
+    "examples": [
+      {
+        "situation": "Choosing from the Menu",
+        "ko": "먹고 싶은 음식을 고르세요.",
+        "en": "Please choose the food you want to eat."
+      },
+      {
+        "situation": "Shopping for Clothes",
+        "ko": "마음에 드는 옷을 골라도 돼요.",
+        "en": "You can choose the clothes you like."
+      },
+      {
+        "situation": "Choosing a Gift",
+        "ko": "친구를 위해 선물을 골랐어요.",
+        "en": "I chose a gift for my friend."
+      },
+      {
+        "situation": "Buying Fruit",
+        "ko": "신선한 과일을 잘 골라야 해요.",
+        "en": "You need to choose fresh fruit well."
+      },
+      {
+        "situation": "Selecting Team Members",
+        "ko": "팀에서 한 명을 골라야 해요.",
+        "en": "We need to choose one person for the team."
+      },
+      {
+        "situation": "Selecting a Book",
+        "ko": "도서관에서 읽을 책을 골랐어요.",
+        "en": "I chose a book to read at the library."
+      },
+      {
+        "situation": "Selecting a Color",
+        "ko": "좋아하는 색깔을 고르세요.",
+        "en": "Please choose your favorite color."
+      },
+      {
+        "situation": "Deciding on a Destination",
+        "ko": "어디로 여행 갈지 골라야 해요.",
+        "en": "I need to choose where to travel."
+      },
+      {
+        "situation": "Choosing a Career",
+        "ko": "자신에게 맞는 직업을 고르세요.",
+        "en": "Choose a job that suits you."
+      },
+      {
+        "situation": "Choosing a Room",
+        "ko": "호텔에서 방을 골랐어요.",
+        "en": "I chose a room at the hotel."
+      }
+    ],
+    "word": "고르다",
+    "meaning": "choose"
+  },
+  "107": {
+    "id": 107,
+    "pos": "감탄사",
+    "synonyms": [
+      "감사했습니다"
+    ],
+    "examples": [
+      {
+        "situation": "Greeting After Receiving Help",
+        "ko": "도와주셔서 정말 고마웠습니다.",
+        "en": "Thank you very much for helping me."
+      },
+      {
+        "situation": "Finishing an Event",
+        "ko": "오늘 와 주셔서 고마웠습니다.",
+        "en": "Thank you for coming today."
+      },
+      {
+        "situation": "After a Meal Invitation",
+        "ko": "맛있는 음식을 주셔서 고마웠습니다.",
+        "en": "Thank you for giving me delicious food."
+      },
+      {
+        "situation": "When Class Ends",
+        "ko": "열심히 가르쳐 주셔서 고마웠습니다.",
+        "en": "Thank you for teaching me diligently."
+      },
+      {
+        "situation": "After Receiving a Gift",
+        "ko": "좋은 선물을 주셔서 고마웠습니다.",
+        "en": "Thank you for giving me a nice gift."
+      },
+      {
+        "situation": "After Finishing a Trip",
+        "ko": "안내해 주셔서 고마웠습니다.",
+        "en": "Thank you for being my guide."
+      },
+      {
+        "situation": "After Providing Convenience",
+        "ko": "편히 쉬게 해 주셔서 고마웠습니다.",
+        "en": "Thank you for making me feel so comfortable."
+      },
+      {
+        "situation": "After Helping with Work",
+        "ko": "제 일을 도와주셔서 고마웠습니다.",
+        "en": "Thank you for helping me with my work."
+      },
+      {
+        "situation": "Being Considerate of Someone",
+        "ko": "배려해 주셔서 정말 고마웠습니다.",
+        "en": "Thank you so much for your consideration."
+      },
+      {
+        "situation": "Ending a Long Meeting",
+        "ko": "함께 시간을 보내 주셔서 고마웠습니다.",
+        "en": "Thank you for spending time with me."
+      }
+    ],
+    "word": "고마웠습니다",
+    "meaning": "Thank you (past tense)"
+  },
+  "108": {
+    "id": 108,
+    "pos": "형용사",
+    "synonyms": [
+      "감사하다"
+    ],
+    "examples": [
+      {
+        "situation": "When You Received Help",
+        "ko": "도와줘서 정말 고마워.",
+        "en": "I'm really thankful that you helped me."
+      },
+      {
+        "situation": "Thanking a Friend",
+        "ko": "네가 있어서 고마워.",
+        "en": "I'm thankful that you're here."
+      },
+      {
+        "situation": "When Receiving a Gift",
+        "ko": "이런 선물을 줘서 고마워.",
+        "en": "Thank you for giving me this gift."
+      },
+      {
+        "situation": "Sharing Food",
+        "ko": "음식을 나눠 줘서 고마워.",
+        "en": "Thank you for sharing the food."
+      },
+      {
+        "situation": "Getting Help with Homework",
+        "ko": "숙제를 도와줘서 고마워.",
+        "en": "Thank you for helping with my homework."
+      },
+      {
+        "situation": "Giving Directions",
+        "ko": "길을 알려 줘서 고마워.",
+        "en": "Thank you for showing me the way."
+      },
+      {
+        "situation": "Cheering Someone on",
+        "ko": "응원해 줘서 고마워.",
+        "en": "Thank you for cheering me on."
+      },
+      {
+        "situation": "Waiting for Someone",
+        "ko": "기다려 줘서 고마워.",
+        "en": "Thank you for waiting."
+      },
+      {
+        "situation": "When Someone Understands",
+        "ko": "이해해 줘서 정말 고마워.",
+        "en": "I'm really grateful that you understand."
+      },
+      {
+        "situation": "Taking a Photo for Someone",
+        "ko": "사진 찍어 줘서 고마워.",
+        "en": "Thank you for taking the photo."
+      }
+    ],
+    "word": "고맙다",
+    "meaning": "thank"
+  },
+  "109": {
+    "id": 109,
+    "pos": "감탄사",
+    "synonyms": [
+      "감사합니다"
+    ],
+    "examples": [
+      {
+        "situation": "When You Received Help",
+        "ko": "정말 고맙습니다.",
+        "en": "Thank you very much."
+      },
+      {
+        "situation": "When Receiving a Gift",
+        "ko": "선물을 주셔서 고맙습니다.",
+        "en": "Thank you for the gift."
+      },
+      {
+        "situation": "Receiving Food",
+        "ko": "음식을 주셔서 고맙습니다.",
+        "en": "Thank you for the food."
+      },
+      {
+        "situation": "Receiving Directions",
+        "ko": "길을 알려 주셔서 고맙습니다.",
+        "en": "Thank you for showing me the way."
+      },
+      {
+        "situation": "Being Considerate of Someone",
+        "ko": "배려해 주셔서 고맙습니다.",
+        "en": "Thank you for your consideration."
+      },
+      {
+        "situation": "Receiving a Compliment",
+        "ko": "칭찬해 주셔서 고맙습니다.",
+        "en": "Thank you for the compliment."
+      },
+      {
+        "situation": "Being Invited to Someone's Home",
+        "ko": "초대해 주셔서 고맙습니다.",
+        "en": "Thank you for inviting me."
+      },
+      {
+        "situation": "Being Offered a Bus Seat",
+        "ko": "자리를 양보해 주셔서 고맙습니다.",
+        "en": "Thank you for giving up your seat."
+      },
+      {
+        "situation": "After Hearing an Explanation",
+        "ko": "자세히 설명해 주셔서 고맙습니다.",
+        "en": "Thank you for the detailed explanation."
+      },
+      {
+        "situation": "Greeting Someone",
+        "ko": "만나서 고맙습니다.",
+        "en": "Thank you for meeting with me."
+      }
+    ],
+    "word": "고맙습니다",
+    "meaning": "Thank you"
+  },
+  "110": {
+    "id": 110,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "When Introducing Family",
+        "ko": "저에게는 고모가 두 명 있어요.",
+        "en": "I have two paternal aunts."
+      },
+      {
+        "situation": "Visiting Relatives",
+        "ko": "주말에 고모 집에 갔어요.",
+        "en": "I went to my aunt's house on the weekend."
+      },
+      {
+        "situation": "Receiving a Gift",
+        "ko": "고모가 생일 선물을 주셨어요.",
+        "en": "My aunt gave me a birthday present."
+      },
+      {
+        "situation": "Holiday Family Gathering",
+        "ko": "추석에 고모가 오셨어요.",
+        "en": "My aunt came during Chuseok."
+      },
+      {
+        "situation": "Talking About Food",
+        "ko": "고모가 만든 음식이 맛있어요.",
+        "en": "The food my aunt made is delicious."
+      },
+      {
+        "situation": "Making a Phone Call",
+        "ko": "고모에게 전화를 했어요.",
+        "en": "I called my aunt."
+      },
+      {
+        "situation": "Explaining Family Relationships",
+        "ko": "고모는 아버지의 여동생이에요.",
+        "en": "An aunt (gomo) is the father's sister."
+      },
+      {
+        "situation": "When Someone Worries for You",
+        "ko": "고모가 저를 걱정해 주셔요.",
+        "en": "My aunt worries about me."
+      },
+      {
+        "situation": "Receiving Allowance",
+        "ko": "고모에게서 용돈을 받았어요.",
+        "en": "I received allowance from my aunt."
+      },
+      {
+        "situation": "Family Gathering",
+        "ko": "가족 모임에 고모도 오셨어요.",
+        "en": "My aunt also came to the family gathering."
+      }
+    ],
+    "word": "고모",
+    "meaning": "paternal aunt"
+  },
+  "111": {
+    "id": 111,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "When Introducing Family",
+        "ko": "고모부가 정말 친절하세요.",
+        "en": "My uncle (gomo's husband) is very kind."
+      },
+      {
+        "situation": "Holiday Family Gathering",
+        "ko": "설날에 고모부를 만났어요.",
+        "en": "I met my uncle at Lunar New Year."
+      },
+      {
+        "situation": "Talking About Careers",
+        "ko": "고모부는 선생님이세요.",
+        "en": "My uncle is a teacher."
+      },
+      {
+        "situation": "Exercising Together",
+        "ko": "고모부와 같이 운동했어요.",
+        "en": "I exercised together with my uncle."
+      },
+      {
+        "situation": "Giving Someone a Ride",
+        "ko": "고모부가 차로 데려다 주셨어요.",
+        "en": "My uncle gave me a ride in his car."
+      },
+      {
+        "situation": "Explaining Family Relationships",
+        "ko": "고모부는 고모의 남편이에요.",
+        "en": "Uncle (gomoboo) is the husband of the father's sister."
+      },
+      {
+        "situation": "Receiving a Gift",
+        "ko": "고모부에게 선물을 받았어요.",
+        "en": "I received a gift from my uncle."
+      },
+      {
+        "situation": "At a Dining Table",
+        "ko": "고모부와 함께 저녁을 먹었어요.",
+        "en": "I had dinner together with my uncle."
+      },
+      {
+        "situation": "Seeking Advice",
+        "ko": "고모부에게 조언을 구했어요.",
+        "en": "I asked my uncle for advice."
+      },
+      {
+        "situation": "Visiting a Home",
+        "ko": "고모부 댁에 놀러 갔어요.",
+        "en": "I went to visit my uncle's house."
+      }
+    ],
+    "word": "고모부",
+    "meaning": "paternal uncle"
+  },
+  "112": {
+    "id": 112,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Traveling a Long Distance",
+        "ko": "서울에서 부산까지 고속버스를 탔어요.",
+        "en": "I took an express bus from Seoul to Busan."
+      },
+      {
+        "situation": "Purchasing a Ticket",
+        "ko": "고속버스 표를 샀어요.",
+        "en": "I bought an express bus ticket."
+      },
+      {
+        "situation": "Choosing a Mode of Transport",
+        "ko": "고속버스가 기차보다 싸요.",
+        "en": "The express bus is cheaper than the train."
+      },
+      {
+        "situation": "Going to the Terminal",
+        "ko": "고속버스 터미널에서 기다렸어요.",
+        "en": "I waited at the express bus terminal."
+      },
+      {
+        "situation": "Checking the Time",
+        "ko": "고속버스가 몇 시에 출발해요?",
+        "en": "What time does the express bus depart?"
+      },
+      {
+        "situation": "Making Travel Plans",
+        "ko": "고향에 고속버스로 가려고 해요.",
+        "en": "I'm planning to go to my hometown by express bus."
+      },
+      {
+        "situation": "Asking About Arrival Time",
+        "ko": "고속버스로 몇 시간 걸려요?",
+        "en": "How many hours does it take by express bus?"
+      },
+      {
+        "situation": "Making a Reservation",
+        "ko": "고속버스 자리를 미리 예매했어요.",
+        "en": "I reserved an express bus seat in advance."
+      },
+      {
+        "situation": "Talking About Facilities",
+        "ko": "고속버스에 화장실이 있어요.",
+        "en": "The express bus has a restroom."
+      },
+      {
+        "situation": "Returning Home for Holidays",
+        "ko": "추석에 고속버스로 고향에 갔어요.",
+        "en": "I went to my hometown by express bus during Chuseok."
+      }
+    ],
+    "word": "고속버스",
+    "meaning": "express bus"
+  },
+  "113": {
+    "id": 113,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Introducing a Pet",
+        "ko": "저는 고양이를 키워요.",
+        "en": "I keep a cat."
+      },
+      {
+        "situation": "Expressing Love for Animals",
+        "ko": "고양이가 정말 귀여워요.",
+        "en": "Cats are really cute."
+      },
+      {
+        "situation": "Asking About a Pet",
+        "ko": "고양이를 좋아해요?",
+        "en": "Do you like cats?"
+      },
+      {
+        "situation": "Going to the Vet",
+        "ko": "고양이가 아파서 동물병원에 갔어요.",
+        "en": "The cat was sick so I went to the animal hospital."
+      },
+      {
+        "situation": "Feeding an Animal",
+        "ko": "고양이에게 밥을 줬어요.",
+        "en": "I gave food to the cat."
+      },
+      {
+        "situation": "Describing Cat Behavior",
+        "ko": "고양이가 소파에서 자고 있어요.",
+        "en": "The cat is sleeping on the sofa."
+      },
+      {
+        "situation": "Talking About Animal Types",
+        "ko": "고양이와 강아지 중 어떤 게 좋아요?",
+        "en": "Which do you prefer, cats or dogs?"
+      },
+      {
+        "situation": "Talking About Cat Fur",
+        "ko": "우리 고양이 털이 하얘요.",
+        "en": "My cat's fur is white."
+      },
+      {
+        "situation": "Naming Something",
+        "ko": "고양이 이름을 뭐라고 했어요?",
+        "en": "What did you name the cat?"
+      },
+      {
+        "situation": "Cat Sounds",
+        "ko": "고양이가 야옹 하고 울어요.",
+        "en": "The cat meows."
+      }
+    ],
+    "word": "고양이",
+    "meaning": "cat"
+  },
+  "114": {
+    "id": 114,
+    "pos": "명사",
+    "synonyms": [
+      "결함",
+      "문제"
+    ],
+    "examples": [
+      {
+        "situation": "Explaining a Machine Problem",
+        "ko": "컴퓨터가 고장 났어요.",
+        "en": "The computer broke down."
+      },
+      {
+        "situation": "Explaining Car Trouble",
+        "ko": "자동차가 고장 나서 못 왔어요.",
+        "en": "I couldn't come because the car broke down."
+      },
+      {
+        "situation": "Elevator Breakdown",
+        "ko": "엘리베이터가 고장 나서 계단으로 갔어요.",
+        "en": "The elevator was broken, so I took the stairs."
+      },
+      {
+        "situation": "Mobile Phone Problem",
+        "ko": "핸드폰이 고장 나서 수리했어요.",
+        "en": "My phone broke so I had it repaired."
+      },
+      {
+        "situation": "Air Conditioner Breakdown",
+        "ko": "에어컨이 고장 나서 더워요.",
+        "en": "The air conditioner is broken so it's hot."
+      },
+      {
+        "situation": "Refrigerator is Broken",
+        "ko": "냉장고가 고장 났어요.",
+        "en": "The refrigerator broke down."
+      },
+      {
+        "situation": "Visiting a Repair Shop",
+        "ko": "고장 난 시계를 고쳤어요.",
+        "en": "I fixed the broken watch."
+      },
+      {
+        "situation": "TV Problem",
+        "ko": "텔레비전이 고장 나서 볼 수 없어요.",
+        "en": "The TV is broken so I can't watch it."
+      },
+      {
+        "situation": "Door Lock Problem",
+        "ko": "자물쇠가 고장 났어요.",
+        "en": "The door lock is broken."
+      },
+      {
+        "situation": "Washing Machine Trouble",
+        "ko": "세탁기가 고장 나서 빨래를 못 했어요.",
+        "en": "The washing machine broke so I couldn't do laundry."
+      }
+    ],
+    "word": "고장",
+    "meaning": "broken, malfunction"
+  },
+  "115": {
+    "id": 115,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Talking About Ingredients",
+        "ko": "김치를 만들 때 고추를 넣어요.",
+        "en": "We add red pepper when making kimchi."
+      },
+      {
+        "situation": "Describing Spicy Food",
+        "ko": "고추가 많이 들어가서 매워요.",
+        "en": "It's spicy because a lot of red pepper is added."
+      },
+      {
+        "situation": "Supermarket Shopping",
+        "ko": "마트에서 빨간 고추를 샀어요.",
+        "en": "I bought red peppers at the supermarket."
+      },
+      {
+        "situation": "Tending a Vegetable Garden",
+        "ko": "집 앞에 고추를 심었어요.",
+        "en": "I planted red peppers in front of the house."
+      },
+      {
+        "situation": "Describing Food Taste",
+        "ko": "고추를 많이 먹으면 매워요.",
+        "en": "It's spicy if you eat a lot of red pepper."
+      },
+      {
+        "situation": "Describing Korean Food",
+        "ko": "한국 요리에는 고추를 많이 써요.",
+        "en": "Korean cooking uses a lot of red pepper."
+      },
+      {
+        "situation": "Describing Pepper Color",
+        "ko": "고추가 빨갛게 익었어요.",
+        "en": "The red pepper has ripened to red."
+      },
+      {
+        "situation": "Talking About Health",
+        "ko": "고추는 몸에 좋아요.",
+        "en": "Red pepper is good for your health."
+      },
+      {
+        "situation": "Listing Food Ingredients",
+        "ko": "이 음식에는 고추와 마늘이 들어가요.",
+        "en": "This dish contains red pepper and garlic."
+      },
+      {
+        "situation": "Visiting a Market",
+        "ko": "시장에서 고추를 한 봉지 샀어요.",
+        "en": "I bought a bag of red peppers at the market."
+      }
+    ],
+    "word": "고추",
+    "meaning": "red pepper"
+  },
+  "116": {
+    "id": 116,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Making Bibimbap",
+        "ko": "비빔밥에 고추장을 넣었어요.",
+        "en": "I put gochujang in the bibimbap."
+      },
+      {
+        "situation": "Making Side Dishes",
+        "ko": "고추장으로 나물을 무쳤어요.",
+        "en": "I seasoned the vegetables with gochujang."
+      },
+      {
+        "situation": "Ordering Food",
+        "ko": "고추장이 들어간 음식을 주세요.",
+        "en": "Please give me the dish with gochujang."
+      },
+      {
+        "situation": "Supermarket Shopping",
+        "ko": "마트에서 고추장을 샀어요.",
+        "en": "I bought gochujang at the supermarket."
+      },
+      {
+        "situation": "Explaining to a Foreigner",
+        "ko": "고추장은 한국 전통 양념이에요.",
+        "en": "Gochujang is a traditional Korean seasoning."
+      },
+      {
+        "situation": "Describing Food Taste",
+        "ko": "고추장 맛이 매콤해요.",
+        "en": "Gochujang tastes spicy."
+      },
+      {
+        "situation": "A Cooking Recipe",
+        "ko": "이 요리에 고추장을 두 숟가락 넣으세요.",
+        "en": "Put two spoons of gochujang in this dish."
+      },
+      {
+        "situation": "Making Tteokbokki",
+        "ko": "떡볶이는 고추장으로 만들어요.",
+        "en": "Tteokbokki is made with gochujang."
+      },
+      {
+        "situation": "Organizing the Refrigerator",
+        "ko": "냉장고에 고추장이 있어요.",
+        "en": "There is gochujang in the refrigerator."
+      },
+      {
+        "situation": "Giving a Gift",
+        "ko": "한국 고추장을 선물로 드렸어요.",
+        "en": "I gave Korean gochujang as a gift."
+      }
+    ],
+    "word": "고추장",
+    "meaning": "gochujang, red pepper paste"
+  },
+  "117": {
+    "id": 117,
+    "pos": "동사",
+    "synonyms": [
+      "수리하다",
+      "수선하다"
+    ],
+    "examples": [
+      {
+        "situation": "Repairing a Machine",
+        "ko": "고장 난 컴퓨터를 고쳤어요.",
+        "en": "I fixed the broken computer."
+      },
+      {
+        "situation": "Getting Clothes Altered",
+        "ko": "찢어진 옷을 고쳤어요.",
+        "en": "I fixed the torn clothes."
+      },
+      {
+        "situation": "Correcting a Mistake",
+        "ko": "숙제에서 틀린 부분을 고쳤어요.",
+        "en": "I fixed the wrong parts in my homework."
+      },
+      {
+        "situation": "Bicycle Repair",
+        "ko": "자전거 바퀴를 고쳤어요.",
+        "en": "I fixed the bicycle wheel."
+      },
+      {
+        "situation": "Editing a Piece of Writing",
+        "ko": "편지에서 잘못된 글자를 고쳤어요.",
+        "en": "I fixed the wrong characters in the letter."
+      },
+      {
+        "situation": "Repairing a Home",
+        "ko": "문이 잘 안 닫혀서 고쳤어요.",
+        "en": "The door didn't close well so I fixed it."
+      },
+      {
+        "situation": "Breaking a Bad Habit",
+        "ko": "나쁜 습관을 고치려고 노력해요.",
+        "en": "I'm trying to fix my bad habits."
+      },
+      {
+        "situation": "Phone Repair",
+        "ko": "핸드폰 화면을 고쳤어요.",
+        "en": "I fixed the phone screen."
+      },
+      {
+        "situation": "Adjusting a Recipe",
+        "ko": "짠 음식의 간을 고쳤어요.",
+        "en": "I fixed the seasoning of the salty food."
+      },
+      {
+        "situation": "Getting Shoes Repaired",
+        "ko": "신발 밑창이 떨어져서 고쳤어요.",
+        "en": "The shoe sole came off so I fixed it."
+      }
+    ],
+    "word": "고치다",
+    "meaning": "fix"
+  },
+  "118": {
+    "id": 118,
+    "pos": "형용사",
+    "synonyms": [
+      "배고프다"
+    ],
+    "examples": [
+      {
+        "situation": "Before Mealtime",
+        "ko": "배가 고파서 밥을 빨리 먹고 싶어요.",
+        "en": "I'm hungry so I want to eat quickly."
+      },
+      {
+        "situation": "Lunchtime",
+        "ko": "지금 너무 배가 고파요.",
+        "en": "I'm very hungry right now."
+      },
+      {
+        "situation": "Talking to a Friend",
+        "ko": "배가 고프면 과자를 먹어요.",
+        "en": "If I'm hungry, I eat snacks."
+      },
+      {
+        "situation": "Post-workout Hunger",
+        "ko": "운동을 하고 나면 배가 고파요.",
+        "en": "I get hungry after exercising."
+      },
+      {
+        "situation": "After Skipping Breakfast",
+        "ko": "아침을 안 먹어서 배가 고파요.",
+        "en": "I'm hungry because I didn't eat breakfast."
+      },
+      {
+        "situation": "Ordering Food",
+        "ko": "배가 고프니까 뭔가 먹읍시다.",
+        "en": "I'm hungry, so let's eat something."
+      },
+      {
+        "situation": "Difficulty Concentrating While Studying",
+        "ko": "배가 고파서 공부가 안 돼요.",
+        "en": "I can't study because I'm hungry."
+      },
+      {
+        "situation": "Late Night Hunger",
+        "ko": "밤에 자다가 배가 고파서 일어났어요.",
+        "en": "I woke up in the middle of the night because I was hungry."
+      },
+      {
+        "situation": "Children's Expressions",
+        "ko": "배가 고파요. 밥 먹고 싶어요.",
+        "en": "I'm hungry. I want to eat."
+      },
+      {
+        "situation": "Currently on a Diet",
+        "ko": "다이어트 중이라 배가 많이 고파요.",
+        "en": "I'm very hungry because I'm on a diet."
+      }
+    ],
+    "word": "고프다",
+    "meaning": "hungry"
+  },
+  "119": {
+    "id": 119,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Introducing Yourself",
+        "ko": "제 고향은 부산이에요.",
+        "en": "My hometown is Busan."
+      },
+      {
+        "situation": "Talking About Your Hometown",
+        "ko": "고향이 어디예요?",
+        "en": "Where is your hometown?"
+      },
+      {
+        "situation": "Returning Home for Holidays",
+        "ko": "추석에 고향에 갔어요.",
+        "en": "I went to my hometown during Chuseok."
+      },
+      {
+        "situation": "Missing Your Hometown",
+        "ko": "고향 음식이 그리워요.",
+        "en": "I miss my hometown food."
+      },
+      {
+        "situation": "Talking About Hometown Friends",
+        "ko": "고향 친구를 오랜만에 만났어요.",
+        "en": "I met a childhood friend from my hometown after a long time."
+      },
+      {
+        "situation": "Describing Hometown Scenery",
+        "ko": "고향의 산이 예뻐요.",
+        "en": "The mountains of my hometown are beautiful."
+      },
+      {
+        "situation": "Comparing Life in Seoul",
+        "ko": "고향이 서울보다 조용해요.",
+        "en": "My hometown is quieter than Seoul."
+      },
+      {
+        "situation": "Living Away from Home",
+        "ko": "고향을 떠나 서울에서 살아요.",
+        "en": "I left my hometown and live in Seoul."
+      },
+      {
+        "situation": "Introducing Hometown Food",
+        "ko": "고향에 유명한 음식이 있어요.",
+        "en": "There is famous food in my hometown."
+      },
+      {
+        "situation": "Planning a Hometown Visit",
+        "ko": "다음 달에 고향에 돌아갈 거예요.",
+        "en": "I will return to my hometown next month."
+      }
+    ],
+    "word": "고향",
+    "meaning": "hometown"
+  },
+  "120": {
+    "id": 120,
+    "pos": "부사",
+    "synonyms": [
+      "이내",
+      "바로"
+    ],
+    "examples": [
+      {
+        "situation": "Being in a Waiting Situation",
+        "ko": "곧 도착할 거예요.",
+        "en": "I will arrive soon."
+      },
+      {
+        "situation": "Notifying About Appointment Time",
+        "ko": "곧 출발할게요.",
+        "en": "I will leave soon."
+      },
+      {
+        "situation": "Telling Someone to Wait",
+        "ko": "조금만 기다리세요. 곧 준비돼요.",
+        "en": "Wait a little. It will be ready soon."
+      },
+      {
+        "situation": "Predicting Weather Changes",
+        "ko": "곧 비가 올 것 같아요.",
+        "en": "It looks like it will rain soon."
+      },
+      {
+        "situation": "The Season When Spring Arrives",
+        "ko": "곧 봄이 올 거예요.",
+        "en": "Spring will come soon."
+      },
+      {
+        "situation": "Announcing Graduation",
+        "ko": "곧 졸업할 거예요.",
+        "en": "I will graduate soon."
+      },
+      {
+        "situation": "When an Exam is Approaching",
+        "ko": "곧 시험이 있어요.",
+        "en": "There is an exam coming soon."
+      },
+      {
+        "situation": "Meeting a Friend",
+        "ko": "곧 친구를 만날 거예요.",
+        "en": "I will meet my friend soon."
+      },
+      {
+        "situation": "When Food Arrives",
+        "ko": "곧 음식이 나올 거예요.",
+        "en": "The food will come out soon."
+      },
+      {
+        "situation": "In the Process of Recovering",
+        "ko": "곧 나을 거예요.",
+        "en": "You will get better soon."
+      }
+    ],
+    "word": "곧",
+    "meaning": "soon"
+  },
+  "121": {
+    "id": 121,
+    "pos": "명사",
+    "synonyms": [
+      "골목길"
+    ],
+    "examples": [
+      {
+        "situation": "Giving Someone Directions",
+        "ko": "저 골목으로 들어가세요.",
+        "en": "Please go into that alley."
+      },
+      {
+        "situation": "Describing the Neighborhood",
+        "ko": "우리 동네에 골목이 많아요.",
+        "en": "There are many alleys in our neighborhood."
+      },
+      {
+        "situation": "Finding the Way",
+        "ko": "골목을 지나서 오른쪽으로 가세요.",
+        "en": "Go through the alley and turn right."
+      },
+      {
+        "situation": "Childhood Memories",
+        "ko": "어릴 때 골목에서 놀았어요.",
+        "en": "I played in the alley when I was young."
+      },
+      {
+        "situation": "Introducing a Back-alley Restaurant",
+        "ko": "그 골목에 맛있는 식당이 있어요.",
+        "en": "There is a delicious restaurant in that alley."
+      },
+      {
+        "situation": "Talking About Nighttime Roads",
+        "ko": "밤에 골목에 혼자 걷지 마세요.",
+        "en": "Don't walk alone in the alley at night."
+      },
+      {
+        "situation": "Spotting a Cat",
+        "ko": "골목에서 고양이를 봤어요.",
+        "en": "I saw a cat in the alley."
+      },
+      {
+        "situation": "Talking About a Shortcut",
+        "ko": "이 골목으로 가면 빨라요.",
+        "en": "If you go through this alley, it's faster."
+      },
+      {
+        "situation": "Explaining Home Location",
+        "ko": "우리 집은 좁은 골목 안에 있어요.",
+        "en": "My house is inside a narrow alley."
+      },
+      {
+        "situation": "Talking About Cleaning",
+        "ko": "골목을 깨끗이 청소했어요.",
+        "en": "I cleaned the alley."
+      }
+    ],
+    "word": "골목",
+    "meaning": "alley"
+  },
+  "122": {
+    "id": 122,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Introducing a Hobby",
+        "ko": "아버지의 취미는 골프예요.",
+        "en": "My father's hobby is golf."
+      },
+      {
+        "situation": "Talking About Workout Plans",
+        "ko": "주말에 골프를 치러 가요.",
+        "en": "I go to play golf on the weekends."
+      },
+      {
+        "situation": "Asking About Golf Skills",
+        "ko": "골프를 잘 쳐요?",
+        "en": "Are you good at golf?"
+      },
+      {
+        "situation": "Talking About a Golf Course",
+        "ko": "골프장이 여기서 멀어요.",
+        "en": "The golf course is far from here."
+      },
+      {
+        "situation": "Comparing Exercises",
+        "ko": "골프는 배우기 어려워요.",
+        "en": "Golf is difficult to learn."
+      },
+      {
+        "situation": "Choosing a Gift",
+        "ko": "아버지께 골프 장갑을 선물했어요.",
+        "en": "I gave my father golf gloves as a gift."
+      },
+      {
+        "situation": "Talking About Health Exercises",
+        "ko": "골프는 건강에 좋아요.",
+        "en": "Golf is good for your health."
+      },
+      {
+        "situation": "Learning for the First Time",
+        "ko": "골프를 처음 배우기 시작했어요.",
+        "en": "I just started learning golf for the first time."
+      },
+      {
+        "situation": "Exercising with a Friend",
+        "ko": "친구와 같이 골프를 쳤어요.",
+        "en": "I played golf with a friend."
+      },
+      {
+        "situation": "Weather and Exercise",
+        "ko": "날씨가 좋아서 골프를 치기 좋아요.",
+        "en": "The weather is nice so it's good to play golf."
+      }
+    ],
+    "word": "골프",
+    "meaning": "golf"
+  },
+  "123": {
+    "id": 123,
+    "pos": "형용사",
+    "synonyms": [
+      "예쁘다",
+      "아름답다"
+    ],
+    "examples": [
+      {
+        "situation": "Describing a Flower",
+        "ko": "꽃이 정말 고와요.",
+        "en": "The flowers are really beautiful."
+      },
+      {
+        "situation": "Complimenting Someone's Appearance",
+        "ko": "손이 참 고운 사람이에요.",
+        "en": "This person has really beautiful hands."
+      },
+      {
+        "situation": "Describing a Natural Landscape",
+        "ko": "단풍이 곱게 물들었어요.",
+        "en": "The autumn leaves have turned beautifully red."
+      },
+      {
+        "situation": "Complimenting Someone's Voice",
+        "ko": "그 사람은 목소리가 고와요.",
+        "en": "That person has a beautiful voice."
+      },
+      {
+        "situation": "Describing Colors",
+        "ko": "하늘이 참 곱게 물들었어요.",
+        "en": "The sky has turned a beautiful color."
+      },
+      {
+        "situation": "Praising a Child",
+        "ko": "아이의 피부가 정말 고와요.",
+        "en": "The child's skin is really beautiful."
+      },
+      {
+        "situation": "Appreciating a Painting",
+        "ko": "고운 색깔의 그림이에요.",
+        "en": "It's a painting with beautiful colors."
+      },
+      {
+        "situation": "Describing Traditional Clothing",
+        "ko": "한복이 정말 고와요.",
+        "en": "The hanbok is really beautiful."
+      },
+      {
+        "situation": "Describing the Night Sky",
+        "ko": "밤하늘의 별이 곱게 빛나요.",
+        "en": "The stars in the night sky shine beautifully."
+      },
+      {
+        "situation": "Complimenting Someone's Handwriting",
+        "ko": "글씨를 참 곱게 써요.",
+        "en": "You write beautifully."
+      }
+    ],
+    "word": "곱다",
+    "meaning": "beautiful"
+  },
+  "124": {
+    "id": 124,
+    "pos": "명사",
+    "synonyms": [
+      "장소"
+    ],
+    "examples": [
+      {
+        "situation": "Asking About a Place",
+        "ko": "어떤 곳에 가고 싶어요?",
+        "en": "What kind of place do you want to visit?"
+      },
+      {
+        "situation": "Recommending a Good Restaurant",
+        "ko": "이 곳은 음식이 맛있어요.",
+        "en": "This place has delicious food."
+      },
+      {
+        "situation": "Favorite Place",
+        "ko": "제가 좋아하는 곳이에요.",
+        "en": "It's my favorite place."
+      },
+      {
+        "situation": "Finding a Quiet Place",
+        "ko": "조용한 곳에서 공부하고 싶어요.",
+        "en": "I want to study in a quiet place."
+      },
+      {
+        "situation": "Talking About a Destination",
+        "ko": "이 곳은 관광지로 유명해요.",
+        "en": "This place is famous as a tourist destination."
+      },
+      {
+        "situation": "Visiting for the First Time",
+        "ko": "이 곳에 처음 왔어요.",
+        "en": "This is my first time visiting this place."
+      },
+      {
+        "situation": "Describing a Location",
+        "ko": "만날 곳을 정합시다.",
+        "en": "Let's decide on a place to meet."
+      },
+      {
+        "situation": "Talking About a Special Place",
+        "ko": "어릴 때 자주 간 곳이에요.",
+        "en": "It's a place I often went when I was young."
+      },
+      {
+        "situation": "Finding a Convenience Space",
+        "ko": "앉을 곳이 없어요.",
+        "en": "There is nowhere to sit."
+      },
+      {
+        "situation": "A Safe Place",
+        "ko": "안전한 곳에 있어야 해요.",
+        "en": "You need to be in a safe place."
+      }
+    ],
+    "word": "곳",
+    "meaning": "place"
+  },
+  "125": {
+    "id": 125,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "While Exercising",
+        "ko": "공을 멀리 던졌어요.",
+        "en": "I threw the ball far."
+      },
+      {
+        "situation": "Soccer Game",
+        "ko": "공을 차서 골을 넣었어요.",
+        "en": "I kicked the ball and scored a goal."
+      },
+      {
+        "situation": "Children's Toys",
+        "ko": "아이가 공을 가지고 놀아요.",
+        "en": "The child is playing with a ball."
+      },
+      {
+        "situation": "Physical Education Class",
+        "ko": "체육 시간에 공을 가져오세요.",
+        "en": "Please bring a ball to PE class."
+      },
+      {
+        "situation": "Describing Ball Shape",
+        "ko": "공은 둥근 모양이에요.",
+        "en": "A ball is round in shape."
+      },
+      {
+        "situation": "Playing at the Park",
+        "ko": "공원에서 공을 가지고 놀았어요.",
+        "en": "I played with a ball in the park."
+      },
+      {
+        "situation": "Describing Ball Color",
+        "ko": "빨간 공이 예뻐요.",
+        "en": "The red ball is pretty."
+      },
+      {
+        "situation": "Passing Something to a Friend",
+        "ko": "공을 저에게 던져 주세요.",
+        "en": "Throw the ball to me, please."
+      },
+      {
+        "situation": "Basketball Game",
+        "ko": "농구 공이 커요.",
+        "en": "A basketball is big."
+      },
+      {
+        "situation": "Looking for a Ball",
+        "ko": "공이 어디 갔어요?",
+        "en": "Where did the ball go?"
+      }
+    ],
+    "word": "공",
+    "meaning": "ball"
+  },
+  "126": {
+    "id": 126,
+    "pos": "명사",
+    "synonyms": [
+      "자리",
+      "장소"
+    ],
+    "examples": [
+      {
+        "situation": "Tidying the Room",
+        "ko": "방에 공간이 없어서 물건을 버렸어요.",
+        "en": "There was no space in the room, so I threw things away."
+      },
+      {
+        "situation": "In the Office",
+        "ko": "이 사무실은 공간이 넓어서 일하기 좋아요.",
+        "en": "This office has a lot of space, so it's nice to work here."
+      },
+      {
+        "situation": "Loading Luggage",
+        "ko": "차 안에 짐을 넣을 공간이 있어요?",
+        "en": "Is there space in the car for the luggage?"
+      },
+      {
+        "situation": "In a Parking Lot",
+        "ko": "주차할 공간을 찾고 있어요.",
+        "en": "I'm looking for a space to park."
+      },
+      {
+        "situation": "At a Cafe",
+        "ko": "이 카페는 공간이 아늑해서 좋아요.",
+        "en": "This cafe is nice because the space is cozy."
+      },
+      {
+        "situation": "When the Desk is Cluttered",
+        "ko": "책상 위에 공간이 없어서 불편해요.",
+        "en": "It's inconvenient because there's no space on the desk."
+      },
+      {
+        "situation": "Looking for a Home",
+        "ko": "아이들이 놀 수 있는 공간이 필요해요.",
+        "en": "We need a space where the children can play."
+      },
+      {
+        "situation": "At the Library",
+        "ko": "도서관에 공부할 수 있는 공간이 있어요.",
+        "en": "There is a space in the library where you can study."
+      },
+      {
+        "situation": "Getting Directions Inside a Building",
+        "ko": "이 건물에는 휴식 공간이 있어요.",
+        "en": "There is a rest space in this building."
+      },
+      {
+        "situation": "Storing Luggage",
+        "ko": "짐을 보관할 공간이 있으면 좋겠어요.",
+        "en": "I wish there were a place to store the luggage."
+      }
+    ],
+    "word": "공간",
+    "meaning": "space"
+  },
+  "127": {
+    "id": 127,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Opening a Window",
+        "ko": "창문을 열어서 공기를 바꿔요.",
+        "en": "I open the window to change the air."
+      },
+      {
+        "situation": "Taking a Walk Outside",
+        "ko": "아침에 공기가 맑고 신선해요.",
+        "en": "The air is clear and fresh in the morning."
+      },
+      {
+        "situation": "In the City",
+        "ko": "도시의 공기는 시골보다 나빠요.",
+        "en": "The air in the city is worse than in the countryside."
+      },
+      {
+        "situation": "When the Room Feels Stuffy",
+        "ko": "방 안의 공기가 나빠서 환기를 해요.",
+        "en": "The air inside the room is bad, so I ventilate it."
+      },
+      {
+        "situation": "On a Winter Morning",
+        "ko": "겨울에는 공기가 차가워요.",
+        "en": "The air is cold in winter."
+      },
+      {
+        "situation": "At a Travel Destination",
+        "ko": "이곳은 공기가 깨끗해서 기분이 좋아요.",
+        "en": "The air here is clean, so I feel good."
+      },
+      {
+        "situation": "After Exercising",
+        "ko": "운동하고 나서 신선한 공기를 마셨어요.",
+        "en": "I breathed in fresh air after exercising."
+      },
+      {
+        "situation": "On a Spring Day",
+        "ko": "봄 공기가 따뜻하고 좋아요.",
+        "en": "The spring air is warm and nice."
+      },
+      {
+        "situation": "Near a Factory",
+        "ko": "공장 근처라서 공기가 좋지 않아요.",
+        "en": "The air is not good because it's near a factory."
+      },
+      {
+        "situation": "Turning on the Air Conditioner",
+        "ko": "에어컨을 켜서 공기를 시원하게 했어요.",
+        "en": "I turned on the air conditioner to cool the air."
+      }
+    ],
+    "word": "공기",
+    "meaning": "air"
+  },
+  "128": {
+    "id": 128,
+    "pos": "명사",
+    "synonyms": [],
+    "examples": [
+      {
+        "situation": "Asking About Someone's Job",
+        "ko": "저는 시청에서 일하는 공무원이에요.",
+        "en": "I am a public official working at city hall."
+      },
+      {
+        "situation": "Talking About Your Aspirations",
+        "ko": "제 꿈은 공무원이 되는 거예요.",
+        "en": "My dream is to become a public official."
+      },
+      {
+        "situation": "Preparing for Employment",
+        "ko": "오빠는 공무원 시험을 준비하고 있어요.",
+        "en": "My older brother is preparing for the civil service exam."
+      },
+      {
+        "situation": "At the Service Center",
+        "ko": "공무원에게 서류를 제출했어요.",
+        "en": "I submitted the documents to the public official."
+      },
+      {
+        "situation": "Talking About Job Stability",
+        "ko": "공무원은 안정적인 직업이에요.",
+        "en": "Being a public official is a stable job."
+      },
+      {
+        "situation": "Talking with Parents",
+        "ko": "부모님은 제가 공무원이 되길 바라세요.",
+        "en": "My parents want me to become a public official."
+      },
+      {
+        "situation": "Having a Conversation with a Friend",
+        "ko": "친구는 공무원 시험에 합격했어요.",
+        "en": "My friend passed the civil service exam."
+      },
+      {
+        "situation": "Watching the News",
+        "ko": "공무원들이 시민을 도와주고 있어요.",
+        "en": "Public officials are helping citizens."
+      },
+      {
+        "situation": "At a Government Office",
+        "ko": "친절한 공무원이 안내해 줬어요.",
+        "en": "A kind public official guided me."
+      },
+      {
+        "situation": "Introducing a Job",
+        "ko": "공무원은 나라 일을 하는 사람이에요.",
+        "en": "A public official is someone who works for the country."
+      }
+    ],
+    "word": "공무원",
+    "meaning": "public official"
+  },
+  "129": {
+    "id": 129,
+    "pos": "명사",
+    "synonyms": [
+      "학습"
+    ],
+    "examples": [
+      {
+        "situation": "Coming Back from School",
+        "ko": "학교에서 돌아와서 바로 공부를 해요.",
+        "en": "I study right after coming home from school."
+      },
+      {
+        "situation": "The Day Before an Exam",
+        "ko": "시험이 내일이라서 공부를 열심히 했어요.",
+        "en": "I studied hard because the exam is tomorrow."
+      },
+      {
+        "situation": "Chatting with a Friend",
+        "ko": "오늘 공부가 너무 많아서 피곤해요.",
+        "en": "I'm tired because I have so much studying today."
+      },
+      {
+        "situation": "Speaking to Parents",
+        "ko": "공부가 어려워서 도움이 필요해요.",
+        "en": "Studying is difficult, so I need help."
+      },
+      {
+        "situation": "At the Library",
+        "ko": "도서관에서 공부하면 집중이 잘 돼요.",
+        "en": "I can concentrate well when I study at the library."
+      },
+      {
+        "situation": "After School",
+        "ko": "방과 후에 두 시간 동안 공부를 해요.",
+        "en": "I study for two hours after school."
+      },
+      {
+        "situation": "Learning Korean",
+        "ko": "한국어 공부가 재미있어요.",
+        "en": "Studying Korean is fun."
+      },
+      {
+        "situation": "At a Cram School",
+        "ko": "학원에서 수학 공부를 해요.",
+        "en": "I study math at the academy."
+      },
+      {
+        "situation": "During Summer Vacation",
+        "ko": "방학 동안 공부를 많이 할 거예요.",
+        "en": "I will study a lot during the vacation."
+      },
+      {
+        "situation": "Alone at Night",
+        "ko": "밤에 혼자 공부하는 게 좋아요.",
+        "en": "I like studying alone at night."
+      }
+    ],
+    "word": "공부",
+    "meaning": "study"
+  },
+  "130": {
+    "id": 130,
+    "pos": "동사",
+    "synonyms": [
+      "배우다",
+      "학습하다"
+    ],
+    "examples": [
+      {
+        "situation": "Describing School Life",
+        "ko": "저는 매일 두 시간씩 공부해요.",
+        "en": "I study for two hours every day."
+      },
+      {
+        "situation": "Learning Korean",
+        "ko": "한국어를 공부하는 게 즐거워요.",
+        "en": "It's enjoyable to study Korean."
+      },
+      {
+        "situation": "Getting Ready for an Exam",
+        "ko": "시험을 위해 열심히 공부하고 있어요.",
+        "en": "I'm studying hard for the exam."
+      },
+      {
+        "situation": "Recommending to a Friend",
+        "ko": "같이 도서관에서 공부해요.",
+        "en": "Let's study together at the library."
+      },
+      {
+        "situation": "After School",
+        "ko": "학교가 끝나고 집에서 공부해요.",
+        "en": "I study at home after school."
+      },
+      {
+        "situation": "Talking About Future Plans",
+        "ko": "대학교에서 경제학을 공부하고 싶어요.",
+        "en": "I want to study economics at university."
+      },
+      {
+        "situation": "Talking About Today's Schedule",
+        "ko": "오늘은 수학과 영어를 공부했어요.",
+        "en": "Today I studied math and English."
+      },
+      {
+        "situation": "Talking About Study Habits",
+        "ko": "저는 아침에 일찍 일어나서 공부해요.",
+        "en": "I wake up early in the morning and study."
+      },
+      {
+        "situation": "Making an Appointment with a Friend",
+        "ko": "오늘 저녁에 같이 공부할 수 있어요?",
+        "en": "Can we study together this evening?"
+      },
+      {
+        "situation": "At a Cafe",
+        "ko": "카페에서 혼자 공부하는 게 좋아요.",
+        "en": "I like studying alone at a cafe."
+      }
+    ],
+    "word": "공부하다",
+    "meaning": "study"
+  }
+}

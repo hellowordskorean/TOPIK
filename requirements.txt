@@ -10,3 +10,4 @@ google-api-python-client>=2.90.0
 eng-to-ipa>=0.0.2
 korean-romanizer>=0.0.5
 flask>=3.0.0
+replicate>=0.30.0

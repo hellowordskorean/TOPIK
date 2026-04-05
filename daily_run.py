@@ -22,11 +22,26 @@ from pathlib import Path
 
 # ─── 설정 ────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "data" / "LanguageTest" / "words_db.json"
-LOG_PATH = BASE_DIR / "logs" / "uploads.json"
+LOG_DIR  = BASE_DIR / "logs"
 OUTPUT_DIR = BASE_DIR / "output"
-LOG_DIR = BASE_DIR / "logs"
 QUEUE_FILE = BASE_DIR / "logs" / "render_queue.json"
+
+# 언어별 DB 파일 (--lang 인수로 선택)
+_DB_FILES = {
+    "EN": "words_db.json",
+    "JP": "words_db_jp.json",
+    "ES": "words_db_es.json",
+    "CN": "words_db_cn.json",
+    "VN": "words_db_vn.json",
+}
+
+def get_db_path(lang: str = "EN") -> Path:
+    filename = _DB_FILES.get(lang.upper(), "words_db.json")
+    return BASE_DIR.parent / "data" / "LanguageTest" / filename
+
+def get_log_path(lang: str = "EN") -> Path:
+    suffix = f"_{lang.lower()}" if lang.upper() != "EN" else ""
+    return LOG_DIR / f"uploads{suffix}.json"
 
 # 유튜브 업로드 예약 (실행 후 N시간 뒤 공개)
 PUBLISH_DELAY_HOURS = 3   # 오전 6시 실행 → 오전 9시 공개
@@ -45,9 +60,10 @@ def log(msg: str):
     with open(LOG_DIR / "daily_run.log", "a") as f:
         f.write(line + "\n")
 
-def load_log() -> dict:
-    if LOG_PATH.exists():
-        with open(LOG_PATH) as f:
+def load_log(log_path: Path = None) -> dict:
+    p = log_path or (LOG_DIR / "uploads.json")
+    if p.exists():
+        with open(p) as f:
             return json.load(f)
     return {"uploaded": [], "last_day": 0, "last_word_id": 0}
 
@@ -99,38 +115,50 @@ def wait_for_render(word_id: int) -> str:
 
 
 def send_notification(msg: str):
-    """슬랙/텔레그램 알림 (선택사항)"""
-    # 텔레그램 예시:
-    # TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-    # TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-    # if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-    #     import requests
-    #     requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-    #                   data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-    pass
+    """텔레그램 알림 전송 (.env에 TELEGRAM_TOKEN, TELEGRAM_CHAT_ID 설정 시 활성화)"""
+    token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return  # 설정 안 됨 → 조용히 건너뜀
+    try:
+        import urllib.request
+        import urllib.parse
+        data = urllib.parse.urlencode({"chat_id": chat_id, "text": msg}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=data,
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        log(f"텔레그램 알림 실패 (무시됨): {e}")
 
 # ─── 메인 ────────────────────────────────────────────────────
-def main():
+def main(lang: str = "EN"):
     log("=" * 50)
-    log("TOPIK 유튜브 자동화 시작")
-    
+    log(f"TOPIK 유튜브 자동화 시작 [{lang}]")
+
+    # 언어별 경로 설정
+    db_path   = get_db_path(lang)
+    log_path  = get_log_path(lang)
+
     # 환경 변수 체크
     required_env = ["GOOGLE_APPLICATION_CREDENTIALS", "ANTHROPIC_API_KEY"]
     for env in required_env:
         if not os.environ.get(env):
-            log(f"⚠️ 환경변수 없음: {env} (계속 진행)")
-    
+            log(f"환경변수 없음: {env} (계속 진행)")
+
     # DB 로드
-    if not DB_PATH.exists():
-        log(f"❌ 단어 DB 없음: {DB_PATH}")
+    if not db_path.exists():
+        log(f"단어 DB 없음: {db_path}")
         sys.exit(1)
-    
-    with open(DB_PATH) as f:
+
+    with open(db_path) as f:
         db = json.load(f)
-    log(f"단어 DB 로드: {len(db)}개")
-    
+    log(f"단어 DB 로드: {len(db)}개 [{lang}]")
+
     # 오늘 단어 선택
-    upload_log = load_log()
+    upload_log = load_log(log_path)
     word = pick_today_word(db, upload_log)
     log(f"오늘의 단어: {word['word']} = {word['meaning']} (ID: {word['id']})")
     
@@ -208,7 +236,7 @@ def main():
             "uploaded_at": datetime.now().isoformat(),
             "publish_at": publish_at.isoformat() if publish_at else "immediate",
         })
-        save_upload_log(upload_log, str(LOG_PATH))
+        save_upload_log(upload_log, str(log_path))
         
         success = True
         msg = f"✅ Day #{day_number}: {word['word']} = {word['meaning']}\nhttps://youtube.com/watch?v={video_id}"
@@ -229,4 +257,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse as _ap
+    _parser = _ap.ArgumentParser(description="TOPIK 유튜브 자동화")
+    _parser.add_argument("--lang", default="EN",
+                         choices=["EN", "JP", "ES", "CN", "VN"],
+                         help="대상 언어 (기본: EN)")
+    _args = _parser.parse_args()
+    main(lang=_args.lang)

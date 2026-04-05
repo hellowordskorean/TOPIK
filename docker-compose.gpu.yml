@@ -18,6 +18,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
     volumes:
       - .:/app
+      - ../data:/app/data
     deploy:
       resources:
         reservations:

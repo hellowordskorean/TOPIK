@@ -426,7 +426,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="유튜브 업로드")
     parser.add_argument("--video", required=True, help="MP4 파일 경로")
     parser.add_argument("--word-id", type=int, required=True, help="단어 ID")
-    parser.add_argument("--db", default="data/LanguageTest/words_db.json")
+    parser.add_argument("--db", default="/app/data/LanguageTest/words_db.json")
     parser.add_argument("--log", default="logs/uploads.json")
     parser.add_argument("--schedule-hours", type=int, default=0,
                         help="N시간 후 예약 발행 (0=즉시)")
