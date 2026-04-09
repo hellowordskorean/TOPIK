@@ -481,7 +481,7 @@ def _build_char_instruction(situation: dict) -> str:
         f"Proportions: very large round head (head ≈ body height), short chubby body, "
         f"extremely short stubby legs, short rounded arms. Bare paws, no footwear.\n"
         "LEFT character (Korean local): design a NEW cute chibi animal character "
-        "in the SAME warm watercolor style as the reference sheets — "
+        "in the SAME illustration art style as the reference sheets — "
         "choose any animal species that fits the role naturally. "
         "SAME proportions: giant round head, tiny stubby legs, chubby body. "
         "Bare paws, no footwear.\n\n"
