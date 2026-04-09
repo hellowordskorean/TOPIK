@@ -1100,9 +1100,10 @@ def _reinforce_style(prompt: str) -> str:
     """재생성 시 스타일 강화"""
     return (
         prompt
-        + " STYLE FIX: flat vector illustration style only — "
-        "NOT watercolor, NOT oil painting, NOT photorealistic. "
-        "Warm light pastel background, consistent clean outlines."
+        + " STYLE FIX: warm watercolor and pencil sketch style ONLY — "
+        "soft loose brushwork, visible watercolor paper texture, "
+        "gentle pencil outlines (NOT thick black ink), "
+        "pastel palette with peach/cream/sage tones, NO flat vector, NO cel-shading."
     )
 
 
