@@ -143,10 +143,10 @@ _WEBTOON_STYLE_BASE = (
     "watercolor wash backgrounds that are slightly soft and misty, "
 
     # 색상 팔레트
-    "warm peach and cream sky, muted earth tones, "
-    "soft golden hour lighting throughout the scene, "
-    "pastel palette: warm peach, dusty rose, sage green, muted yellow, soft blue-gray, "
-    "NO neon colors, NO dark or black-dominant areas, "
+    "soft natural daylight, clean warm-white ambient light (NOT golden hour), "
+    "pastel palette: ivory white, soft sky-blue, dusty rose, sage green, "
+    "light lavender, muted mint — avoid yellow and orange tones, "
+    "NO neon colors, NO dark or black-dominant areas, NO yellow-dominant tinting, "
 
     # 캐릭터 비율 (엄격히 고정)
     "cute chibi anthropomorphic animal characters, "
