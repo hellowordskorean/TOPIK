@@ -301,10 +301,9 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
 
     if anthropic_client is None:
         return (
-            f"A soft minimalist Korean {sit_en.lower()} setting with warm cozy atmosphere. "
-            f"A {local_char} stands on the left, "
-            f"and a {learner_char} stands on the right, "
-            f"both with cute chibi proportions and friendly expressions, ready to interact."
+            f"A modern Korean {sit_en.lower()} setting. "
+            f"A cute {learner_char} and a {local_char} "
+            f"with chibi proportions and friendly expressions, ready to interact."
         )
 
     try:
@@ -338,10 +337,9 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
     except Exception as e:
         print(f"  [Claude 인트로 장면 실패: {e}] fallback 사용")
         return (
-            f"A cozy soft Korean {sit_en.lower()} background with warm muted colors. "
-            f"A cute {local_char} stands on the left, "
-            f"and a cute {learner_char} stands on the right, "
-            f"both with round chibi faces, button eyes, tiny noses, ready to begin their interaction."
+            f"A cozy modern Korean {sit_en.lower()} background. "
+            f"A cute {local_char} and a cute {learner_char} "
+            f"with round chibi faces, button eyes, tiny noses, ready to interact."
         )
 
 
@@ -362,14 +360,13 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client) -> str:
 
     if anthropic_client is None:
         action = (
-            f"The {learner_char} on the right gestures expressively while saying '{my_en}', "
-            f"and the {local_char} on the left responds warmly."
+            f"The {learner_char} gestures expressively while saying '{my_en}', "
+            f"and the {local_char} responds warmly."
         )
         return f"{base_scene} {action}".strip() if base_scene else (
-            f"Inside a cozy Korean {sit_en.lower()}, a cute {learner_char} on the right "
-            f"is speaking with an expressive gesture matching '{my_en}'. "
-            f"A {local_char} on the left responds warmly, "
-            f"both cute animal characters visible from head to waist with chibi proportions."
+            f"Inside a modern Korean {sit_en.lower()}, a cute {learner_char} "
+            f"gestures expressively matching '{my_en}'. "
+            f"A {local_char} responds warmly, both cute chibi animal characters."
         )
 
     try:
@@ -399,11 +396,11 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client) -> str:
     except Exception as e:
         print(f"  [Claude 대화 장면 실패: {e}] fallback 사용")
         action = (
-            f"The {learner_char} on the right makes an expressive cute gesture, "
-            f"and the {local_char} on the left responds with a warm friendly smile."
+            f"The {learner_char} makes an expressive cute gesture, "
+            f"and the {local_char} responds with a warm friendly smile."
         )
         return f"{base_scene} {action}".strip() if base_scene else (
-            f"Inside a soft cozy Korean {sit_en.lower()}, two cute animal characters interact. "
+            f"Inside a modern Korean {sit_en.lower()}, cute animal characters interact. "
             + action
         )
 
@@ -474,17 +471,10 @@ def _build_char_instruction(situation: dict) -> str:
     outfit = _get_main_char_outfit(situation)
     return (
         "CHARACTER REFERENCE IMAGES ARE PROVIDED ABOVE.\n"
-        f"RIGHT character (protagonist/learner): the RED PANDA from the first reference image. "
-        f"Draw it with IDENTICAL design — same orange-red fur, dark brown body, striped ringed tail, "
-        f"white facial markings, round dark eyes. "
-        f"Outfit for this situation: {outfit}. "
-        f"Proportions: very large round head (head ≈ body height), short chubby body, "
-        f"extremely short stubby legs, short rounded arms. Bare paws, no footwear.\n"
-        "LEFT character (Korean local): design a NEW cute chibi animal character "
-        "in the SAME illustration art style as the reference sheets — "
-        "choose any animal species that fits the role naturally. "
-        "SAME proportions: giant round head, tiny stubby legs, chubby body. "
-        "Bare paws, no footwear.\n\n"
+        f"PROTAGONIST: the RED PANDA from the first reference image — "
+        f"use its exact design (orange-red fur, dark brown body, striped tail, white facial markings). "
+        f"Outfit for this scene: {outfit}.\n"
+        "Supporting characters (if any): design new cute chibi animals in the same illustration style.\n\n"
     )
 
 
