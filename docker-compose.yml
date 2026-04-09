@@ -34,6 +34,8 @@ services:
       - ./verify_illustrations.py:/app/verify_illustrations.py
       - ./audit.py:/app/audit.py
       - ./make_thumbnail.py:/app/make_thumbnail.py
+      - ./make_video_phrases.py:/app/make_video_phrases.py
+      - ./generate_phrase_illustrations.py:/app/generate_phrase_illustrations.py
 
     # Synology는 메모리 제한 권장 (영상 렌더링 시 RAM 많이 사용)
     mem_limit: 3g
@@ -63,5 +65,7 @@ services:
       - ./assets:/app/assets          # 일러스트 생성 쓰기 필요
       - ./secrets:/app/secrets:ro
       - ./make_video.py:/app/make_video.py
+      - ./make_video_phrases.py:/app/make_video_phrases.py
       - ./generate_illustrations.py:/app/generate_illustrations.py
+      - ./generate_phrase_illustrations.py:/app/generate_phrase_illustrations.py
       - ./dashboard.py:/app/dashboard.py
