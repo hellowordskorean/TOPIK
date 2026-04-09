@@ -65,6 +65,21 @@ _LANG_NAMES = {
     "ES": "Español",
 }
 
+_PILL_TEXT = {
+    "EN": "KOREAN \u2192 ENGLISH",
+    "JP": "\u97d3\u56fd\u8a9e \u2192 \u65e5\u672c\u8a9e",
+    "CN": "\u97e9\u8bed \u2192 \u4e2d\u6587",
+    "VN": "Ti\u1ebfng H\u00e0n \u2192 Ti\u1ebfng Vi\u1ec7t",
+    "ES": "Coreano \u2192 Espa\u00f1ol",
+}
+
+def _lang_font(lang_code: str, size: int) -> ImageFont.FreeTypeFont:
+    if lang_code == "JP":
+        return get_font("jp", size)
+    elif lang_code == "CN":
+        return get_font("cn", size)
+    return get_font("english", size)
+
 def _detect_fonts():
     candidates = {
         "korean_bold": ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
@@ -77,6 +92,18 @@ def _detect_fonts():
                         "C:/Windows/Fonts/arialbd.ttf"],
         "english":     ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                         "C:/Windows/Fonts/arial.ttf"],
+        "jp":          ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                        "C:/Windows/Fonts/NotoSansJP-Regular.otf",
+                        "C:/Windows/Fonts/msgothic.ttc",
+                        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+                        "C:/Windows/Fonts/malgun.ttf"],
+        "cn":          ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                        "C:/Windows/Fonts/msyh.ttc",
+                        "C:/Windows/Fonts/simsun.ttc",
+                        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+                        "C:/Windows/Fonts/malgun.ttf"],
     }
     result = {}
     for key, paths in candidates.items():
@@ -130,12 +157,12 @@ def make_thumbnail(word: dict, output_path: str):
     img  = Image.new("RGB", (TW, TH), C["bg"])
     draw = ImageDraw.Draw(img)
 
-    lang_code  = word.get("language", "EN")
+    lang_code  = word.get("language", "EN").upper()
     lang_color = _LANG_COLORS.get(lang_code, C["accent"])
-    lang_name  = _LANG_NAMES.get(lang_code, lang_code)
+    pill_text  = _PILL_TEXT.get(lang_code, "KOREAN \u2192 ENGLISH")
     cx         = TW // 2
 
-    # ── 흰 카드 (전체 배경) ───────────────────────────────────
+    # ── 흰 카드 ──────────────────────────────────────────────
     card_x, card_y = 22, 28
     card_w = TW - card_x * 2   # 676
     card_h = 1210
@@ -143,68 +170,79 @@ def make_thumbnail(word: dict, output_path: str):
                   radius=44, fill=C["card_bg"])
     draw = ImageDraw.Draw(img)
 
-    # ── ① 언어 배지 (대형 pill, 상단 중앙) ───────────────────
-    font_lang  = get_font("english_bold", 64)
-    lb         = draw.textbbox((0, 0), lang_name, font=font_lang)
-    lbw        = lb[2] - lb[0] + 80   # 좌우 패딩
-    lbh        = lb[3] - lb[1] + 28   # 상하 패딩
-    lbx        = cx - lbw // 2
-    lby        = card_y + 38
-    lang_ov    = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(lang_ov).rounded_rectangle(
-        [lbx, lby, lbx + lbw, lby + lbh],
-        radius=lbh // 2, fill=(*lang_color, 255)
-    )
-    img.paste(lang_ov, mask=lang_ov.split()[3])
-    draw = ImageDraw.Draw(img)
-    draw.text((cx, lby + lbh // 2), lang_name,
-              font=font_lang, fill=C["card_bg"], anchor="mm")
-
-    # ── ② TOPIK LV.X ─────────────────────────────────────────
-    font_topik = get_font("english_bold", 44)
-    topik_y    = lby + lbh + 52
-    draw.text((cx, topik_y), f"TOPIK  LV.{word['level']}",
+    # ── ① TOPIK LV.X ─────────────────────────────────────────
+    font_topik = get_font("english_bold", 36)
+    topik_cy   = card_y + 75
+    draw.text((cx, topik_cy), f"TOPIK  LV.{word['level']}",
               font=font_topik, fill=C["accent_warm"], anchor="mm")
 
-    # ── ③ 단어 ID ─────────────────────────────────────────────
-    font_id = get_font("english_bold", 38)
-    id_y    = topik_y + 54
-    draw.text((cx, id_y), f"{word['id']:04d}",
+    # ── ② 단어 ID ─────────────────────────────────────────────
+    font_id = get_font("english_bold", 44)
+    id_cy   = topik_cy + 55
+    draw.text((cx, id_cy), f"{word['id']:03d}",
               font=font_id, fill=C["accent_warm"], anchor="mm")
 
-    # ── ④ 한국어 단어 (초대형) ───────────────────────────────
+    # ── ③ 한국어 단어 (초대형) ───────────────────────────────
     word_text = word["word"]
     n = len(word_text)
-    if   n == 1: word_size = 280
-    elif n == 2: word_size = 240
-    elif n == 3: word_size = 200
-    elif n == 4: word_size = 168
-    elif n == 5: word_size = 140
-    elif n == 6: word_size = 118
-    else:        word_size = 100
+    if   n == 1: word_size = 260
+    elif n == 2: word_size = 220
+    elif n == 3: word_size = 190
+    elif n == 4: word_size = 158
+    elif n == 5: word_size = 132
+    elif n == 6: word_size = 112
+    else:        word_size = 96
 
     font_word = get_font("korean_bold", word_size)
-    # 카드 너비 초과 시 축소
     wb = draw.textbbox((0, 0), word_text, font=font_word)
-    while wb[2] - wb[0] > card_w - 50 and word_size > 60:
+    while wb[2] - wb[0] > card_w - 50 and word_size > 64:
         word_size -= 8
         font_word = get_font("korean_bold", word_size)
         wb = draw.textbbox((0, 0), word_text, font=font_word)
 
-    word_y = id_y + 60 + word_size // 2 + 10
-    draw.text((cx, word_y), word_text,
+    word_cy  = id_cy + 52 + word_size // 2
+    draw.text((cx, word_cy), word_text,
               font=font_word, fill=C["accent"], anchor="mm")
+    word_bot = word_cy + word_size // 2
 
-    # ── ⑤ 일러스트 카드 ──────────────────────────────────────
-    ill_margin = 26
-    ill_x      = card_x + ill_margin          # 48
-    ill_top    = word_y + word_size // 2 + 30  # 단어 아래 30px
-    ill_w      = card_w - ill_margin * 2       # 624
-    ill_bot    = card_y + card_h - 26          # 카드 하단 26px 여백
-    ill_h      = ill_bot - ill_top
+    # ── ④ 뜻 (meaning) ───────────────────────────────────────
+    font_meaning = _lang_font(lang_code, 44)
+    meaning_cy   = word_bot + 38
+    draw.text((cx, meaning_cy), word["meaning"],
+              font=font_meaning, fill=C["text_muted"], anchor="mm")
+    mb = draw.textbbox((0, 0), word["meaning"], font=font_meaning)
+    meaning_bot = meaning_cy + (mb[3] - mb[1]) // 2
 
-    # 일러스트 배경 (살짝 다른 크림)
-    _rounded_rect(img, ill_x, ill_top, ill_x + ill_w, ill_bot,
+    # ── ⑤ 언어 pill 배너 ─────────────────────────────────────
+    pill_top = meaning_bot + 44
+    pill_h   = 80
+    pill_x1  = card_x + 22
+    pill_x2  = card_x + card_w - 22
+    pill_ov  = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(pill_ov).rounded_rectangle(
+        [pill_x1, pill_top, pill_x2, pill_top + pill_h],
+        radius=pill_h // 2, fill=(*lang_color, 255)
+    )
+    img.paste(pill_ov, mask=pill_ov.split()[3])
+    draw = ImageDraw.Draw(img)
+
+    if lang_code == "JP":
+        font_pill = get_font("jp", 40)
+    elif lang_code == "CN":
+        font_pill = get_font("cn", 40)
+    else:
+        font_pill = get_font("english_bold", 40)
+    draw.text((cx, pill_top + pill_h // 2), pill_text,
+              font=font_pill, fill=(255, 255, 255, 255), anchor="mm")
+
+    # ── ⑥ 일러스트 카드 ──────────────────────────────────────
+    ill_x   = card_x + 22
+    ill_top_abs = pill_top + pill_h + 24
+    ill_w   = card_w - 44
+    ill_bot = card_y + card_h - 22
+    ill_h   = ill_bot - ill_top_abs
+
+    _rounded_rect(img, ill_x, ill_top_abs, ill_x + ill_w, ill_bot,
                   radius=32, fill=C["ill_bg"])
     draw = ImageDraw.Draw(img)
 
@@ -212,34 +250,24 @@ def make_thumbnail(word: dict, output_path: str):
     if ill_path:
         try:
             ill = Image.open(ill_path).convert("RGBA")
-            # 정사각형으로 크롭 후 카드에 맞게 fit
             iw, ih = ill.size
             sq     = min(iw, ih)
             left   = (iw - sq) // 2
             top    = (ih - sq) // 2
             ill    = ill.crop((left, top, left + sq, top + sq))
-            # ill_h 기준으로 중앙 배치
             fit    = min(ill_w, ill_h)
             px     = ill_x + (ill_w - fit) // 2
-            py     = ill_top + (ill_h - fit) // 2
+            py     = ill_top_abs + (ill_h - fit) // 2
             _paste_rounded(img, ill, px, py, fit, fit, radius=24)
         except Exception as e:
             print(f"  [WARN] 일러스트 로드 실패: {e}")
-            _draw_placeholder(img, draw, ill_x, ill_top, ill_w, ill_h, word_text)
+            _draw_placeholder(img, draw, ill_x, ill_top_abs, ill_w, ill_h, word_text)
     else:
-        _draw_placeholder(img, draw, ill_x, ill_top, ill_w, ill_h, word_text)
-
-    draw = ImageDraw.Draw(img)
-
-    # ── ⑥ 하단 태그라인 ──────────────────────────────────────
-    font_tag = get_font("english", 22)
-    tag_y    = card_y + card_h + (TH - card_y - card_h) // 2
-    draw.text((cx, tag_y), "TOPIK Korean Vocabulary",
-              font=font_tag, fill=C["text_muted"], anchor="mm")
+        _draw_placeholder(img, draw, ill_x, ill_top_abs, ill_w, ill_h, word_text)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     img.save(output_path, "PNG", optimize=True)
-    print(f"  ✓ {word['word']} ({lang_name}) → {output_path}")
+    print(f"  \u2713 {word['word']} ({lang_code}) \u2192 {output_path}")
 
 
 def _draw_placeholder(img, draw, x, y, w, h, text):

@@ -546,15 +546,6 @@ _LANG_LABEL = {
     "ES": "Español",
 }
 
-# 대상 언어로 "한국어"를 표기하는 방식
-_KOREAN_IN_LANG = {
-    "EN": "Korean",
-    "JP": "韓国語",
-    "CN": "韩语",
-    "VN": "Tiếng Hàn",
-    "ES": "Coreano",
-}
-
 _THUMB_LANG_COLORS = {
     "EN": (50,  92, 200),
     "JP": (219, 68,  85),
@@ -563,32 +554,125 @@ _THUMB_LANG_COLORS = {
     "ES": (230, 126, 34),
 }
 
+# pill 배너 텍스트: 각 언어로 "한국어 → 대상언어"
+_THUMB_PILL_TEXT = {
+    "EN": "KOREAN \u2192 ENGLISH",
+    "JP": "\u97d3\u56fd\u8a9e \u2192 \u65e5\u672c\u8a9e",
+    "CN": "\u97e9\u8bed \u2192 \u4e2d\u6587",
+    "VN": "Ti\u1ebfng H\u00e0n \u2192 Ti\u1ebfng Vi\u1ec7t",
+    "ES": "Coreano \u2192 Espa\u00f1ol",
+}
+
+_THUMB_ILL_BG = (245, 239, 231)
+
 def render_thumbnail(src_frame: str, dest_path: str, word: dict):
-    """썸네일: 상단 컬러 바에 대상 언어로 'Korean' 표기"""
-    img = Image.open(src_frame).convert("RGBA")
-    cx = W // 2
+    """썸네일: TOPIK/ID/단어/뜻/언어pill/일러스트 레이아웃 (처음부터 생성)"""
+    img = Image.new("RGBA", (W, H), (*C["bg"], 255))
+    cx  = W // 2
 
-    lang_code     = word.get("language", "EN").upper()
-    lang_color    = _THUMB_LANG_COLORS.get(lang_code, (50, 92, 200))
-    korean_label  = _KOREAN_IN_LANG.get(lang_code, "Korean")
+    lang_code  = word.get("language", "EN").upper()
+    lang_color = _THUMB_LANG_COLORS.get(lang_code, (50, 92, 200))
+    pill_text  = _THUMB_PILL_TEXT.get(lang_code, "KOREAN \u2192 ENGLISH")
 
-    # ── 상단 컬러 바 (lang_color, 하단 모서리만 라운드) ──────
-    bar_h = 170
-    bar_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    bd = ImageDraw.Draw(bar_ov)
-    # 둥근 사각형으로 바 그리기 (상단은 꽉 채워 각지게)
-    bd.rounded_rectangle([0, 0, W, bar_h], radius=60, fill=(*lang_color, 255))
-    bd.rectangle([0, 0, W, 60], fill=(*lang_color, 255))  # 상단 모서리 직각으로
-    img = Image.alpha_composite(img, bar_ov)
+    # ── 흰 카드 ──────────────────────────────────────────────
+    cx1, cy1 = 33, 42
+    cw = W - cx1 * 2     # 1014
+    ch = H - cy1 - 33    # 1845
+    card_ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(card_ov).rounded_rectangle(
+        [cx1, cy1, cx1 + cw, cy1 + ch], radius=66, fill=(*C["card_bg"], 255)
+    )
+    img = Image.alpha_composite(img, card_ov)
     draw = ImageDraw.Draw(img)
 
-    # ── 언어 이름 (대상 언어로 "Korean") ─────────────────────
-    if lang_code in ("JP", "CN"):
-        font_label = get_font("korean_bold", 90)   # CJK는 한국어 폰트로 렌더
+    # ── TOPIK LV.X ───────────────────────────────────────────
+    font_topik = get_font("english_bold", 54)
+    topik_cy   = cy1 + 110
+    draw.text((cx, topik_cy), f"TOPIK  LV.{word['level']}",
+              font=font_topik, fill=C["accent_warm"], anchor="mm")
+
+    # ── ID ───────────────────────────────────────────────────
+    font_id = get_font("english_bold", 66)
+    id_cy   = topik_cy + 80
+    draw.text((cx, id_cy), f"{word['id']:03d}",
+              font=font_id, fill=C["accent_warm"], anchor="mm")
+
+    # ── 한국어 단어 ──────────────────────────────────────────
+    word_text = word["word"]
+    n = len(word_text)
+    word_size = max(120, min(300, 390 - n * 30))
+    font_word = get_font("korean_bold", word_size)
+    wb = draw.textbbox((0, 0), word_text, font=font_word)
+    while (wb[2] - wb[0]) > cw - 90 and word_size > 100:
+        word_size -= 12
+        font_word = get_font("korean_bold", word_size)
+        wb = draw.textbbox((0, 0), word_text, font=font_word)
+    word_cy  = id_cy + 80 + word_size // 2
+    draw.text((cx, word_cy), word_text,
+              font=font_word, fill=C["accent"], anchor="mm")
+    word_bot = word_cy + word_size // 2
+
+    # ── 뜻 ───────────────────────────────────────────────────
+    font_meaning = _lang_font(lang_code, 58)
+    meaning_cy   = word_bot + 55
+    draw.text((cx, meaning_cy), word["meaning"],
+              font=font_meaning, fill=C["text_secondary"], anchor="mm")
+    mb = draw.textbbox((0, 0), word["meaning"], font=font_meaning)
+    meaning_bot = meaning_cy + (mb[3] - mb[1]) // 2
+
+    # ── 언어 pill 배너 ────────────────────────────────────────
+    pill_top = meaning_bot + 70
+    pill_h   = 118
+    pill_x1  = cx1 + 36
+    pill_x2  = cx1 + cw - 36
+    pill_ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(pill_ov).rounded_rectangle(
+        [pill_x1, pill_top, pill_x2, pill_top + pill_h],
+        radius=pill_h // 2, fill=(*lang_color, 255)
+    )
+    img = Image.alpha_composite(img, pill_ov)
+    draw = ImageDraw.Draw(img)
+
+    if lang_code == "JP":
+        font_pill = get_font("jp", 56)
+    elif lang_code == "CN":
+        font_pill = get_font("cn", 56)
     else:
-        font_label = get_font("english_bold", 90)
-    draw.text((cx, bar_h // 2), korean_label,
-              font=font_label, fill=(255, 255, 255, 255), anchor="mm")
+        font_pill = get_font("english_bold", 56)
+    draw.text((cx, pill_top + pill_h // 2), pill_text,
+              font=font_pill, fill=(255, 255, 255, 255), anchor="mm")
+
+    # ── 일러스트 ──────────────────────────────────────────────
+    ill_top = pill_top + pill_h + 36
+    ill_x   = cx1 + 36
+    ill_w   = cw - 72
+    ill_bot = cy1 + ch - 33
+    ill_h   = ill_bot - ill_top
+
+    ill_bg_ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(ill_bg_ov).rounded_rectangle(
+        [ill_x, ill_top, ill_x + ill_w, ill_bot],
+        radius=48, fill=(*_THUMB_ILL_BG, 255)
+    )
+    img = Image.alpha_composite(img, ill_bg_ov)
+
+    base    = _find_illust_base(word["word"], word.get("level", 1))
+    bg_path = os.path.join(base, "word.png") if base and os.path.isdir(base) else None
+    if bg_path and os.path.exists(bg_path):
+        try:
+            sq  = min(ill_w, ill_h)
+            ix  = ill_x + (ill_w - sq) // 2
+            iy  = ill_top + (ill_h - sq) // 2
+            ill = Image.open(bg_path).convert("RGBA").resize((sq, sq), Image.LANCZOS)
+            msk = Image.new("L", (sq, sq), 0)
+            ImageDraw.Draw(msk).rounded_rectangle(
+                [0, 0, sq - 1, sq - 1], radius=42, fill=255
+            )
+            img_c = img.convert("RGBA")
+            img_c.paste(ill, (ix, iy), mask=msk)
+            img = img_c
+        except Exception:
+            pass
 
     img.convert("RGB").save(dest_path, "PNG")
 
