@@ -187,7 +187,6 @@ _WEBTOON_STYLE_BASE = (
     "supermarkets, modern restaurants — whatever the scene naturally calls for. "
     "Background is soft and slightly faded. "
     "depth: foreground subjects sharp, background gently blurred/misty, "
-    "warm atmospheric haze giving a cozy golden hour feel, "
     "square 1:1 composition, "
     "vary the shot size to suit the scene — close-up for detail/emotion, "
     "medium shot for action/interaction, wide shot for location/atmosphere, "

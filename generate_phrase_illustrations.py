@@ -136,48 +136,36 @@ def _inject_characters(content: str, sit_id: int) -> str:
 
 # ─── 웹툰 스타일 상수 ─────────────────────────────────────────
 _WEBTOON_STYLE_BASE = (
-    # 아트 스타일
     "warm watercolor and pencil sketch illustration style, "
     "soft loose brushwork with visible watercolor paper texture, "
     "gentle pencil outlines (not thick black ink), "
     "watercolor wash backgrounds that are slightly soft and misty, "
-
-    # 색상 팔레트
     "time of day matches the scene naturally — morning, afternoon, evening, or night, "
     "pastel palette: ivory white, soft sky-blue, dusty rose, sage green, "
     "light lavender, muted mint — balanced tones, not overly yellow or orange, "
     "NO neon colors, NO dark or black-dominant areas, "
-
-    # 캐릭터 비율 (엄격히 고정)
-    "cute chibi anthropomorphic animal characters, "
-    "PROTAGONIST RULE: the main/learner character is ALWAYS a red panda — "
-    "the Korean local character can be any other cute animal, "
-    "STRICT PROPORTION RULES: "
-    "head-to-body ratio 1:1.2 — head is nearly as tall as the body, very large round head, "
-    "body is short and chubby, legs are extremely short and stubby (almost no visible legs), "
-    "arms are short and rounded, "
+    "IF animal characters appear: cute chibi anthropomorphic proportions, "
+    "PROTAGONIST RULE: the main character is ALWAYS a red panda — "
+    "supporting/secondary characters can be any other cute animal, "
+    "head-to-body ratio 1:1.2 — very large round head, body short and chubby, "
+    "legs extremely short and stubby (almost no visible legs), arms short and rounded, "
     "total character height = 35 to 40 percent of the full frame height, "
-    "both characters naturally centered in the composition, fully visible head to feet, "
+    "characters naturally centered in the composition, fully visible head to feet, "
     "characters have slightly more detail/contrast than the soft background, "
     "NO shoes NO boots NO sandals NO footwear — all characters have bare paws, "
-
-    # 배경
     "background reflects MODERN everyday Korean life — "
-    "STRICTLY AVOID: traditional tile-roof houses (기와집), wooden hanok, paper doors. "
-    "USE: concrete apartments, modern cafes, convenience stores, subway stations, "
-    "schools, offices, parks, pedestrian streets, supermarkets, modern restaurants. "
-    "Background is soft and slightly faded, "
-    "depth: characters sharp in foreground, background gently blurred/misty, "
-    "warm atmospheric haze giving a cozy golden hour feel, "
-
-    # 구도 및 제약
+    "STRICTLY AVOID: traditional tile-roof houses (기와집), wooden hanok structures, "
+    "paper screen doors, traditional courtyards — these are tourist sites, not daily life. "
+    "USE INSTEAD: concrete apartment buildings, modern cafes, convenience stores (24h), "
+    "subway stations, school classrooms, offices, city parks, pedestrian streets, "
+    "supermarkets, modern restaurants — whatever the scene naturally calls for. "
+    "Background is soft and slightly faded. "
+    "depth: foreground subjects sharp, background gently blurred/misty, "
     "square 1:1 composition, "
     "vary the shot size to suit the scene — close-up for detail/emotion, "
-    "medium shot for interaction, wide shot for location/atmosphere, "
-    "choose whichever framing makes the scene most vivid and clear, "
+    "medium shot for action/interaction, wide shot for location/atmosphere, "
+    "choose whichever framing makes the concept most instantly clear, "
     "main subject centered naturally — balanced, well-composed scene, "
-
-    # 텍스트 완전 금지 — 심볼/아이콘으로 대체
     "STRICT NO TEXT RULE: absolutely zero letters, zero words, zero numbers in any language, "
     "replace ALL signage and labels with visual symbols and icons only: "
     "pharmacy→red cross symbol, hair salon→scissors icon, restaurant→fork-and-spoon icon, "
