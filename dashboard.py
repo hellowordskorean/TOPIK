@@ -1785,6 +1785,101 @@ def serve_phrase_illust(sit_key, filename):
     directory = os.path.join(PHRASE_ILLUST_DIR, sit_key)
     return send_from_directory(directory, filename)
 
+@app.route("/api/phrase/illust/browse/<int:sit_id>")
+def api_phrase_illust_browse(sit_id):
+    """회화 상황별 일러스트 상태 조회 (썸네일 + 존재 여부)"""
+    db = load_phrase_db()
+    situations = db if isinstance(db, list) else db.get("situations", [])
+    sit = next((s for s in situations if s["id"] == sit_id), None)
+    if not sit:
+        return jsonify({"error": "상황 없음"}), 404
+    sit_key   = f"sit_{sit_id}"
+    illust_dir = os.path.join(PHRASE_ILLUST_DIR, sit_key)
+    items = []
+    intro_path = os.path.join(illust_dir, "intro.png")
+    items.append({
+        "key": "intro", "label": "인트로",
+        "ko": sit.get("situation", ""),
+        "exists": os.path.exists(intro_path),
+        "url": f"/phrase-illust/{sit_key}/intro.png"
+    })
+    for p in sit.get("phrases", []):
+        ph_id  = p["id"]
+        ph_key = f"phrase_{ph_id}"
+        ph_path = os.path.join(illust_dir, f"{ph_key}.png")
+        items.append({
+            "key": ph_key, "label": f"대화 {ph_id}",
+            "ko": p.get("my_line", {}).get("ko", ""),
+            "exists": os.path.exists(ph_path),
+            "url": f"/phrase-illust/{sit_key}/{ph_key}.png"
+        })
+    return jsonify({
+        "sit_id": sit_id,
+        "situation": sit.get("situation", ""),
+        "situation_en": sit.get("situation_en", ""),
+        "category": sit.get("category", ""),
+        "items": items
+    })
+
+_phrase_regen_threads: dict = {}
+_phrase_regen_status:  dict = {}
+
+def _run_phrase_regen(sit_id: int, key: str):
+    """회화 패널 단일 재생성 (백그라운드 스레드)"""
+    rkey = (sit_id, key)
+    _phrase_regen_status[rkey] = {"status": "running", "started_at": datetime.now().isoformat()}
+    sit_dir   = os.path.join(PHRASE_ILLUST_DIR, f"sit_{sit_id}")
+    file_path = os.path.join(sit_dir, f"{key}.png")
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+    cmd = [sys.executable, "/app/generate_phrase_illustrations.py",
+           "--db", PHRASE_DB_F, "--situation-id", str(sit_id)]
+    if key == "intro":
+        cmd += ["--intro-only"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        out_tail = (result.stdout or "")[-800:]
+        err_tail = (result.stderr or "")[-800:]
+        if result.returncode != 0:
+            _phrase_regen_status[rkey] = {"status": "failed", "log": out_tail, "error": err_tail}
+            app.logger.error(f"[phrase_regen] sit={sit_id} key={key} 실패\n{err_tail}")
+        else:
+            _phrase_regen_status[rkey] = {"status": "done", "log": out_tail}
+    except subprocess.TimeoutExpired:
+        _phrase_regen_status[rkey] = {"status": "timeout", "error": "subprocess 5분 초과"}
+    except Exception as e:
+        _phrase_regen_status[rkey] = {"status": "error", "error": str(e)}
+
+@app.route("/api/phrase/illust/regen", methods=["POST"])
+def api_phrase_illust_regen():
+    """회화 패널 단일 재생성: {"sit_id": 1, "key": "phrase_3"}"""
+    global _phrase_regen_threads
+    data   = request.get_json(silent=True) or {}
+    sit_id = int(data.get("sit_id", 0))
+    key    = data.get("key", "")
+    if not sit_id or not key:
+        return jsonify({"error": "sit_id, key 필요"}), 400
+    rkey = (sit_id, key)
+    if rkey in _phrase_regen_threads and _phrase_regen_threads[rkey].is_alive():
+        return jsonify({"error": "해당 패널 재생성 진행 중"}), 409
+    t = threading.Thread(target=_run_phrase_regen, args=(sit_id, key), daemon=True)
+    _phrase_regen_threads[rkey] = t
+    t.start()
+    return jsonify({"status": "started", "sit_id": sit_id, "key": key})
+
+@app.route("/api/phrase/illust/regen/log")
+def api_phrase_illust_regen_log():
+    """회화 패널 재생성 상태/로그 조회"""
+    sit_id = int(request.args.get("sit_id", 0))
+    key    = request.args.get("key", "")
+    rkey   = (sit_id, key)
+    info   = dict(_phrase_regen_status.get(rkey, {"status": "unknown"}))
+    info["running"] = rkey in _phrase_regen_threads and _phrase_regen_threads[rkey].is_alive()
+    return jsonify(info)
+
 # ─── HTML ─────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
 <html lang="ko">
@@ -2430,6 +2525,20 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <div id="ph-illust-empty" style="display:none;text-align:center;padding:48px;color:var(--muted);">
       <div style="font-size:2rem;margin-bottom:8px;">📂</div>
       <div>phrases_db.json 파일이 없거나 비어 있습니다</div>
+    </div>
+    <!-- 일러스트 미리보기 / 재생성 -->
+    <div class="card" style="margin-top:14px;">
+      <div class="sec">일러스트 미리보기 / 재생성</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <span style="font-size:.74rem;color:var(--muted);">상황 ID:</span>
+        <input id="ph-browse-id" class="num-input" type="number" value="1" min="1" style="width:70px;">
+        <button onclick="loadPhraseIllustBrowse()" class="btn btn-a">조회</button>
+        <button onclick="phBrowseNav(-1)" class="btn btn-m">&lt; 이전</button>
+        <button onclick="phBrowseNav(1)" class="btn btn-m">다음 &gt;</button>
+        <span id="ph-browse-info" style="font-size:.78rem;font-weight:600;margin-left:8px;"></span>
+      </div>
+      <div id="ph-browse-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;"></div>
+      <div id="ph-browse-regen-status" style="display:none;margin-top:10px;padding:8px 12px;border-radius:6px;background:var(--bg);font-size:.74rem;color:var(--amber);font-weight:600;"></div>
     </div>
   </div>
 
@@ -4058,6 +4167,8 @@ let _phSituations = [];
 let _phTab = 'illust';
 let _phIllustPollTimer = null;
 let _phVideoPollTimer  = null;
+let _phBrowseData  = null;
+let _phRegenPoll   = null;
 
 function phTab(tab){
   _phTab = tab;
@@ -4107,9 +4218,12 @@ function renderPhraseIllustList(){
       <div class="pbar-bg" style="height:5px;margin-bottom:10px;">
         <div class="pbar" style="height:5px;width:${pct}%;background:${pct===100?'var(--green)':'var(--amber)'};"></div>
       </div>
-      <button class="btn btn-p" style="width:100%;font-size:.75rem;" onclick="startPhraseIllust(${s.id})">
-        ${pct===100?'↺ 재생성':'▶ 생성'} (ID ${s.id})
-      </button>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-p" style="flex:1;font-size:.75rem;" onclick="startPhraseIllust(${s.id})">
+          ${pct===100?'↺ 재생성':'▶ 생성'} (ID ${s.id})
+        </button>
+        <button class="btn btn-m" style="font-size:.75rem;padding:0 10px;" onclick="phBrowseSit(${s.id})" title="미리보기">🖼</button>
+      </div>
     </div>`;
   }).join('');
 }
@@ -4138,6 +4252,117 @@ function renderPhraseVideoList(){
       </div>
     </div>`;
   }).join('');
+}
+
+function phBrowseSit(sitId){
+  document.getElementById('ph-browse-id').value=sitId;
+  loadPhraseIllustBrowse();
+  setTimeout(()=>document.getElementById('ph-browse-grid').scrollIntoView({behavior:'smooth',block:'start'}),100);
+}
+
+function phBrowseNav(dir){
+  const inp=document.getElementById('ph-browse-id');
+  const ids=_phSituations.map(s=>s.id);
+  const min=ids.length?Math.min(...ids):1;
+  const max=ids.length?Math.max(...ids):99;
+  inp.value=Math.min(max,Math.max(min,(+inp.value||1)+dir));
+  loadPhraseIllustBrowse();
+}
+
+async function loadPhraseIllustBrowse(){
+  const id=+document.getElementById('ph-browse-id').value||1;
+  const r=await fetch('/api/phrase/illust/browse/'+id);
+  if(!r.ok){document.getElementById('ph-browse-info').textContent='상황 없음';document.getElementById('ph-browse-grid').innerHTML='';return;}
+  const d=await r.json();
+  _phBrowseData=d;
+  const col=_CAT_COLORS[d.category]||'#818cf8';
+  document.getElementById('ph-browse-info').innerHTML=`<span style="color:${col}">${d.category}</span> <b>${d.situation}</b>`;
+  const grid=document.getElementById('ph-browse-grid');
+  const ts=Date.now();
+  grid.innerHTML=d.items.map(it=>{
+    const img=it.exists
+      ?`<img src="${it.url}?t=${ts}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="phIllustPreview('${it.url}?t=${ts}')">`
+      :`<div style="width:100%;aspect-ratio:1;background:var(--bg);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.7rem;">미생성</div>`;
+    const sub=it.ko?`<div style="font-size:.6rem;color:var(--muted);margin-top:2px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${it.ko}">${it.ko}</div>`:'';
+    const btnId=`ph-regen-btn-${it.key}`;
+    const wrapId=`ph-regen-wrap-${it.key}`;
+    return `<div style="background:var(--bg3);border-radius:8px;padding:8px;text-align:center;">
+      <div style="font-size:.7rem;font-weight:600;margin-bottom:4px;">${it.label}</div>
+      <div id="${wrapId}" style="position:relative;">${img}${sub}</div>
+      <button id="${btnId}" onclick="regenPhraseIllust(${d.sit_id},'${it.key}')" class="btn btn-m" style="margin-top:6px;font-size:.65rem;width:100%;padding:3px 0;">🔄 재생성</button>
+    </div>`;
+  }).join('');
+}
+
+function phIllustPreview(url){
+  const ov=document.createElement('div');
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:pointer;';
+  ov.onclick=()=>ov.remove();
+  ov.innerHTML=`<img src="${url}" style="max-width:90vw;max-height:90vh;border-radius:12px;">`;
+  document.body.appendChild(ov);
+}
+
+async function regenPhraseIllust(sitId,key){
+  const btnId=`ph-regen-btn-${key}`;
+  const btn=document.getElementById(btnId);
+  if(btn){btn.disabled=true;btn.textContent='⏳ 생성 중...';}
+  const st=document.getElementById('ph-browse-regen-status');
+  st.style.display='block';st.style.color='';
+  st.textContent=`🔄 ${key} 재생성 중...`;
+  const r=await fetch('/api/phrase/illust/regen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sit_id:sitId,key:key})});
+  const d=await r.json();
+  if(!r.ok){st.textContent='오류: '+(d.error||'');if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}return;}
+  const wrap=document.getElementById(`ph-regen-wrap-${key}`);
+  if(wrap){
+    const ov=document.createElement('div');ov.className='regen-overlay';
+    ov.innerHTML=`<div class="regen-spinner"></div><div style="font-size:.7rem;color:#fff;font-weight:600;">생성 중...</div><div class="regen-bar-wrap"><div class="regen-bar"></div></div>`;
+    wrap.appendChild(ov);
+  }
+  if(_phRegenPoll)clearInterval(_phRegenPoll);
+  let _cnt=0;
+  _phRegenPoll=setInterval(async()=>{
+    _cnt++;
+    if(_cnt%5===0){
+      try{
+        const logR=await fetch(`/api/phrase/illust/regen/log?sit_id=${sitId}&key=${key}`);
+        if(logR.ok){
+          const logD=await logR.json();
+          if(logD.status==='failed'||logD.status==='error'||logD.status==='timeout'){
+            clearInterval(_phRegenPoll);_phRegenPoll=null;
+            st.style.color='var(--red)';
+            st.textContent='❌ 재생성 실패: '+(logD.error||logD.log||'').slice(-400);
+            const wrapE=document.getElementById(`ph-regen-wrap-${key}`);
+            if(wrapE){const ovE=wrapE.querySelector('.regen-overlay');if(ovE)ovE.remove();}
+            if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}
+            return;
+          }
+        }
+      }catch(e){}
+    }
+    const cr=await fetch('/api/phrase/illust/browse/'+sitId);
+    if(!cr.ok)return;
+    const cd=await cr.json();
+    const item=cd.items.find(i=>i.key===key);
+    if(item&&item.exists){
+      clearInterval(_phRegenPoll);_phRegenPoll=null;
+      st.style.color='';
+      st.textContent=`✅ ${key} 재생성 완료!`;
+      setTimeout(()=>{st.style.display='none';},3000);
+      const wrap2=document.getElementById(`ph-regen-wrap-${key}`);
+      if(wrap2){const ov2=wrap2.querySelector('.regen-overlay');if(ov2)ov2.remove();}
+      loadPhraseIllustBrowse();
+      loadPhraseSituations();
+    }
+  },2000);
+  setTimeout(async()=>{
+    if(!_phRegenPoll)return;
+    clearInterval(_phRegenPoll);_phRegenPoll=null;
+    st.style.color='var(--red)';
+    st.textContent='⚠ 시간 초과';
+    const wrap3=document.getElementById(`ph-regen-wrap-${key}`);
+    if(wrap3){const ov3=wrap3.querySelector('.regen-overlay');if(ov3)ov3.remove();}
+    if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}
+  },300000);
 }
 
 async function startPhraseIllust(sitId){
