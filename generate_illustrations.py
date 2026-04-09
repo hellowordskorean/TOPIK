@@ -832,6 +832,38 @@ def _load_custom_prompts():
         print(f"  커스텀 프롬프트 없음 ({PROMPTS_FILE})")
 
 
+def _patch_sentences(db: list, db_path: str) -> list:
+    """words_db.json의 구버전 sentences를 topik_{level}.json의 최신 examples로 교체.
+    TOPIK/EN/topik_N.json 파일이 없으면 원본 그대로 반환."""
+    topik_dir = Path(db_path).parent / "TOPIK" / "EN"
+    if not topik_dir.exists():
+        return db
+    # 레벨별 examples 맵 로드
+    level_map: dict[int, dict[int, list]] = {}  # level → {word_id → examples}
+    for lv in range(1, 7):
+        p = topik_dir / f"topik_{lv}.json"
+        if not p.exists():
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            level_map[lv] = {w["id"]: w.get("examples", []) for w in data.get("words", [])}
+        except Exception:
+            pass
+    if not level_map:
+        return db
+    patched = 0
+    for word in db:
+        lv = word.get("level", 1)
+        wid = word.get("id")
+        examples = level_map.get(lv, {}).get(wid)
+        if examples:
+            word["sentences"] = examples
+            patched += 1
+    print(f"  예문 패치: {patched}개 단어 → topik_N.json 최신 예문 적용")
+    return db
+
+
 def get_word_custom_prompt(word_id: int) -> str | None:
     """단어 ID로 커스텀 word_prompt 반환 (없으면 None)"""
     entry = _custom_prompts.get(str(word_id))
@@ -1433,6 +1465,7 @@ def main():
 
     with open(args.db, encoding="utf-8") as f:
         db = json.load(f)
+    db = _patch_sentences(db, args.db)
 
     # ── 프롬프트 전략 스캔 모드 (dry-run) ──────────────────────
     if args.scan_prompts:
