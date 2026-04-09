@@ -55,14 +55,16 @@ def _detect_fonts():
         "english":     ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                         "C:/Windows/Fonts/arial.ttf"],
         # 일본어 폰트 (히라가나·가타카나·한자)
-        "jp":          ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "jp":          ["/app/assets/fonts/NotoSansJP-Regular.otf",
+                        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
                         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                         "C:/Windows/Fonts/NotoSansJP-Regular.otf",
                         "C:/Windows/Fonts/msgothic.ttc",
                         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
                         "C:/Windows/Fonts/malgun.ttf"],
         # 중국어 폰트 (간체)
-        "cn":          ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "cn":          ["/app/assets/fonts/NotoSansJP-Regular.otf",
+                        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
                         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                         "C:/Windows/Fonts/msyh.ttc",
                         "C:/Windows/Fonts/simsun.ttc",
