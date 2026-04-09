@@ -63,24 +63,31 @@ Your job: convert Korean words and example sentences into VISUAL SCENE DESCRIPTI
 7. Be SPECIFIC about: body positions, facial expressions, surroundings, relative positions of objects, colors, lighting
 8. Each prompt must be SELF-EXPLANATORY — a viewer should understand the meaning without any text
 
+━━━ CHARACTER RULE ━━━
+- NEVER use "person", "people", "man", "woman", "figure", "human" in prompts
+- Always describe subjects as "chibi animal character" (e.g. "a chibi cat character", "a chibi red panda character")
+- For single subject: "a chibi animal character"
+- For two subjects: "a chibi cat character and a chibi red panda character"
+- The actual animal species will be assigned automatically at render time
+
 ━━━ WORD PROMPT RULES ━━━
 - Capture the CORE VISUAL ESSENCE of the word's meaning
 - For concrete nouns: describe the object with distinctive visual details (shape, color, texture, size)
 - For abstract concepts: create a scene that EMBODIES the concept through visible actions/situations
-- For verbs: show a person MID-ACTION performing the activity with clear body posture
-- For adjectives: show objects/people clearly displaying that quality with visual contrast
+- For verbs: show a chibi animal character MID-ACTION performing the activity with clear body posture
+- For adjectives: show objects/chibi animal characters clearly displaying that quality with visual contrast
 - For adverbs: show a scene where the manner/frequency is visually obvious
-- Use ONLY 1 person (2 maximum if needed) — keep the scene focused and simple
+- Use ONLY 1 chibi animal character (2 maximum if needed) — keep the scene focused and simple
 - 1-3 sentences, 30-60 words
 - Must be visually distinct from other similar concepts
 
 ━━━ SENTENCE PROMPT RULES ━━━
 - Create a scene that visually tells the COMPLETE story of the sentence
 - The TARGET WORD's concept must be the FOCAL POINT of the scene
-- Show the SITUATION described with appropriate setting, characters, and props
-- Use ONLY 1-2 people per scene (3 maximum if the sentence absolutely requires it) — NEVER more
+- Show the SITUATION described with appropriate setting, chibi animal characters, and props
+- Use ONLY 1-2 chibi animal characters per scene (3 maximum if the sentence absolutely requires it) — NEVER more
 - Keep compositions simple and uncluttered with a single clear focal point
-- If people appear, give each person DISTINCTLY DIFFERENT appearances: different hairstyles, hair colors, clothing styles, and body types
+- If multiple characters appear, give each one a DISTINCTLY DIFFERENT description (e.g. "chibi cat character" vs "chibi red panda character")
 - Convey emotions through facial expressions and body language (smile, frown, wide eyes, slumped shoulders)
 - Convey communication through gestures (pointing, nodding, showing, handing over, shaking head)
 - 1-2 sentences, 25-50 words per sentence prompt

@@ -24,6 +24,11 @@ ILLUST_USAGE_F  = f"{BASE}/logs/illust_usage.json"
 DAILY_AUTO_F    = f"{BASE}/logs/daily_auto.json"
 CONV_DB_PATH    = f"{BASE}/phrases_db.json"
 CONV_LOG_F      = f"{BASE}/logs/conv_log.json"
+PHRASE_DB_F       = f"{BASE}/data/Conversation/phrases_db.json"
+PHRASE_ILLUST_DIR = f"{BASE}/assets/phrase_illustrations"
+PHRASE_ILLUST_PROG= f"{BASE}/logs/phrase_illust_progress.json"
+PHRASE_VIDEO_DIR  = f"{BASE}/output/phrases"
+PHRASE_VIDEO_LOG  = f"{BASE}/logs/phrase_videos_log.json"
 
 DAILY_LANGS = ["EN", "CN", "JP", "VN", "ES"]
 _LANG_FLAG  = {"EN":"🇺🇸","CN":"🇹🇼","JP":"🇯🇵","VN":"🇻🇳","ES":"🇲🇽"}
@@ -202,6 +207,14 @@ def set_render_config(desktop_enabled):
 def get_words_db():
     """전역 words_db.json 로드 — 일러스트 폴더명과 동일한 전역 ID(1~1800) 사용"""
     return load_json(f"{DATA_ROOT}/LanguageTest/words_db.json", [])
+
+def get_topik_examples(level: int, word_id: int) -> list:
+    """topik_{level}.json (EN)에서 최신 예문 반환. 없으면 빈 리스트."""
+    path = f"{DATA_ROOT}/LanguageTest/TOPIK/EN/topik_{level}.json"
+    data = load_json(path, {})
+    words = data.get("words", [])
+    w = next((x for x in words if x["id"] == word_id), None)
+    return w.get("examples", []) if w else []
 
 def get_illustration_stats():
     db = get_words_db()
@@ -711,6 +724,74 @@ def run_conv_render_bg(theme_id: str, lang: str):
     _conv_render_thread = threading.Thread(target=_run, daemon=True)
     _conv_render_thread.start()
     return True, "렌더링 시작"
+
+# ─── 회화 일러스트·영상 생성 ──────────────────────────────────
+def load_phrase_db():
+    return load_json(PHRASE_DB_F, [])
+
+def load_phrase_video_log():
+    return load_json(PHRASE_VIDEO_LOG, [])
+
+_phrase_illust_thread = None
+_phrase_illust_progress = {"status": "idle", "sit_id": None, "pct": 0, "msg": ""}
+
+def run_phrase_illust_bg(sit_id: int | None, start: int | None, end: int | None):
+    global _phrase_illust_thread, _phrase_illust_progress
+    if _phrase_illust_thread and _phrase_illust_thread.is_alive():
+        return False, "이미 생성 중입니다"
+    def _run():
+        global _phrase_illust_progress
+        _phrase_illust_progress = {"status": "running", "sit_id": sit_id, "pct": 10, "msg": "일러스트 생성 시작..."}
+        try:
+            cmd = [sys.executable, "/app/generate_phrase_illustrations.py",
+                   "--db", PHRASE_DB_F]
+            if sit_id is not None:
+                cmd += ["--situation-id", str(sit_id)]
+            elif start is not None and end is not None:
+                cmd += ["--start", str(start), "--end", str(end)]
+            _phrase_illust_progress["pct"] = 20
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode == 0:
+                _phrase_illust_progress = {"status": "done", "sit_id": sit_id, "pct": 100, "msg": "완료"}
+            else:
+                _phrase_illust_progress = {"status": "failed", "sit_id": sit_id,
+                                           "pct": 0, "msg": r.stderr[-400:]}
+        except Exception as e:
+            _phrase_illust_progress = {"status": "failed", "sit_id": sit_id, "pct": 0, "msg": str(e)}
+    _phrase_illust_thread = threading.Thread(target=_run, daemon=True)
+    _phrase_illust_thread.start()
+    return True, "일러스트 생성 시작"
+
+_phrase_video_thread = None
+_phrase_video_progress = {"status": "idle", "sit_id": None, "pct": 0, "msg": ""}
+
+def run_phrase_video_bg(sit_id: int | None, start: int | None, end: int | None):
+    global _phrase_video_thread, _phrase_video_progress
+    if _phrase_video_thread and _phrase_video_thread.is_alive():
+        return False, "이미 영상 생성 중입니다"
+    def _run():
+        global _phrase_video_progress
+        _phrase_video_progress = {"status": "running", "sit_id": sit_id, "pct": 10, "msg": "영상 생성 시작..."}
+        try:
+            cmd = [sys.executable, "/app/make_video_phrases.py",
+                   "--db", PHRASE_DB_F,
+                   "--output", PHRASE_VIDEO_DIR]
+            if sit_id is not None:
+                cmd += ["--id", str(sit_id)]
+            elif start is not None and end is not None:
+                cmd += ["--start", str(start), "--end", str(end)]
+            _phrase_video_progress["pct"] = 20
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode == 0:
+                _phrase_video_progress = {"status": "done", "sit_id": sit_id, "pct": 100, "msg": "완료"}
+            else:
+                _phrase_video_progress = {"status": "failed", "sit_id": sit_id,
+                                          "pct": 0, "msg": r.stderr[-400:]}
+        except Exception as e:
+            _phrase_video_progress = {"status": "failed", "sit_id": sit_id, "pct": 0, "msg": str(e)}
+    _phrase_video_thread = threading.Thread(target=_run, daemon=True)
+    _phrase_video_thread.start()
+    return True, "영상 생성 시작"
 
 def run_conv_upload(theme_id: str, lang: str):
     """회화 영상 YouTube 업로드"""
@@ -1345,7 +1426,8 @@ def api_illust_word(word_id):
     korean = word["word"]
     folder = f"{word_id}_{korean}"
     base = f"{ILLUST_DIR}/lv{lv}/{folder}"
-    sents = word.get("sentences", [])
+    # 최신 예문은 topik_{level}.json 우선, fallback: words_db sentences
+    sents = get_topik_examples(lv, word_id) or word.get("sentences", [])
     items = []
     # word.png
     wp = f"{base}/word.png"
@@ -1613,6 +1695,96 @@ def api_conv_upload():
     return jsonify({"status": "ok", "video_id": video_id,
                     "youtube_url": f"https://youtube.com/watch?v={video_id}"})
 
+# ─── 회화 일러스트·영상 API ───────────────────────────────────
+@app.route("/api/phrase/situations")
+def api_phrase_situations():
+    db = load_phrase_db()
+    if isinstance(db, list):
+        situations = db
+    else:
+        situations = db.get("situations", [])
+
+    video_log = load_phrase_video_log()
+    video_map = {e["situation_id"]: e for e in video_log}
+
+    # 일러스트 진행 파일에서 완성 목록 읽기
+    illust_prog = load_json(PHRASE_ILLUST_PROG, {})
+    completed = illust_prog.get("completed", {})
+
+    result = []
+    for s in situations:
+        sid = s["id"]
+        sit_key = f"sit_{sid}"
+        illust_dir = os.path.join(PHRASE_ILLUST_DIR, sit_key)
+        phrase_count = len(s.get("phrases", []))
+        # 일러스트 수: intro + phrase_N
+        expected_keys = ["intro"] + [f"phrase_{p['id']}" for p in s.get("phrases", [])]
+        illust_done = [k for k in expected_keys if os.path.exists(os.path.join(illust_dir, f"{k}.png"))]
+        video_entry = video_map.get(sid)
+        result.append({
+            "id": sid,
+            "category": s.get("category", ""),
+            "situation": s.get("situation", ""),
+            "situation_en": s.get("situation_en", ""),
+            "phrase_count": phrase_count,
+            "illust_total": len(expected_keys),
+            "illust_done": len(illust_done),
+            "video_exists": bool(video_entry and os.path.exists(video_entry.get("output_path", ""))),
+            "video_generated_at": video_entry.get("generated_at") if video_entry else None,
+        })
+    return jsonify({"situations": result})
+
+@app.route("/api/phrase/illust/generate", methods=["POST"])
+def api_phrase_illust_generate():
+    data = request.get_json(silent=True) or {}
+    sit_id = data.get("sit_id")
+    start  = data.get("start")
+    end    = data.get("end")
+    ok, msg = run_phrase_illust_bg(sit_id, start, end)
+    if not ok:
+        return jsonify({"error": msg}), 409
+    return jsonify({"status": "started"})
+
+@app.route("/api/phrase/illust/progress")
+def api_phrase_illust_progress():
+    running = bool(_phrase_illust_thread and _phrase_illust_thread.is_alive())
+    prog = load_json(PHRASE_ILLUST_PROG, {})
+    return jsonify({**_phrase_illust_progress, "running": running,
+                    "file_progress": prog})
+
+@app.route("/api/phrase/illust/cancel", methods=["POST"])
+def api_phrase_illust_cancel():
+    global _phrase_illust_progress
+    _phrase_illust_progress = {**_phrase_illust_progress, "status": "cancelled", "msg": "취소됨"}
+    return jsonify({"status": "cancelled"})
+
+@app.route("/api/phrase/video/generate", methods=["POST"])
+def api_phrase_video_generate():
+    data = request.get_json(silent=True) or {}
+    sit_id = data.get("sit_id")
+    start  = data.get("start")
+    end    = data.get("end")
+    ok, msg = run_phrase_video_bg(sit_id, start, end)
+    if not ok:
+        return jsonify({"error": msg}), 409
+    return jsonify({"status": "started"})
+
+@app.route("/api/phrase/video/progress")
+def api_phrase_video_progress():
+    running = bool(_phrase_video_thread and _phrase_video_thread.is_alive())
+    return jsonify({**_phrase_video_progress, "running": running})
+
+@app.route("/api/phrase/video/cancel", methods=["POST"])
+def api_phrase_video_cancel():
+    global _phrase_video_progress
+    _phrase_video_progress = {**_phrase_video_progress, "status": "cancelled", "msg": "취소됨"}
+    return jsonify({"status": "cancelled"})
+
+@app.route("/phrase-illust/<sit_key>/<filename>")
+def serve_phrase_illust(sit_key, filename):
+    directory = os.path.join(PHRASE_ILLUST_DIR, sit_key)
+    return send_from_directory(directory, filename)
+
 # ─── HTML ─────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
 <html lang="ko">
@@ -1779,6 +1951,9 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   <div class="s-item" data-view="conv" onclick="nav(this,'conv')" style="--c:#ec4899;">
     <span>💬</span><span>기본 회화</span>
   </div>
+  <div class="s-item" data-view="phrase" onclick="nav(this,'phrase')" style="--c:#a78bfa;">
+    <span>📖</span><span>회화 일러스트·영상</span>
+  </div>
 </div>
 
 <!-- ── MAIN ── -->
@@ -1813,7 +1988,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <!-- 일일 사용량 -->
       <div id="ov-illust-usage" style="margin-top:12px;background:var(--bg3);border-radius:7px;padding:8px 10px;border:1px solid var(--border2);">
         <div style="display:flex;align-items:center;justify-content:space-between;">
-          <span style="font-size:.72rem;color:var(--muted);">오늘 Imagen API</span>
+          <span style="font-size:.72rem;color:var(--muted);">오늘 Gemini API</span>
           <span id="ov-illust-usage-txt" style="font-size:.72rem;font-weight:700;">–</span>
         </div>
         <div id="ov-illust-usage-detail" style="font-size:.65rem;color:var(--muted);margin-top:2px;"></div>
@@ -2086,7 +2261,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <!-- 일일 사용량 (일러스트 뷰) -->
     <div id="illust-view-usage" style="margin-top:14px;background:var(--bg);border-radius:8px;padding:12px 14px;border:1px solid var(--border2);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <span style="font-size:.78rem;font-weight:600;">오늘 Imagen API 사용량</span>
+        <span style="font-size:.78rem;font-weight:600;">오늘 Gemini API 사용량</span>
         <span id="illust-view-usage-txt" style="font-size:.82rem;font-weight:700;">–</span>
       </div>
       <div id="illust-view-usage-detail" style="font-size:.7rem;color:var(--muted);"></div>
@@ -2214,6 +2389,81 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   </div>
 </div>
 
+<!-- ══ 회화 일러스트·영상 ═══════════════════════════════════ -->
+<div id="view-phrase" class="view">
+  <div class="bc"><span class="cur">📖 회화 일러스트·영상</span></div>
+
+  <!-- 탭 -->
+  <div style="display:flex;gap:8px;margin-bottom:16px;">
+    <button id="ph-tab-illust" class="btn btn-p" onclick="phTab('illust')" style="flex:1;">🖼 일러스트 생성</button>
+    <button id="ph-tab-video"  class="btn btn-m" onclick="phTab('video')"  style="flex:1;">🎬 영상 생성</button>
+  </div>
+
+  <!-- 일러스트 탭 -->
+  <div id="ph-panel-illust">
+    <!-- 일러스트 생성 컨트롤 -->
+    <div class="card" style="margin-bottom:14px;">
+      <div class="sec">일러스트 생성</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+        <span style="font-size:.74rem;color:var(--muted);">범위:</span>
+        <input id="ph-illust-start" type="number" placeholder="시작 ID" min="1"
+               style="width:90px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:.8rem;">
+        <span style="color:var(--muted);">~</span>
+        <input id="ph-illust-end" type="number" placeholder="끝 ID" min="1"
+               style="width:90px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:.8rem;">
+        <button class="btn btn-p" onclick="startPhraseIllust(null)" style="margin-left:auto;">▶ 범위 생성</button>
+        <button class="btn btn-m" onclick="cancelPhraseIllust()">✕ 취소</button>
+        <button class="btn btn-m" onclick="loadPhraseSituations()">↺ 새로고침</button>
+      </div>
+      <!-- 진행 바 -->
+      <div id="ph-illust-prog" style="display:none;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <span id="ph-illust-prog-label" style="font-size:.75rem;font-weight:600;color:var(--amber);">생성 중...</span>
+          <span id="ph-illust-prog-pct"   style="font-size:.75rem;font-weight:700;color:var(--amber);">0%</span>
+        </div>
+        <div class="pbar-bg" style="height:6px;"><div id="ph-illust-prog-bar" class="pbar" style="height:6px;background:var(--amber);width:0%;"></div></div>
+        <div id="ph-illust-prog-msg" style="font-size:.65rem;color:var(--muted);margin-top:3px;"></div>
+      </div>
+    </div>
+    <!-- 상황 목록 -->
+    <div id="ph-illust-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;"></div>
+    <div id="ph-illust-empty" style="display:none;text-align:center;padding:48px;color:var(--muted);">
+      <div style="font-size:2rem;margin-bottom:8px;">📂</div>
+      <div>phrases_db.json 파일이 없거나 비어 있습니다</div>
+    </div>
+  </div>
+
+  <!-- 영상 탭 -->
+  <div id="ph-panel-video" style="display:none;">
+    <!-- 영상 생성 컨트롤 -->
+    <div class="card" style="margin-bottom:14px;">
+      <div class="sec">영상 생성</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+        <span style="font-size:.74rem;color:var(--muted);">범위:</span>
+        <input id="ph-video-start" type="number" placeholder="시작 ID" min="1"
+               style="width:90px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:.8rem;">
+        <span style="color:var(--muted);">~</span>
+        <input id="ph-video-end" type="number" placeholder="끝 ID" min="1"
+               style="width:90px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:.8rem;">
+        <button class="btn btn-p" onclick="startPhraseVideo(null)" style="margin-left:auto;">▶ 범위 생성</button>
+        <button class="btn btn-m" onclick="cancelPhraseVideo()">✕ 취소</button>
+        <button class="btn btn-m" onclick="loadPhraseSituations()">↺ 새로고침</button>
+      </div>
+      <!-- 진행 바 -->
+      <div id="ph-video-prog" style="display:none;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <span id="ph-video-prog-label" style="font-size:.75rem;font-weight:600;color:var(--accent);">생성 중...</span>
+          <span id="ph-video-prog-pct"   style="font-size:.75rem;font-weight:700;color:var(--accent);">0%</span>
+        </div>
+        <div class="pbar-bg" style="height:6px;"><div id="ph-video-prog-bar" class="pbar" style="height:6px;background:var(--accent);width:0%;"></div></div>
+        <div id="ph-video-prog-msg" style="font-size:.65rem;color:var(--muted);margin-top:3px;"></div>
+      </div>
+    </div>
+    <!-- 상황 목록 -->
+    <div id="ph-video-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;"></div>
+  </div>
+</div>
+
 </div><!-- /main -->
 </div><!-- /body -->
 
@@ -2248,6 +2498,7 @@ function nav(el,view){
   if(view.startsWith('lang:') || view.startsWith('exam:')) loadNodeData(view);
   if(view==='render'){loadBatchData();rpTab('batch');}
   if(view==='conv') loadConvThemes();
+  if(view==='phrase') loadPhraseSituations();
 }
 
 function toggleExam(el, view){
@@ -3800,6 +4051,221 @@ async function pollConvProgress(){
       document.getElementById('conv-prog-label').style.color = 'var(--amber)';
     }
   }catch(e){}
+}
+
+// ── 회화 일러스트·영상 ──────────────────────────────────────
+let _phSituations = [];
+let _phTab = 'illust';
+let _phIllustPollTimer = null;
+let _phVideoPollTimer  = null;
+
+function phTab(tab){
+  _phTab = tab;
+  document.getElementById('ph-panel-illust').style.display = tab==='illust' ? '' : 'none';
+  document.getElementById('ph-panel-video').style.display  = tab==='video'  ? '' : 'none';
+  document.getElementById('ph-tab-illust').className = 'btn ' + (tab==='illust' ? 'btn-p' : 'btn-m');
+  document.getElementById('ph-tab-video').className  = 'btn ' + (tab==='video'  ? 'btn-p' : 'btn-m');
+}
+
+async function loadPhraseSituations(){
+  try{
+    const r = await fetch('/api/phrase/situations');
+    const d = await r.json();
+    _phSituations = d.situations || [];
+    renderPhraseIllustList();
+    renderPhraseVideoList();
+    if(!_phSituations.length){
+      document.getElementById('ph-illust-empty').style.display='';
+    } else {
+      document.getElementById('ph-illust-empty').style.display='none';
+    }
+    pollPhraseIllustProg();
+    pollPhraseVideoProg();
+  }catch(e){console.error('phrase situations load error',e);}
+}
+
+const _CAT_COLORS={'여행':'#4682b4','식사':'#c86450','쇼핑':'#b464b4','의료':'#50a078','인사':'#dca03c','일상':'#648cc8','주거':'#8c7864','여가':'#50b4a0','비즈니스':'#3c5080','K-Culture':'#c85078'};
+
+function renderPhraseIllustList(){
+  const el = document.getElementById('ph-illust-list');
+  if(!_phSituations.length){el.innerHTML='';return;}
+  el.innerHTML = _phSituations.map(s=>{
+    const pct = s.illust_total ? Math.round(s.illust_done/s.illust_total*100) : 0;
+    const col = _CAT_COLORS[s.category]||'#818cf8';
+    return `<div class="card" style="border-top:3px solid ${col};">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div>
+          <span style="font-size:.65rem;color:${col};font-weight:700;text-transform:uppercase;">${s.category}</span>
+          <div style="font-size:.85rem;font-weight:700;margin-top:2px;">${s.situation}</div>
+          <div style="font-size:.7rem;color:var(--muted);">${s.situation_en}</div>
+        </div>
+        <span style="font-size:.7rem;background:var(--bg3);padding:2px 8px;border-radius:99px;white-space:nowrap;">ID ${s.id}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);margin-bottom:3px;">
+        <span>일러스트</span><span>${s.illust_done}/${s.illust_total}</span>
+      </div>
+      <div class="pbar-bg" style="height:5px;margin-bottom:10px;">
+        <div class="pbar" style="height:5px;width:${pct}%;background:${pct===100?'var(--green)':'var(--amber)'};"></div>
+      </div>
+      <button class="btn btn-p" style="width:100%;font-size:.75rem;" onclick="startPhraseIllust(${s.id})">
+        ${pct===100?'↺ 재생성':'▶ 생성'} (ID ${s.id})
+      </button>
+    </div>`;
+  }).join('');
+}
+
+function renderPhraseVideoList(){
+  const el = document.getElementById('ph-video-list');
+  if(!_phSituations.length){el.innerHTML='';return;}
+  el.innerHTML = _phSituations.map(s=>{
+    const col = _CAT_COLORS[s.category]||'#818cf8';
+    const hasVideo = s.video_exists;
+    const genAt = s.video_generated_at ? ago(s.video_generated_at) : null;
+    return `<div class="card" style="border-top:3px solid ${col};">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div>
+          <span style="font-size:.65rem;color:${col};font-weight:700;text-transform:uppercase;">${s.category}</span>
+          <div style="font-size:.85rem;font-weight:700;margin-top:2px;">${s.situation}</div>
+          <div style="font-size:.7rem;color:var(--muted);">${s.situation_en}</div>
+        </div>
+        <span style="font-size:.7rem;background:var(--bg3);padding:2px 8px;border-radius:99px;white-space:nowrap;">ID ${s.id}</span>
+      </div>
+      ${hasVideo ? `<div style="font-size:.68rem;color:var(--green);margin-bottom:8px;">✓ 영상 있음${genAt?' ('+genAt+')':''}</div>` : ''}
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-p" style="flex:1;font-size:.75rem;" onclick="startPhraseVideo(${s.id})">
+          ${hasVideo?'↺ 재생성':'▶ 생성'} (ID ${s.id})
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function startPhraseIllust(sitId){
+  const body = {};
+  if(sitId !== null){
+    body.sit_id = sitId;
+  } else {
+    const s = parseInt(document.getElementById('ph-illust-start').value||'');
+    const e = parseInt(document.getElementById('ph-illust-end').value||'');
+    if(!isNaN(s) && !isNaN(e)){ body.start=s; body.end=e; }
+    else{ alert('시작/끝 ID를 입력하세요'); return; }
+  }
+  try{
+    const r = await fetch('/api/phrase/illust/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    if(!r.ok){alert('오류: '+(d.error||'')); return;}
+    document.getElementById('ph-illust-prog').style.display='';
+    pollPhraseIllustProg();
+  }catch(e){alert('실패: '+e);}
+}
+
+async function cancelPhraseIllust(){
+  await fetch('/api/phrase/illust/cancel',{method:'POST'});
+  document.getElementById('ph-illust-prog').style.display='none';
+}
+
+let _phIllustPolling = false;
+async function pollPhraseIllustProg(){
+  if(_phIllustPolling) return;
+  _phIllustPolling = true;
+  try{
+    const r = await fetch('/api/phrase/illust/progress');
+    const d = await r.json();
+    const prog = document.getElementById('ph-illust-prog');
+    if(d.running || d.status==='running'){
+      prog.style.display='';
+      const pct = d.pct||0;
+      document.getElementById('ph-illust-prog-bar').style.width=pct+'%';
+      document.getElementById('ph-illust-prog-pct').textContent=pct+'%';
+      document.getElementById('ph-illust-prog-label').textContent='생성 중...';
+      document.getElementById('ph-illust-prog-msg').textContent=d.msg||'';
+      _phIllustPolling=false;
+      setTimeout(pollPhraseIllustProg, 2000);
+    } else if(d.status==='done'){
+      prog.style.display='';
+      document.getElementById('ph-illust-prog-bar').style.width='100%';
+      document.getElementById('ph-illust-prog-bar').style.background='var(--green)';
+      document.getElementById('ph-illust-prog-pct').textContent='100%';
+      document.getElementById('ph-illust-prog-label').textContent='✓ 완료';
+      document.getElementById('ph-illust-prog-label').style.color='var(--green)';
+      document.getElementById('ph-illust-prog-pct').style.color='var(--green)';
+      _phIllustPolling=false;
+      setTimeout(()=>{ prog.style.display='none'; loadPhraseSituations(); },3000);
+    } else if(d.status==='failed'){
+      prog.style.display='';
+      document.getElementById('ph-illust-prog-label').textContent='✗ 실패';
+      document.getElementById('ph-illust-prog-label').style.color='var(--red)';
+      document.getElementById('ph-illust-prog-msg').textContent=d.msg||'';
+      _phIllustPolling=false;
+    } else {
+      prog.style.display='none';
+      _phIllustPolling=false;
+    }
+  }catch(e){_phIllustPolling=false;}
+}
+
+async function startPhraseVideo(sitId){
+  const body = {};
+  if(sitId !== null){
+    body.sit_id = sitId;
+  } else {
+    const s = parseInt(document.getElementById('ph-video-start').value||'');
+    const e = parseInt(document.getElementById('ph-video-end').value||'');
+    if(!isNaN(s) && !isNaN(e)){ body.start=s; body.end=e; }
+    else{ alert('시작/끝 ID를 입력하세요'); return; }
+  }
+  try{
+    const r = await fetch('/api/phrase/video/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    if(!r.ok){alert('오류: '+(d.error||'')); return;}
+    document.getElementById('ph-video-prog').style.display='';
+    pollPhraseVideoProg();
+  }catch(e){alert('실패: '+e);}
+}
+
+async function cancelPhraseVideo(){
+  await fetch('/api/phrase/video/cancel',{method:'POST'});
+  document.getElementById('ph-video-prog').style.display='none';
+}
+
+let _phVideoPolling = false;
+async function pollPhraseVideoProg(){
+  if(_phVideoPolling) return;
+  _phVideoPolling = true;
+  try{
+    const r = await fetch('/api/phrase/video/progress');
+    const d = await r.json();
+    const prog = document.getElementById('ph-video-prog');
+    if(d.running || d.status==='running'){
+      prog.style.display='';
+      const pct = d.pct||0;
+      document.getElementById('ph-video-prog-bar').style.width=pct+'%';
+      document.getElementById('ph-video-prog-pct').textContent=pct+'%';
+      document.getElementById('ph-video-prog-label').textContent='생성 중...';
+      document.getElementById('ph-video-prog-msg').textContent=d.msg||'';
+      _phVideoPolling=false;
+      setTimeout(pollPhraseVideoProg, 2000);
+    } else if(d.status==='done'){
+      prog.style.display='';
+      document.getElementById('ph-video-prog-bar').style.width='100%';
+      document.getElementById('ph-video-prog-bar').style.background='var(--green)';
+      document.getElementById('ph-video-prog-pct').textContent='100%';
+      document.getElementById('ph-video-prog-label').textContent='✓ 완료';
+      document.getElementById('ph-video-prog-label').style.color='var(--green)';
+      document.getElementById('ph-video-prog-pct').style.color='var(--green)';
+      _phVideoPolling=false;
+      setTimeout(()=>{ prog.style.display='none'; loadPhraseSituations(); },3000);
+    } else if(d.status==='failed'){
+      prog.style.display='';
+      document.getElementById('ph-video-prog-label').textContent='✗ 실패';
+      document.getElementById('ph-video-prog-label').style.color='var(--red)';
+      document.getElementById('ph-video-prog-msg').textContent=d.msg||'';
+      _phVideoPolling=false;
+    } else {
+      prog.style.display='none';
+      _phVideoPolling=false;
+    }
+  }catch(e){_phVideoPolling=false;}
 }
 
 

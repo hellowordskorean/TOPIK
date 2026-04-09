@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
 단어별 귀여운 일러스트 배치 생성 (최초 1회)
-- Google Imagen 4 Fast 사용 ($0.02/장)
+- Google Gemini (gemini-3.1-flash-image-preview) 사용
 - assets/illustrations/{한국어단어}.png 에 저장 (기존 파일 스킵)
 - 한국어 단어가 같으면 EN/CN/JP/VN 어느 DB든 동일 이미지 재사용
-- 비용: $0.02/장 × 1800 = ~$36
 
 준비:
   1. https://aistudio.google.com 에서 API 키 발급
@@ -122,6 +121,46 @@ def _pick_characters(word_id: int) -> tuple[str, str]:
     outfit = _LEARNER_OUTFITS[word_id % len(_LEARNER_OUTFITS)]
     return local, f"red panda wearing {outfit}"
 
+
+def _inject_characters(content: str, word_id: int) -> str:
+    """'person/people' 등 인물 표현을 동물 캐릭터 설명으로 교체.
+    주인공(단수 행위자) = red panda (learner), 조연(역할 표현) = 다른 동물 (local)."""
+    local, learner = _pick_characters(word_id)
+    # 복수 인물 → 주인공(red panda) + 조연
+    content = re.sub(r'\btwo people\b',      f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo persons\b',     f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo figures\b',     f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo characters\b',  f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\bpeople\b',          f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    # 단수 인물 → 모두 주인공(red panda)으로
+    content = re.sub(r'\ba young woman\b',   f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba young man\b',     f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe young woman\b', f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe young man\b',   f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba woman\b',         f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba man\b',           f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe woman\b',       f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe man\b',         f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba person\b',        f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe person\b',      f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba figure\b',        f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe figure\b',      f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\bsomeone\b',         f'{learner}',              content, flags=re.IGNORECASE)
+    # 역할 표현: 학습자 계열 → 주인공(red panda), 상대역 → 조연
+    content = re.sub(r'\ba student\b',       f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe student\b',     f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba learner\b',       f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe learner\b',     f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba customer\b',      f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe customer\b',    f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba teacher\b',       f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe teacher\b',     f'the {local}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba vendor\b',        f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe vendor\b',      f'the {local}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba scientist\b',     f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe scientist\b',   f'the {local}',            content, flags=re.IGNORECASE)
+    return content
+
 _WEBTOON_STYLE_BASE = (
     "warm watercolor and pencil sketch illustration style, "
     "soft loose brushwork with visible watercolor paper texture, "
@@ -131,21 +170,23 @@ _WEBTOON_STYLE_BASE = (
     "soft golden hour lighting throughout the scene, "
     "pastel palette: warm peach, dusty rose, sage green, muted yellow, soft blue-gray, "
     "NO neon colors, NO dark or black-dominant areas, "
-    "cute chibi anthropomorphic animal characters, "
-    "STRICT PROPORTION RULES: "
-    "head-to-body ratio 1:1.2 — head is nearly as tall as the body, very large round head, "
-    "body is short and chubby, legs are extremely short and stubby (almost no visible legs), "
-    "arms are short and rounded, "
+    "IF animal characters appear: cute chibi anthropomorphic proportions, "
+    "PROTAGONIST RULE: the main character is ALWAYS a red panda — "
+    "supporting/secondary characters can be any other cute animal, "
+    "head-to-body ratio 1:1.2 — very large round head, body short and chubby, "
+    "legs extremely short and stubby (almost no visible legs), arms short and rounded, "
     "total character height = 35 to 40 percent of the full frame height, "
-    "both characters same height, positioned side by side in lower third of frame, "
-    "full character visible from top of head to bottom of feet, "
+    "characters naturally centered in the composition, fully visible head to feet, "
     "characters have slightly more detail/contrast than the soft background, "
     "NO shoes NO boots NO sandals NO footwear — all characters have bare paws, "
-    "Korean location background is soft and slightly faded behind the characters, "
-    "depth: characters sharp in foreground, background gently blurred/misty, "
+    "Korean location background is soft and slightly faded, "
+    "depth: foreground subjects sharp, background gently blurred/misty, "
     "warm atmospheric haze giving a cozy golden hour feel, "
     "square 1:1 composition, "
-    "upper 35% of image is open sky or soft gradient — keep it uncluttered, "
+    "vary the shot size to suit the scene — close-up for detail/emotion, "
+    "medium shot for action/interaction, wide shot for location/atmosphere, "
+    "choose whichever framing makes the concept most instantly clear, "
+    "main subject centered naturally — balanced, well-composed scene, "
     "STRICT NO TEXT RULE: absolutely zero letters, zero words, zero numbers in any language, "
     "replace ALL signage and labels with visual symbols and icons only: "
     "pharmacy→red cross symbol, hair salon→scissors icon, restaurant→fork-and-spoon icon, "
@@ -157,14 +198,8 @@ _WEBTOON_STYLE_BASE = (
     "all other storefronts must use pictogram icons only — NO readable text anywhere"
 )
 
-def _webtoon_style(word_id: int) -> str:
-    local, learner = _pick_characters(word_id)
-    return (
-        f"TWO animal characters in frame: "
-        f"LEFT={local} (demonstrating the word), "
-        f"RIGHT={learner} (learner observing), "
-        + _WEBTOON_STYLE_BASE
-    )
+def _webtoon_style(word_id: int, has_characters: bool = True) -> str:
+    return _WEBTOON_STYLE_BASE
 
 # ── AI 장면 생성 시스템 ───────────────────────────────────────
 # 품사별 시각화 가이드
@@ -503,11 +538,13 @@ def _ai_word_scene(word: dict, client) -> str:
                 f"1. {pos_guide}\n"
                 "2. A student must INSTANTLY understand what this word means just from the image\n"
                 "3. Be HYPER-SPECIFIC — exact objects, exact action, exact positions\n"
-                "   WRONG: 'A person doing something in a room'\n"
-                "   RIGHT: 'A young woman standing at a produce stand, holding up a red apple with one hand "
-                "while counting coins in her palm with the other, colorful fruits arranged in baskets around her'\n"
-                "4. Maximum 2 people. One clear focal point.\n"
-                "5. NO text, signs, labels, or writing anywhere\n\n"
+                "4. Characters are OPTIONAL. Include only when a living being naturally belongs.\n"
+                "   Count: zero (objects/nature/abstract), one (solo action), two+ (social scenes).\n"
+                "   PROTAGONIST RULE: if any character appears, the MAIN character is always\n"
+                "   'a chibi red panda wearing [outfit]'. Supporting characters can be other animals.\n"
+                "5. Composition: choose the most expressive shot — close-up, medium, or wide.\n"
+                "   Main subject centered. Not pushed to the bottom.\n"
+                "6. NO text, signs, labels, or writing anywhere\n\n"
                 "Output: 2-3 sentences ONLY. Start with the main subject and action. "
                 "No preamble, no explanation."
             )]
@@ -563,12 +600,15 @@ def _ai_sentence_scene(word: dict, sent: dict, sent_idx: int, client) -> str:
                 "\nRULES:\n"
                 f"1. Show the SPECIFIC MOMENT described in the sentence — not before, not after\n"
                 f"2. Make '{korean}' ({meaning.split(',')[0].strip()}) VISUALLY OBVIOUS as the focal concept\n"
-                "3. Be HYPER-SPECIFIC — exact WHO, exact WHAT action, exact WHERE, exact OBJECTS\n"
-                "   WRONG: 'A person in a room'\n"
-                "   RIGHT: 'A man in an apron behind a market counter, carefully weighing bananas on "
-                "a hanging scale, a customer watching with a basket of groceries in hand'\n"
-                "4. Maximum 2 people. No text or signs anywhere.\n\n"
-                "Output: 2-3 sentences ONLY. Start with WHO and their action. No preamble."
+                "3. Be HYPER-SPECIFIC — exact objects, exact action, exact location details\n"
+                "4. Characters are OPTIONAL. Include only as many as the scene genuinely needs:\n"
+                "   zero (objects/location/weather/metaphor), one (solo action), two+ (interaction).\n"
+                "   PROTAGONIST RULE: if any character appears, the MAIN one is always\n"
+                "   'a chibi red panda wearing [outfit]'. Supporting roles can be other cute animals.\n"
+                "5. Composition: choose the most expressive shot — close-up, medium, or wide.\n"
+                "   Main subject centered. Not pushed to the bottom.\n"
+                "6. No text or signs anywhere.\n\n"
+                "Output: 2-3 sentences ONLY. Start with the main subject and action. No preamble."
             )]
         )
         scene = resp.text.strip()
@@ -707,9 +747,20 @@ def _lint_prompt(prompt: str) -> str:
     return prompt
 
 
+_CHAR_MARKERS = (
+    'chibi', 'panda', 'animal', 'wearing ',
+    'cat ', 'dog ', 'fox ', 'bear ', 'corgi', 'beagle',
+    'poodle', 'retriever', 'dalmatian', 'shiba',
+    'character', 'figure ',
+)
+
 def _apply_style(content: str, word_id: int = 0) -> str:
-    """커스텀 프롬프트 + lint + 웹툰 스타일"""
-    return f"{_lint_prompt(content)}. {_webtoon_style(word_id)}"
+    """커스텀 프롬프트 + lint + (선택) 캐릭터 교체 + 웹툰 스타일.
+    장면 설명에 캐릭터가 언급될 때만 캐릭터 스타일 적용."""
+    linted   = _lint_prompt(content)
+    injected = _inject_characters(linted, word_id)
+    has_chars = any(m in injected.lower() for m in _CHAR_MARKERS)
+    return f"{injected}. {_webtoon_style(word_id, has_characters=has_chars)}"
 
 
 # ── 장면 캐시 ────────────────────────────────────────────────

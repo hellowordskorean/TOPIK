@@ -89,6 +89,51 @@ def _pick_characters(sit_id: int) -> tuple[str, str]:
     return local, learner
 
 
+def _inject_characters(content: str, sit_id: int) -> str:
+    """'person/people' 등 인물 표현을 해당 상황 ID의 캐릭터 설명으로 교체.
+    Imagen이 사람 대신 지정된 동물 캐릭터를 그리도록 유도한다."""
+    local, learner = _pick_characters(sit_id)
+    # 복수 인물 → 두 캐릭터
+    content = re.sub(r'\btwo people\b',      f'{local} and {learner}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo persons\b',     f'{local} and {learner}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo figures\b',     f'{local} and {learner}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo characters\b',  f'{local} and {learner}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\bpeople\b',          f'{local} and {learner}',  content, flags=re.IGNORECASE)
+    # 젠더 단수
+    content = re.sub(r'\ba young woman\b',   f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba young man\b',     f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe young woman\b', f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe young man\b',   f'the {local}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba woman\b',         f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba man\b',           f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe woman\b',       f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe man\b',         f'the {local}',            content, flags=re.IGNORECASE)
+    # 일반 단수 인물
+    content = re.sub(r'\ba person\b',        f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe person\b',      f'the {local}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba figure\b',        f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe figure\b',      f'the {local}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bsomeone\b',         f'{local}',                content, flags=re.IGNORECASE)
+    # 역할 표현 (대화 상황 특화)
+    content = re.sub(r'\ba student\b',       f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe student\b',     f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba learner\b',       f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe learner\b',     f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba foreigner\b',     f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe foreigner\b',   f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba visitor\b',       f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe visitor\b',     f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba local\b',         f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe local\b',       f'the {local}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba teacher\b',       f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe teacher\b',     f'the {local}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba customer\b',      f'a {learner}',            content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe customer\b',    f'the {learner}',          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba vendor\b',        f'a {local}',              content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe vendor\b',      f'the {local}',            content, flags=re.IGNORECASE)
+    return content
+
+
 # ─── 웹툰 스타일 상수 ─────────────────────────────────────────
 _WEBTOON_STYLE_BASE = (
     # 아트 스타일
@@ -105,24 +150,28 @@ _WEBTOON_STYLE_BASE = (
 
     # 캐릭터 비율 (엄격히 고정)
     "cute chibi anthropomorphic animal characters, "
+    "PROTAGONIST RULE: the main/learner character is ALWAYS a red panda — "
+    "the Korean local character can be any other cute animal, "
     "STRICT PROPORTION RULES: "
     "head-to-body ratio 1:1.2 — head is nearly as tall as the body, very large round head, "
     "body is short and chubby, legs are extremely short and stubby (almost no visible legs), "
     "arms are short and rounded, "
     "total character height = 35 to 40 percent of the full frame height, "
-    "both characters same height, positioned side by side in lower third of frame, "
-    "full character visible from top of head to bottom of feet, "
+    "both characters naturally centered in the composition, fully visible head to feet, "
     "characters have slightly more detail/contrast than the soft background, "
     "NO shoes NO boots NO sandals NO footwear — all characters have bare paws, "
 
     # 배경
-    "Korean location background is soft and slightly faded behind the characters, "
+    "Korean location background is soft and slightly faded, "
     "depth: characters sharp in foreground, background gently blurred/misty, "
     "warm atmospheric haze giving a cozy golden hour feel, "
 
     # 구도 및 제약
     "square 1:1 composition, "
-    "upper 35% of image is open sky or soft gradient — keep it uncluttered, "
+    "vary the shot size to suit the scene — close-up for detail/emotion, "
+    "medium shot for interaction, wide shot for location/atmosphere, "
+    "choose whichever framing makes the scene most vivid and clear, "
+    "main subject centered naturally — balanced, well-composed scene, "
 
     # 텍스트 완전 금지 — 심볼/아이콘으로 대체
     "STRICT NO TEXT RULE: absolutely zero letters, zero words, zero numbers in any language, "
@@ -137,13 +186,7 @@ _WEBTOON_STYLE_BASE = (
 )
 
 def _webtoon_style(sit_id: int) -> str:
-    local, learner = _pick_characters(sit_id)
-    return (
-        f"TWO animal characters in frame: "
-        f"LEFT={local} (Korean local role), "
-        f"RIGHT={learner} (learner role), "
-        + _WEBTOON_STYLE_BASE
-    )
+    return _WEBTOON_STYLE_BASE
 
 # ─── 텍스트 유발 토큰 치환 ────────────────────────────────────
 # 규칙: 글씨가 생성될 수 있는 요소 → 심볼/아이콘/형태로 대체
@@ -209,8 +252,8 @@ def _lint_prompt(prompt: str) -> str:
 
 
 def _apply_style(content: str, sit_id: int = 0) -> str:
-    """장면 설명 + lint + 웹툰 스타일"""
-    return f"{_lint_prompt(content)}. {_webtoon_style(sit_id)}"
+    """장면 설명 + lint + 캐릭터 교체 + 웹툰 스타일"""
+    return f"{_inject_characters(_lint_prompt(content), sit_id)}. {_webtoon_style(sit_id)}"
 
 
 # ─── 진행 상황 추적 ──────────────────────────────────────────
@@ -283,14 +326,16 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     "Write a 2-sentence establishing shot description for a cute animal character panel.\n\n"
                     f"Situation: {sit_ko} ({sit_en})\n"
                     f"Category: {cat}\n"
-                    f"LEFT character: {local_char} (Korean local role)\n"
-                    f"RIGHT character: {learner_char} (learner role)\n\n"
+                    f"Learner character (PROTAGONIST — always a red panda): {learner_char}\n"
+                    f"Korean local character (supporting): {local_char}\n\n"
                     "RULES:\n"
                     "1. Describe the PHYSICAL SETTING — a soft minimalist Korean location matching the situation\n"
-                    "2. Describe the two specific animal characters above standing in the scene, "
-                    "body language suggesting the upcoming conversation\n"
+                    "2. Characters are optional for this establishing shot. If the scene is primarily\n"
+                    "   about the location/atmosphere, describe just the environment. If characters\n"
+                    "   add natural context, include them — the protagonist is always the red panda.\n"
                     "3. NO text, signs, labels, speech bubbles anywhere\n"
-                    "4. Focus on cozy warm atmosphere\n\n"
+                    "4. Focus on cozy warm atmosphere\n"
+                    "5. Composition: main elements centered naturally, not pushed to the bottom\n\n"
                     "Output: 2 sentences ONLY. No preamble, no explanation."
                 ),
             }],
@@ -347,8 +392,8 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client) -> str:
                     "You are an illustration director for a Korean language learning app.\n"
                     "Write ONE sentence describing the characters' actions/emotions for this dialogue panel.\n\n"
                     f"{setting_hint}"
-                    f"RIGHT character: {learner_char} (learner, says: '{my_en}')\n"
-                    f"LEFT character: {local_char} (Korean local, responds: '{resp_en}')\n"
+                    f"PROTAGONIST (red panda, learner): {learner_char} — says: '{my_en}'\n"
+                    f"Supporting character (Korean local): {local_char} — responds: '{resp_en}'\n"
                     + (f"Tip: {tip}\n" if tip else "") +
                     "\nDescribe ONLY the characters' cute gesture/expression — not the setting.\n"
                     "Output: 1 sentence ONLY. No preamble."
