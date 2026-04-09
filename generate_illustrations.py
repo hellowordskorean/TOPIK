@@ -842,6 +842,35 @@ def _generate_once_flux(prompt: str, output_path: Path) -> bool:
 
 
 _IMAGE_MODEL = "gemini-3.1-flash-image-preview"
+_CHARS_DIR   = Path("/app/assets/characters")
+
+# 캐릭터 레퍼런스 이미지 캐시 (프로세스당 1회 로드)
+_char_refs_cache: list | None = None
+
+def _load_char_refs() -> list:
+    """캐릭터 레퍼런스 이미지 로드 (PIL Image 리스트, 없으면 빈 리스트)"""
+    global _char_refs_cache
+    if _char_refs_cache is not None:
+        return _char_refs_cache
+    from PIL import Image as PILImage
+    refs = []
+    main = _CHARS_DIR / "main_character.png"
+    if main.exists():
+        try:
+            refs.append(PILImage.open(str(main)).convert("RGB"))
+        except Exception:
+            pass
+    for extra in sorted(_CHARS_DIR.glob("extra_characters*.png")):
+        try:
+            refs.append(PILImage.open(str(extra)).convert("RGB"))
+        except Exception:
+            pass
+    if refs:
+        print(f"  [캐릭터 레퍼런스] {len(refs)}장 로드")
+    else:
+        print(f"  [경고] 캐릭터 레퍼런스 없음 ({_CHARS_DIR}) — 텍스트 프롬프트만 사용")
+    _char_refs_cache = refs
+    return refs
 
 
 def _save_generated_image(response, output_path: Path) -> bool:
@@ -872,9 +901,11 @@ def _generate_once(prompt: str, output_path: Path, client) -> bool:
         return _generate_once_flux(prompt, output_path)
     # ── Gemini Flash Image ──────────────────────────────────
     try:
+        char_refs = _load_char_refs()
+        contents  = char_refs + [prompt]   # 캐릭터 레퍼런스 이미지 + 텍스트 프롬프트
         response = client.models.generate_content(
             model=_IMAGE_MODEL,
-            contents=[prompt],
+            contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=[types.Modality.IMAGE],
                 image_config=types.ImageConfig(aspect_ratio="1:1"),
