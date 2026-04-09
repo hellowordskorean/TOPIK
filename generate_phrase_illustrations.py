@@ -143,10 +143,10 @@ _WEBTOON_STYLE_BASE = (
     "watercolor wash backgrounds that are slightly soft and misty, "
 
     # 색상 팔레트
-    "soft natural daylight, clean warm-white ambient light (NOT golden hour), "
+    "time of day matches the scene naturally — morning, afternoon, evening, or night, "
     "pastel palette: ivory white, soft sky-blue, dusty rose, sage green, "
-    "light lavender, muted mint — avoid yellow and orange tones, "
-    "NO neon colors, NO dark or black-dominant areas, NO yellow-dominant tinting, "
+    "light lavender, muted mint — balanced tones, not overly yellow or orange, "
+    "NO neon colors, NO dark or black-dominant areas, "
 
     # 캐릭터 비율 (엄격히 고정)
     "cute chibi anthropomorphic animal characters, "
