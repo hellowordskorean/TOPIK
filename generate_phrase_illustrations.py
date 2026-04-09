@@ -162,7 +162,11 @@ _WEBTOON_STYLE_BASE = (
     "NO shoes NO boots NO sandals NO footwear — all characters have bare paws, "
 
     # 배경
-    "Korean location background is soft and slightly faded, "
+    "background reflects MODERN everyday Korean life — "
+    "STRICTLY AVOID: traditional tile-roof houses (기와집), wooden hanok, paper doors. "
+    "USE: concrete apartments, modern cafes, convenience stores, subway stations, "
+    "schools, offices, parks, pedestrian streets, supermarkets, modern restaurants. "
+    "Background is soft and slightly faded, "
     "depth: characters sharp in foreground, background gently blurred/misty, "
     "warm atmospheric haze giving a cozy golden hour feel, "
 
@@ -329,7 +333,9 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     f"Learner character (PROTAGONIST — always a red panda): {learner_char}\n"
                     f"Korean local character (supporting): {local_char}\n\n"
                     "RULES:\n"
-                    "1. Describe the PHYSICAL SETTING — a soft minimalist Korean location matching the situation\n"
+                    "1. Describe the PHYSICAL SETTING — a modern everyday Korean location matching the situation.\n"
+                    "   Use modern environments: apartment, cafe, subway, convenience store, office, park, etc.\n"
+                    "   Do NOT use traditional tile-roof hanok or wooden houses.\n"
                     "2. Characters are optional for this establishing shot. If the scene is primarily\n"
                     "   about the location/atmosphere, describe just the environment. If characters\n"
                     "   add natural context, include them — the protagonist is always the red panda.\n"
