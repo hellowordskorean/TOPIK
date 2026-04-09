@@ -35,3 +35,8 @@ data/LanguageTest/HSK/synonym_scan.py
 
 # OS
 .DS_Store
+
+# 생성된 구문 일러스트
+assets/phrase_illustrations/
+assets/characters/
+conversations_db.json

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Hellowords 대시보드  —  http://NAS-IP:8765"""
 import glob, json, os, subprocess, sys, threading, time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from flask import Flask, jsonify, render_template_string, request, send_from_directory
 
@@ -21,6 +21,37 @@ QUEUE_FILE      = f"{BASE}/logs/render_queue.json"
 SCHEDULE_CONFIG = f"{BASE}/logs/schedule_config.json"
 BATCH_QUEUE_F   = f"{BASE}/logs/batch_queue.json"
 ILLUST_USAGE_F  = f"{BASE}/logs/illust_usage.json"
+DAILY_AUTO_F    = f"{BASE}/logs/daily_auto.json"
+CONV_DB_PATH    = f"{BASE}/phrases_db.json"
+CONV_LOG_F      = f"{BASE}/logs/conv_log.json"
+
+DAILY_LANGS = ["EN", "CN", "JP", "VN", "ES"]
+_LANG_FLAG  = {"EN":"🇺🇸","CN":"🇹🇼","JP":"🇯🇵","VN":"🇻🇳","ES":"🇲🇽"}
+_LANG_NAME  = {"EN":"English","CN":"中文","JP":"日本語","VN":"Tiếng Việt","ES":"Español"}
+
+try:
+    from zoneinfo import ZoneInfo as _ZI
+    _LANG_TZ = {"EN":_ZI("America/New_York"),"CN":_ZI("Asia/Taipei"),
+                "JP":_ZI("Asia/Tokyo"),"VN":_ZI("Asia/Ho_Chi_Minh"),
+                "ES":_ZI("America/Mexico_City")}
+    _HAS_TZ = True
+except Exception:
+    _HAS_TZ = False
+    _LANG_UTC_OFFSET_H = {"EN":-5,"CN":8,"JP":9,"VN":7,"ES":-6}
+
+def _next_publish_at(lang: str) -> datetime:
+    if _HAS_TZ:
+        tz = _LANG_TZ.get(lang, _LANG_TZ["EN"])
+        now_l = datetime.now(tz)
+        t = now_l.replace(hour=7, minute=30, second=0, microsecond=0)
+        if t <= now_l: t += timedelta(days=1)
+        return t.astimezone(timezone.utc)
+    off = _LANG_UTC_OFFSET_H.get(lang, -5)
+    now_u = datetime.now(timezone.utc)
+    now_l = now_u + timedelta(hours=off)
+    t = now_l.replace(hour=7, minute=30, second=0, microsecond=0)
+    if t <= now_l: t += timedelta(days=1)
+    return (t - timedelta(hours=off)).replace(tzinfo=timezone.utc)
 
 DEFAULT_SCHEDULE = {"slots": [
     {"exam":"TOPIK","lang":"EN","level":1},
@@ -69,6 +100,13 @@ def load_json(path, default):
     try:
         with open(path, encoding="utf-8") as f: return json.load(f)
     except: return default
+
+def illust_exists(path: str) -> bool:
+    """일러스트 파일이 실제로 존재하고 내용이 있는지 확인 (빈 파일 제외)"""
+    try:
+        return os.path.exists(path) and os.path.getsize(path) > 0
+    except Exception:
+        return False
 
 def save_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -124,8 +162,12 @@ def get_db(category="시험용", exam="TOPIK", lang="EN"):
 def render_db_path_for(exam, lang, level):
     """렌더링 시 make_video.py에 전달할 DB 파일 경로"""
     LT = f"{DATA_ROOT}/LanguageTest"
+    fallback = f"{LT}/words_db.json"
     if exam == "TOPIK":
-        return f"{LT}/TOPIK/{lang}/topik_{level}.json"
+        # ES → SP 폴더 매핑 (스페인어 데이터는 SP/ 디렉토리에 저장)
+        folder = "SP" if lang == "ES" else lang
+        path = f"{LT}/TOPIK/{folder}/topik_{level}.json"
+        return path if os.path.exists(path) else fallback
     # 다른 시험: 파일명에서 level 매칭
     exam_dir = f"{LT}/{exam}"
     if os.path.isdir(exam_dir):
@@ -134,7 +176,7 @@ def render_db_path_for(exam, lang, level):
             if fname.endswith(".json") and not fname.endswith(".bak"):
                 if level_str in fname.lower():
                     return f"{exam_dir}/{fname}"
-    return f"{LT}/words_db.json"
+    return fallback
 
 # ─── 통계 ────────────────────────────────────────────────────
 def get_videos_log():  return load_json(VIDEOS_LOG, [])
@@ -157,8 +199,12 @@ def get_render_config():
 def set_render_config(desktop_enabled):
     save_json(RENDER_CONFIG, {"desktop_enabled": desktop_enabled})
 
+def get_words_db():
+    """전역 words_db.json 로드 — 일러스트 폴더명과 동일한 전역 ID(1~1800) 사용"""
+    return load_json(f"{DATA_ROOT}/LanguageTest/words_db.json", [])
+
 def get_illustration_stats():
-    db = get_db()
+    db = get_words_db()
     stats = {"total": len(db), "word_done": 0, "sent_done": 0, "sent_total": 0, "by_level": {}}
     for w in db:
         lv = str(w.get("level", 1))
@@ -167,11 +213,11 @@ def get_illustration_stats():
         stats["by_level"][lv]["total"] += 1
         stats["by_level"][lv]["sent_total"] += num_sents
         stats["sent_total"] += num_sents
-        if os.path.exists(f"{ILLUST_DIR}/lv{lv}/{w['word']}/word.png"):
+        if illust_exists(f"{ILLUST_DIR}/lv{lv}/{w['id']}_{w['word']}/word.png"):
             stats["word_done"] += 1
             stats["by_level"][lv]["word_done"] += 1
         for i in range(num_sents):
-            if os.path.exists(f"{ILLUST_DIR}/lv{lv}/{w['word']}/{i}.png"):
+            if illust_exists(f"{ILLUST_DIR}/lv{lv}/{w['id']}_{w['word']}/{i}.png"):
                 stats["sent_done"] += 1
                 stats["by_level"][lv]["sent_done"] += 1
     stats["progress"] = load_json(ILLUST_PROG_F, {"status": "idle", "pct": 0})
@@ -235,7 +281,7 @@ def get_next_word_id():
 
 def get_next_words_for_custom(exam, lang, level, count=30, start_id=None, end_id=None):
     """커스텀 렌더: 지정 시험/언어/등급의 미렌더 단어 반환 (ID범위 지원)"""
-    db = get_db("시험용", exam, lang)
+    db = get_words_db()  # 전역 ID 기반
     videos = get_videos_log()
     rendered = {v["word_id"] for v in videos
                 if v.get("exam", "TOPIK") == exam and v.get("language", "EN") == lang}
@@ -251,9 +297,32 @@ def get_next_words_for_custom(exam, lang, level, count=30, start_id=None, end_id
                 break
     return words
 
+def parse_ids_str(ids_str):
+    """'1,3~10,15' 형식 파싱 → 정렬된 ID 리스트"""
+    import re
+    ids = set()
+    for part in str(ids_str).split(','):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r'^(\d+)\s*[~\-]\s*(\d+)$', part)
+        if m:
+            for i in range(int(m.group(1)), int(m.group(2)) + 1):
+                ids.add(i)
+        elif part.isdigit():
+            ids.add(int(part))
+    return sorted(ids)
+
+def get_words_by_ids(exam, lang, level, ids):
+    """지정 ID 목록의 단어 반환 — 전역 words_db.json 기준"""
+    db = get_words_db()
+    id_set = set(ids)
+    return [w for w in sorted(db, key=lambda x: x["id"])
+            if w["id"] in id_set and (level is None or w.get("level") == level)]
+
 def get_level_id_range(exam, lang, level):
     """해당 등급의 ID 범위 반환 (min_id, max_id, total)"""
-    db = get_db("시험용", exam, lang)
+    db = get_words_db()
     ids = [w["id"] for w in db if w.get("level") == level]
     if not ids:
         return None, None, 0
@@ -340,7 +409,7 @@ def get_batch_today():
         has_illust = False
         if word:
             lv = str(word.get("level", 1))
-            has_illust = os.path.exists(f"{ILLUST_DIR}/lv{lv}/{word['word']}/word.png")
+            has_illust = illust_exists(f"{ILLUST_DIR}/lv{lv}/{word['id']}_{word['word']}/word.png")
         batch.append({"slot": i, "exam": exam, "lang": lang, "level": level,
                       "word": word, "status": status, "has_illust": has_illust})
     return batch
@@ -362,29 +431,56 @@ def get_batch_for_date(date_str):
     return sorted(result, key=lambda x: x.get("generated_at",""))
 
 # ─── 렌더링 ──────────────────────────────────────────────────
-def write_queue_job(word_id, db_path=None, exam="TOPIK", lang="EN"):
+def write_queue_job(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube"):
     if not db_path:
         db_path = "/app/data/LanguageTest/words_db.json"
-    save_json(QUEUE_FILE,{"word_id":word_id,"db_path":db_path,
-        "exam":exam,"lang":lang,
+    job_id = f"{word_id}_{lang}_{fmt}_{int(time.time()*1000)}"
+    save_json(QUEUE_FILE,{"job_id":job_id,"word_id":word_id,"db_path":db_path,
+        "exam":exam,"lang":lang,"fmt":fmt,
         "status":"pending","claimed_by":None,"claimed_at":None,
         "created_at":datetime.now().isoformat(),"completed_at":None})
+    return job_id
 
 _render_thread = None
 _illust_thread = None
 _illust_proc   = None   # 일러스트 생성 서브프로세스 (취소용)
 _batch_thread  = None
 
+def _desktop_is_busy() -> bool:
+    """데스크탑이 현재 렌더링 작업을 처리 중인지 확인"""
+    q = load_json(QUEUE_FILE, {})
+    if q.get("status") == "claimed":
+        return True
+    # progress.json 기준: 2분 내 업데이트된 running 상태
+    try:
+        p = load_json(PROGRESS_F, {})
+        if p.get("status") == "running":
+            age = (datetime.now() - datetime.fromisoformat(
+                p.get("updated_at","2000-01-01"))).total_seconds()
+            if age < 120:
+                return True
+    except Exception:
+        pass
+    return False
+
 def _is_batch_cancelled():
     bq = load_json(BATCH_QUEUE_F, {})
     return bq.get("status") == "cancelled"
 
 def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
-                     exam="TOPIK", lang="EN", words_map=None):
+                     exam="TOPIK", lang="EN", words_map=None, job_items=None):
     """target: "desktop", "nas", "auto"(글로벌 토글 따름)
-    auto_upload: True면 렌더링 후 YouTube 자동 업로드"""
+    auto_upload: True면 렌더링 후 YouTube 자동 업로드
+    job_items: [(word_id, lang, db_path, word_text), ...] — 다중 언어 지원 시 사용"""
     global _batch_thread
-    for i, word_id in enumerate(word_ids):
+    # job_items가 있으면 per-item lang/db_path 사용, 없으면 기존 방식
+    if job_items is not None:
+        # 5-tuple (word_id, lang, db_path, word_text, fmt) 또는 구형 4-tuple 지원
+        jobs = [j if len(j) == 5 else (*j, "youtube") for j in job_items]
+    else:
+        jobs = [(wid, lang, db_path, None, "youtube") for wid in word_ids]
+
+    for i, (word_id, job_lang, job_db_path, _word_text, job_fmt) in enumerate(jobs):
         # 취소 확인
         if _is_batch_cancelled():
             bq = load_json(BATCH_QUEUE_F, {})
@@ -396,59 +492,86 @@ def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
             save_json(BATCH_QUEUE_F, bq)
             return
 
+        render_ok = False
         try:
             bq = load_json(BATCH_QUEUE_F, {})
             bq["current"] = i
+            # 다중 언어: (word_id, lang) 쌍으로 매칭
             for item in bq.get("items", []):
-                if item["word_id"] == word_id:
+                if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
                     item["status"] = "rendering"
+                    break
             save_json(BATCH_QUEUE_F, bq)
 
-            write_queue_job(word_id, db_path, exam=exam, lang=lang)
             cfg = get_render_config()
             use_desktop = (target == "desktop") if target != "auto" else cfg.get("desktop_enabled")
 
             if use_desktop:
-                deadline = time.time() + 30 * 60
-                finished = False
-                while time.time() < deadline:
+                # 데스크탑이 바쁘면 먼저 완료될 때까지 대기 (최대 45분)
+                busy_deadline = time.time() + 45 * 60
+                while time.time() < busy_deadline:
                     if _is_batch_cancelled(): break
+                    if not _desktop_is_busy(): break
                     time.sleep(15)
-                    rq = load_json(QUEUE_FILE, {})
-                    if rq.get("status") in ("done", "failed"):
-                        finished = True; break
                 if _is_batch_cancelled(): continue
-                if not finished:
-                    run_render_nas(word_id, db_path, exam=exam, lang=lang)
+
+                # 여전히 바쁘면 NAS로 전환
+                if _desktop_is_busy():
+                    print(f"  [batch] 데스크탑 busy → NAS 폴백 ({job_lang}/{job_fmt})")
+                    run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                    rq = load_json(QUEUE_FILE, {})
+                    render_ok = rq.get("status") == "done"
+                else:
+                    # job_id로 내 작업 완료 여부 추적
+                    job_id = write_queue_job(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                    deadline = time.time() + 40 * 60
+                    finished = False
+                    while time.time() < deadline:
+                        if _is_batch_cancelled(): break
+                        time.sleep(15)
+                        rq = load_json(QUEUE_FILE, {})
+                        # 내 job_id가 완료됐는지 확인
+                        if (rq.get("job_id") == job_id and
+                                rq.get("status") in ("done", "failed")):
+                            finished = True; break
+                    if _is_batch_cancelled(): continue
+                    if not finished:
+                        print(f"  [batch] 데스크탑 타임아웃 → NAS 폴백 ({job_lang}/{job_fmt})")
+                        run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                    rq = load_json(QUEUE_FILE, {})
+                    render_ok = rq.get("status") == "done"
             else:
-                run_render_nas(word_id, db_path, exam=exam, lang=lang)
+                run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                rq = load_json(QUEUE_FILE, {})
+                render_ok = rq.get("status") == "done"
 
             # 렌더링 후 자동 업로드
-            if auto_upload and words_map and word_id in words_map:
+            if render_ok and auto_upload and words_map and word_id in words_map:
                 bq2 = load_json(BATCH_QUEUE_F, {})
                 for item in bq2.get("items", []):
-                    if item["word_id"] == word_id:
+                    if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
                         item["status"] = "uploading"
                 save_json(BATCH_QUEUE_F, bq2)
 
                 word = words_map[word_id]
                 lv = word.get("level", 1)
-                video_path = f"/app/output/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}.mp4"
+                video_path = f"/app/output/{exam}/{job_lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}_{job_lang}.mp4"
                 if not os.path.exists(video_path):
-                    video_path = f"/app/output/topik_{word_id:04d}_{word['word']}.mp4"
+                    video_path = f"/app/output/topik_{word_id:04d}_{word['word']}_{job_lang}.mp4"
                 if os.path.exists(video_path):
-                    vid = run_upload(word, video_path, exam=exam, lang=lang)
+                    vid = run_upload(word, video_path, exam=exam, lang=job_lang)
                     if vid:
                         for item in bq2.get("items", []):
-                            if item["word_id"] == word_id:
+                            if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
                                 item["video_id"] = vid
-        except Exception:
-            pass
+        except Exception as e:
+            render_ok = False
 
         bq = load_json(BATCH_QUEUE_F, {})
         for item in bq.get("items", []):
-            if item["word_id"] == word_id:
-                item["status"] = "done"
+            if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
+                item["status"] = "done" if render_ok else "failed"
+                break
         bq["current"] = i + 1
         save_json(BATCH_QUEUE_F, bq)
 
@@ -457,24 +580,30 @@ def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
     bq["completed_at"] = datetime.now().isoformat()
     save_json(BATCH_QUEUE_F, bq)
 
-def run_render_nas(word_id, db_path=None, exam="TOPIK", lang="EN"):
+def run_render_nas(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube"):
     if not db_path:
         db_path = "/app/data/LanguageTest/words_db.json"
     try:
         q = load_json(QUEUE_FILE,{})
         q.update({"status":"claimed","claimed_by":"nas","claimed_at":datetime.now().isoformat()})
         save_json(QUEUE_FILE,q)
-        r = subprocess.run([sys.executable,"/app/make_video.py",
-            "--db",db_path,
-            "--id",str(word_id),"--output","/app/output/",
-            "--exam",exam,"--lang",lang])
+        cmd = [sys.executable,"/app/make_video.py",
+            "--db",db_path,"--id",str(word_id),
+            "--output","/app/output/","--exam",exam,"--lang",lang]
+        if fmt == "reels":
+            cmd += ["--format","reels"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  [NAS render FAIL] {lang}/{fmt} id={word_id}\n{r.stderr[-800:]}")
         q = load_json(QUEUE_FILE,{})
-        q.update({"status":"done" if r.returncode==0 else "failed","completed_at":datetime.now().isoformat()})
+        q.update({"status":"done" if r.returncode==0 else "failed",
+                  "error": r.stderr[-400:] if r.returncode!=0 else None,
+                  "completed_at":datetime.now().isoformat()})
         save_json(QUEUE_FILE,q)
     except Exception as e:
         save_json(QUEUE_FILE,{**load_json(QUEUE_FILE,{}),"status":"failed","error":str(e)})
 
-def run_upload(word, video_path, exam="TOPIK", lang="EN"):
+def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None):
     """렌더링 완료된 영상을 YouTube에 업로드"""
     try:
         sys.path.insert(0, os.path.dirname(__file__) or "/app")
@@ -484,7 +613,20 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN"):
         upload_log = load_upload_log(log_path)
         day_number = upload_log.get("last_day", 0) + 1
 
-        metadata = generate_metadata(word, day_number, lang=lang)
+        # 언어별 의미 조회 (per-language DB에서 — 없으면 word['meaning'] 그대로)
+        lang_meaning = None
+        try:
+            db_path = render_db_path_for(exam, lang, word.get("level", 1))
+            with open(db_path, encoding="utf-8") as _f:
+                _raw = json.load(_f)
+            _words = _raw.get("words", _raw) if isinstance(_raw, dict) else _raw
+            _pw = next((w for w in _words if w["id"] == word["id"]), None)
+            if _pw:
+                lang_meaning = _pw.get("meaning")
+        except Exception:
+            pass
+
+        metadata = generate_metadata(word, day_number, lang=lang, lang_meaning=lang_meaning)
         youtube = get_youtube_client(lang=lang)
 
         # 썸네일 경로 추정
@@ -501,17 +643,21 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN"):
                 thumb_path = None
 
         video_id = upload_video(youtube, video_path, metadata,
+                                publish_at=publish_at,
                                 thumbnail_path=thumb_path if thumb_path and os.path.exists(thumb_path) else None)
 
-        upload_log["last_day"] = day_number
-        upload_log["last_word_id"] = word["id"]
+        if not publish_at:
+            upload_log["last_day"] = day_number
+            upload_log["last_word_id"] = word["id"]
         upload_log.setdefault("uploaded", []).append({
             "day": day_number,
             "word_id": word["id"],
             "word": word["word"],
             "meaning": word.get("meaning", ""),
+            "lang": lang,
             "video_id": video_id,
             "youtube_url": f"https://youtube.com/watch?v={video_id}",
+            "scheduled_at": publish_at.isoformat() if publish_at else None,
             "uploaded_at": datetime.now().isoformat(),
         })
         save_upload_log(upload_log, log_path)
@@ -520,6 +666,266 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN"):
         print(f"  업로드 실패: {e}")
         import traceback; traceback.print_exc()
         return None
+
+# ─── 회화 영상 렌더링·업로드 ──────────────────────────────────
+def load_conv_db():
+    return load_json(CONV_DB_PATH, {"themes": []})
+
+def load_conv_log():
+    return load_json(CONV_LOG_F, [])
+
+def save_conv_log(log):
+    save_json(CONV_LOG_F, log)
+
+_conv_render_thread = None
+_conv_render_progress = {"status": "idle", "theme_id": None, "lang": None, "pct": 0, "msg": ""}
+
+def run_conv_render_bg(theme_id: str, lang: str):
+    global _conv_render_thread, _conv_render_progress
+    if _conv_render_thread and _conv_render_thread.is_alive():
+        return False, "이미 렌더링 중입니다"
+    def _run():
+        global _conv_render_progress
+        _conv_render_progress = {"status": "running", "theme_id": theme_id, "lang": lang, "pct": 10, "msg": "렌더링 시작..."}
+        try:
+            cmd = [sys.executable, "/app/make_conversation.py",
+                   "--db", CONV_DB_PATH,
+                   "--theme", theme_id,
+                   "--lang", lang,
+                   "--output", OUTPUT_DIR]
+            _conv_render_progress["pct"] = 20
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode == 0:
+                video_path = f"{OUTPUT_DIR}/conversation/{lang}/conv_{theme_id}_{lang}.mp4"
+                log = load_conv_log()
+                log = [x for x in log if not (x.get("theme_id") == theme_id and x.get("lang") == lang)]
+                log.append({"theme_id": theme_id, "lang": lang, "video_path": video_path,
+                             "rendered_at": datetime.now().isoformat(), "uploaded": False})
+                save_conv_log(log)
+                _conv_render_progress = {"status": "done", "theme_id": theme_id, "lang": lang, "pct": 100, "msg": "완료"}
+            else:
+                _conv_render_progress = {"status": "failed", "theme_id": theme_id, "lang": lang,
+                                         "pct": 0, "msg": r.stderr[-400:]}
+        except Exception as e:
+            _conv_render_progress = {"status": "failed", "theme_id": theme_id, "lang": lang, "pct": 0, "msg": str(e)}
+    _conv_render_thread = threading.Thread(target=_run, daemon=True)
+    _conv_render_thread.start()
+    return True, "렌더링 시작"
+
+def run_conv_upload(theme_id: str, lang: str):
+    """회화 영상 YouTube 업로드"""
+    try:
+        video_path = f"{OUTPUT_DIR}/conversation/{lang}/conv_{theme_id}_{lang}.mp4"
+        if not os.path.exists(video_path):
+            return None, "영상 파일이 없습니다 — 먼저 렌더링하세요"
+
+        db = load_conv_db()
+        theme = next((t for t in db["themes"] if t["id"] == theme_id), None)
+        if not theme:
+            return None, f"테마 '{theme_id}'를 찾을 수 없습니다"
+
+        sys.path.insert(0, os.path.dirname(__file__) or "/app")
+        from upload_youtube import get_youtube_client, upload_video, load_upload_log, save_upload_log
+
+        lang_key = lang.lower()
+        ko_title = theme["title"].get("ko", theme_id)
+        local_title = theme["title"].get(lang_key, ko_title)
+        search_title = theme.get("search_title", {}).get(lang_key, local_title)
+        emoji = theme.get("emoji", "💬")
+
+        _CONV_HOOKS = {
+            "EN": f"Learn real Korean phrases for everyday situations! {emoji}",
+            "JP": f"韓国語の実践フレーズを1テーマずつ学ぼう！{emoji}",
+            "CN": f"一起学习韩语日常会话！{emoji}",
+            "VN": f"Học hội thoại tiếng Hàn thực tế mỗi ngày！{emoji}",
+            "ES": f"¡Aprende frases coreanas para situaciones reales! {emoji}",
+        }
+        _CONV_TAGS = {
+            "EN": ["learn korean", "korean conversation", "korean phrases", "speak korean", "korean for beginners", search_title, ko_title],
+            "JP": ["韓国語会話", "韓国語フレーズ", "韓国語初心者", "K-POP韓国語", search_title, ko_title],
+            "CN": ["韩语日常会话", "韩语短语", "学韩语", "韩语教程", search_title, ko_title],
+            "VN": ["học tiếng Hàn", "hội thoại tiếng Hàn", "tiếng Hàn giao tiếp", search_title, ko_title],
+            "ES": ["coreano conversación", "frases en coreano", "aprender coreano", search_title, ko_title],
+        }
+
+        hook = _CONV_HOOKS.get(lang, _CONV_HOOKS["EN"])
+        tags = _CONV_TAGS.get(lang, _CONV_TAGS["EN"])
+        tags_str = ",".join(t for t in tags if t)[:490]
+
+        metadata = {
+            "title": f"{emoji} {search_title}",
+            "description": f"{hook}\n\n{ko_title} | Korean Conversation Series\n\n#한국어 #Korean #{lang}",
+            "tags": tags_str,
+            "categoryId": "27",
+            "privacyStatus": "public",
+        }
+
+        youtube = get_youtube_client(lang=lang)
+        video_id = upload_video(youtube, video_path, metadata, publish_at=None, thumbnail_path=None)
+
+        log_path = f"{BASE}/logs/uploads.json"
+        upload_log = load_upload_log(log_path)
+        upload_log.setdefault("uploaded", []).append({
+            "type": "conversation",
+            "theme_id": theme_id,
+            "lang": lang,
+            "video_id": video_id,
+            "youtube_url": f"https://youtube.com/watch?v={video_id}",
+            "uploaded_at": datetime.now().isoformat(),
+        })
+        save_upload_log(upload_log, log_path)
+
+        # conv_log 업데이트
+        clog = load_conv_log()
+        for e in clog:
+            if e.get("theme_id") == theme_id and e.get("lang") == lang:
+                e["uploaded"] = True
+                e["video_id"] = video_id
+        save_conv_log(clog)
+
+        return video_id, None
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return None, str(e)
+
+# ─── 일별 자동 렌더링·업로드 시스템 ─────────────────────────
+_daily_rendering = False
+_daily_render_lock = threading.Lock()
+
+def _next_lv1_word_id(current_id: int) -> int:
+    db = get_words_db()
+    lv1 = sorted([w["id"] for w in db if w.get("level") == 1])
+    if not lv1: return 1
+    if current_id not in lv1: return lv1[0]
+    return lv1[(lv1.index(current_id) + 1) % len(lv1)]
+
+def _illust_exists_for(word_id: int) -> bool:
+    db = get_words_db()
+    w = next((x for x in db if x["id"] == word_id), None)
+    if not w: return True
+    lv_dir = f"{BASE}/assets/illustrations/lv{w['level']}"
+    if not os.path.isdir(lv_dir): return False
+    for entry in os.listdir(lv_dir):
+        parts = entry.split("_", 1)
+        if len(parts) == 2 and parts[0].isdigit() and parts[1] == w["word"]:
+            if os.path.exists(os.path.join(lv_dir, entry, "word.png")):
+                return True
+    return False
+
+def _daily_init_langs() -> dict:
+    return {lg: {
+        "youtube_rendered": False, "reels_rendered": False,
+        "youtube_uploaded": False, "reels_uploaded": False,
+        "youtube_video_id": None,  "reels_video_id":  None,
+        "publish_at": _next_publish_at(lg).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    } for lg in DAILY_LANGS}
+
+def _daily_render_job(word_id: int, lang: str, fmt: str):
+    global _daily_rendering
+    db_path = render_db_path_for("TOPIK", lang, 1)
+    ok = False
+    try:
+        cfg2 = get_render_config()
+        if cfg2.get("desktop_enabled"):
+            write_queue_job(word_id, db_path, exam="TOPIK", lang=lang, fmt=fmt)
+            deadline = time.time() + 40 * 60
+            while time.time() < deadline:
+                time.sleep(15)
+                rq = load_json(QUEUE_FILE, {})
+                if rq.get("status") in ("done", "failed"): break
+            if load_json(QUEUE_FILE, {}).get("status") != "done":
+                run_render_nas(word_id, db_path, exam="TOPIK", lang=lang, fmt=fmt)
+        else:
+            run_render_nas(word_id, db_path, exam="TOPIK", lang=lang, fmt=fmt)
+        ok = load_json(QUEUE_FILE, {}).get("status") == "done"
+    except Exception as e:
+        print(f"  [daily] 렌더 오류 ({lang}/{fmt}): {e}")
+    s = load_json(DAILY_AUTO_F, {})
+    key = "youtube_rendered" if fmt == "youtube" else "reels_rendered"
+    if lang in s.get("langs", {}):
+        s["langs"][lang][key] = ok
+        save_json(DAILY_AUTO_F, s)
+    _daily_rendering = False
+
+def _daily_upload_job(word: dict, lang: str, fmt: str):
+    lv = word.get("level", 1)
+    sub = "reels" if fmt == "reels" else "video"
+    suf = "_reels" if fmt == "reels" else ""
+    vpath = f"/app/output/TOPIK/{lang}/lv{lv}/{sub}/topik_{word['id']:04d}_{word['word']}_{lang}{suf}.mp4"
+    if not os.path.exists(vpath):
+        print(f"  [daily] 영상 없음: {vpath}")
+        return
+    pub = None
+    s = load_json(DAILY_AUTO_F, {})
+    raw_pub = s.get("langs", {}).get(lang, {}).get("publish_at")
+    if raw_pub:
+        try: pub = datetime.fromisoformat(raw_pub.replace("Z", "+00:00"))
+        except: pass
+    vid = run_upload(word, vpath, exam="TOPIK", lang=lang, publish_at=pub)
+    s = load_json(DAILY_AUTO_F, {})
+    ku = "youtube_uploaded" if fmt == "youtube" else "reels_uploaded"
+    kv = "youtube_video_id"  if fmt == "youtube" else "reels_video_id"
+    if lang in s.get("langs", {}):
+        s["langs"][lang][ku] = bool(vid)
+        if vid: s["langs"][lang][kv] = vid
+        save_json(DAILY_AUTO_F, s)
+
+def _daily_auto_tick():
+    global _daily_rendering
+    try:
+        s = load_json(DAILY_AUTO_F, {})
+        today = datetime.now().strftime("%Y-%m-%d")
+        if s.get("today") != today:
+            next_id = _next_lv1_word_id(s.get("current_word_id", 0))
+            s = {"auto_upload": s.get("auto_upload", False),
+                 "current_word_id": next_id, "today": today,
+                 "illust_done": False, "langs": _daily_init_langs()}
+            save_json(DAILY_AUTO_F, s)
+        if not s.get("auto_upload"): return
+        word_id = s.get("current_word_id")
+        if not word_id: return
+        # 일러스트 확인
+        if not s.get("illust_done"):
+            if _illust_exists_for(word_id):
+                s["illust_done"] = True; save_json(DAILY_AUTO_F, s)
+            # 없으면 이미 실행 중이 아닐 때만 생성 요청
+            elif _illust_proc is None:
+                threading.Thread(target=run_illustration_generation,
+                    args=(word_id, word_id), kwargs={"mode":"both"}, daemon=True).start()
+            return
+        if _daily_rendering: return
+        db = get_words_db()
+        word = next((w for w in db if w["id"] == word_id), None)
+        if not word: return
+        # 렌더링 (언어별 youtube → reels 순)
+        for lg in DAILY_LANGS:
+            ls = s["langs"].get(lg, {})
+            for fmt in ("youtube", "reels"):
+                key = f"{fmt}_rendered"
+                if not ls.get(key):
+                    with _daily_render_lock:
+                        if _daily_rendering: return
+                        _daily_rendering = True
+                    threading.Thread(target=_daily_render_job,
+                        args=(word_id, lg, fmt), daemon=True).start()
+                    return
+        # 업로드
+        for lg in DAILY_LANGS:
+            ls = s["langs"].get(lg, {})
+            for fmt in ("youtube", "reels"):
+                if ls.get(f"{fmt}_rendered") and not ls.get(f"{fmt}_uploaded"):
+                    threading.Thread(target=_daily_upload_job,
+                        args=(word, lg, fmt), daemon=True).start()
+                    time.sleep(1)
+    except Exception as e:
+        print(f"  [daily_tick] {e}")
+
+def _daily_scheduler_loop():
+    while True:
+        time.sleep(60)
+        _daily_auto_tick()
+
+threading.Thread(target=_daily_scheduler_loop, daemon=True).start()
 
 def run_illustration_generation(start, end, mode="both"):
     global _illust_proc
@@ -653,6 +1059,60 @@ def api_save_schedule():
     save_json(SCHEDULE_CONFIG, {"slots": slots})
     return jsonify({"status": "ok", "slots": slots})
 
+# ─── 일별 자동 API ───────────────────────────────────────────
+@app.route("/api/daily/config", methods=["GET","POST"])
+def api_daily_config():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        s = load_json(DAILY_AUTO_F, {})
+        if "auto_upload" in data: s["auto_upload"] = bool(data["auto_upload"])
+        save_json(DAILY_AUTO_F, s)
+        if data.get("auto_upload"):
+            threading.Thread(target=_daily_auto_tick, daemon=True).start()
+        return jsonify({"ok": True})
+    return jsonify(load_json(DAILY_AUTO_F, {}))
+
+@app.route("/api/daily/status")
+def api_daily_status():
+    s = load_json(DAILY_AUTO_F, {})
+    word_id = s.get("current_word_id")
+    word = None
+    if word_id:
+        db = get_words_db()
+        word = next((w for w in db if w["id"] == word_id), None)
+    # 현지 업로드 시간 표시용 변환
+    for lg in DAILY_LANGS:
+        ls = s.get("langs", {}).get(lg, {})
+        raw = ls.get("publish_at","")
+        if raw:
+            try:
+                dt = datetime.fromisoformat(raw.replace("Z","+00:00"))
+                if _HAS_TZ:
+                    loc = dt.astimezone(_LANG_TZ[lg])
+                    ls["publish_local"] = loc.strftime("%m/%d %H:%M (%Z)")
+                else:
+                    ls["publish_local"] = dt.strftime("%m/%d %H:%M UTC")
+            except: pass
+    lv1_total = len([w for w in get_words_db() if w.get("level")==1])
+    return jsonify({"state": s, "word": word, "rendering": _daily_rendering,
+                    "lv1_total": lv1_total})
+
+@app.route("/api/daily/trigger", methods=["POST"])
+def api_daily_trigger():
+    threading.Thread(target=_daily_auto_tick, daemon=True).start()
+    return jsonify({"ok": True})
+
+@app.route("/api/daily/set-word", methods=["POST"])
+def api_daily_set_word():
+    data = request.get_json(silent=True) or {}
+    try: word_id = int(data["word_id"])
+    except: return jsonify({"error":"word_id 필요"}), 400
+    s = load_json(DAILY_AUTO_F, {})
+    s.update({"current_word_id": word_id, "today": datetime.now().strftime("%Y-%m-%d"),
+               "illust_done": False, "langs": _daily_init_langs()})
+    save_json(DAILY_AUTO_F, s)
+    return jsonify({"ok": True})
+
 @app.route("/api/batch/today")
 def api_batch_today():
     batch = get_batch_today()
@@ -691,6 +1151,36 @@ def api_render_batch():
         daemon=True)
     _batch_thread.start()
     return jsonify({"status": "started", "count": len(word_ids), "target": target, "auto_upload": auto_upload})
+
+@app.route("/api/render/upload", methods=["POST"])
+def api_render_upload():
+    """렌더링 완료된 영상 수동 업로드"""
+    data = request.get_json(silent=True) or {}
+    word_id = data.get("word_id")
+    lang    = data.get("lang", "EN")
+    exam    = data.get("exam", "TOPIK")
+    if not word_id:
+        return jsonify({"error": "word_id 필요"}), 400
+    db = get_words_db()
+    word = next((w for w in db if w["id"] == word_id), None)
+    if not word:
+        return jsonify({"error": f"단어 {word_id} 없음"}), 404
+    lv = word.get("level", 1)
+    # 영상 경로 탐색 (youtube → reels 순)
+    vpath = f"/app/output/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}_{lang}.mp4"
+    if not os.path.exists(vpath):
+        return jsonify({"error": f"영상 파일 없음: {vpath}"}), 404
+    def _do_upload():
+        vid = run_upload(word, vpath, exam=exam, lang=lang)
+        if vid:
+            bq = load_json(BATCH_QUEUE_F, {})
+            for it in bq.get("items", []):
+                if it.get("word_id") == word_id and it.get("lang", "EN") == lang:
+                    it["status"] = "uploaded"
+                    it["video_id"] = vid
+            save_json(BATCH_QUEUE_F, bq)
+    threading.Thread(target=_do_upload, daemon=True).start()
+    return jsonify({"ok": True, "video_path": vpath})
 
 @app.route("/api/render/cancel", methods=["POST"])
 def api_render_cancel():
@@ -736,7 +1226,8 @@ def api_upload_manual():
     lv = word.get("level", 1)
     video_path = None
     candidates = [
-        f"{OUTPUT_DIR}/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}.mp4",
+        f"{OUTPUT_DIR}/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}_{lang}.mp4",
+        f"{OUTPUT_DIR}/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}.mp4",  # 구형 이름 폴백
         f"{OUTPUT_DIR}/topik_{word_id:04d}_{word['word']}.mp4",
     ]
     for p in candidates:
@@ -760,20 +1251,22 @@ def api_render_preview():
     exam     = request.args.get("exam", "TOPIK")
     lang     = request.args.get("lang", "EN")
     level    = int(request.args.get("level", 1))
-    count    = int(request.args.get("count", 30))
-    start_id = request.args.get("start_id", type=int)
-    end_id   = request.args.get("end_id", type=int)
-    words = get_next_words_for_custom(exam, lang, level, min(count, 30), start_id, end_id)
+    ids_str  = request.args.get("ids", "")
+    if ids_str:
+        ids   = parse_ids_str(ids_str)
+        words = get_words_by_ids(exam, lang, level, ids)
+    else:
+        words = get_next_words_for_custom(exam, lang, level, 30, None, None)
     # 일러스트 존재 여부 추가
     for w in words:
         lv = str(w.get("level", 1))
-        w["has_illust"] = os.path.exists(f"{ILLUST_DIR}/lv{lv}/{w['word']}/word.png")
+        w["has_illust"] = illust_exists(f"{ILLUST_DIR}/lv{lv}/{w['id']}_{w['word']}/word.png")
     # 남은 수 계산
-    db = get_db("시험용", exam, lang)
+    all_words_db = get_words_db()
     videos = get_videos_log()
     rendered = {v["word_id"] for v in videos
                 if v.get("exam", "TOPIK") == exam and v.get("language", "EN") == lang}
-    remaining = sum(1 for w in db if w.get("level") == level and w["id"] not in rendered)
+    remaining = sum(1 for w in all_words_db if w.get("level") == level and w["id"] not in rendered)
     # 등급 ID 범위
     min_id, max_id, total = get_level_id_range(exam, lang, level)
     return jsonify({"words": words, "count": len(words), "remaining": remaining,
@@ -781,56 +1274,88 @@ def api_render_preview():
 
 @app.route("/api/render/custom", methods=["POST"])
 def api_render_custom():
-    """커스텀 렌더링 — 시험/언어/등급/ID범위/위치 지정"""
+    """커스텀 렌더링 — 시험(다중)/언어(다중)/등급/ID범위/위치 지정"""
     global _batch_thread
     data     = request.get_json(silent=True) or {}
-    exam     = data.get("exam", "TOPIK")
-    lang     = data.get("lang", "EN")
-    level    = int(data.get("level", 1))
-    count    = int(data.get("count", 30))
-    start_id = data.get("start_id")
-    end_id   = data.get("end_id")
+    # targets: [{exam, level}, ...] 다중 지원. 구형 단일 호환
+    raw_targets = data.get("targets")
+    if raw_targets:
+        targets = [{"exam": t.get("exam","TOPIK"), "level": int(t.get("level",1)),
+                    "ids_str": t.get("ids_str","")} for t in raw_targets]
+    else:
+        targets = [{"exam": data.get("exam","TOPIK"), "level": int(data.get("level",1)),
+                    "ids_str": ""}]
+    # langs: 다중 선택 지원
+    langs    = data.get("langs") or [data.get("lang", "EN")]
+    formats  = data.get("formats") or ["youtube"]
     target   = data.get("target", "auto")
-    words  = get_next_words_for_custom(exam, lang, level, min(count, 30), start_id, end_id)
-    if not words:
-        return jsonify({"error": "렌더링할 단어가 없습니다"}), 400
     bq = load_json(BATCH_QUEUE_F, {})
     if bq.get("status") == "running":
         return jsonify({"error": "이미 렌더링 중"}), 409
-    db_path = render_db_path_for(exam, lang, level)
-    word_ids = [w["id"] for w in words]
-    wmap = {w["id"]: w["word"] for w in words}
-    items = [{"word_id": wid, "word": wmap.get(wid, ""), "status": "pending"} for wid in word_ids]
-    save_json(BATCH_QUEUE_F, {"status":"running","total":len(items),"current":0,
-        "items":items,"target":target,"exam":exam,"lang":lang,"level":level,
+    base_lang = langs[0]
+    # 모든 시험×등급 조합에서 단어 수집
+    job_items = []
+    queue_items = []
+    all_words = []
+    for t in targets:
+        exam_t    = t["exam"]
+        level_t   = t["level"]
+        ids_str_t = t.get("ids_str", "")
+        if ids_str_t:
+            ids_list = parse_ids_str(ids_str_t)
+            words_t  = get_words_by_ids(exam_t, base_lang, level_t, ids_list)
+        else:
+            words_t = get_next_words_for_custom(exam_t, base_lang, level_t, 30, None, None)
+        all_words.extend(words_t)
+        for lg in langs:
+            db_path = render_db_path_for(exam_t, lg, level_t)
+            for w in words_t:
+                for fmt in formats:
+                    job_items.append((w["id"], lg, db_path, w["word"], fmt))
+                    fmt_label = "" if fmt == "youtube" else " [릴스]"
+                    queue_items.append({"word_id": w["id"], "word": w["word"] + fmt_label,
+                                         "exam": exam_t, "level": level_t,
+                                         "lang": lg, "fmt": fmt, "status": "pending"})
+    if not job_items:
+        return jsonify({"error": "렌더링할 단어가 없습니다"}), 400
+    first_exam  = targets[0]["exam"]
+    first_level = targets[0]["level"]
+    save_json(BATCH_QUEUE_F, {"status":"running","total":len(queue_items),"current":0,
+        "items":queue_items,"target":target,"exam":first_exam,"langs":langs,"level":first_level,
         "started_at":datetime.now().isoformat()})
-    _batch_thread = threading.Thread(target=run_batch_render, args=(word_ids,target,db_path), daemon=True)
+    _batch_thread = threading.Thread(
+        target=run_batch_render,
+        kwargs={"word_ids": [], "target": target, "exam": first_exam,
+                "lang": base_lang, "job_items": job_items},
+        daemon=True)
     _batch_thread.start()
-    return jsonify({"status":"started","count":len(word_ids),"target":target,
-                    "words":[{"id":w["id"],"word":w["word"]} for w in words]})
+    return jsonify({"status":"started","count":len(job_items),"target":target,
+                    "words":[{"id":w["id"],"word":w["word"]} for w in all_words],
+                    "langs": langs})
 
 @app.route("/api/illustrations/word/<int:word_id>")
 def api_illust_word(word_id):
     """단어별 일러스트 상태 조회 (썸네일 경로 + 존재 여부)"""
     level = request.args.get("level", type=int)
-    db = get_db()
+    db = get_words_db()  # 전역 ID 기반 words_db.json 사용
     word = next((w for w in db if w["id"] == word_id and (level is None or w.get("level") == level)), None)
     if not word:
         return jsonify({"error": "단어 없음"}), 404
     lv = word.get("level", 1)
     korean = word["word"]
-    base = f"{ILLUST_DIR}/lv{lv}/{korean}"
+    folder = f"{word_id}_{korean}"
+    base = f"{ILLUST_DIR}/lv{lv}/{folder}"
     sents = word.get("sentences", [])
     items = []
     # word.png
     wp = f"{base}/word.png"
-    items.append({"idx": -1, "type": "word", "exists": os.path.exists(wp),
-                  "url": f"/illust/{lv}/{korean}/word.png"})
+    items.append({"idx": -1, "type": "word", "exists": illust_exists(wp),
+                  "url": f"/illust/{lv}/{folder}/word.png"})
     # 예문 0~9
     for i, s in enumerate(sents):
         sp = f"{base}/{i}.png"
-        items.append({"idx": i, "type": "sentence", "exists": os.path.exists(sp),
-                      "url": f"/illust/{lv}/{korean}/{i}.png",
+        items.append({"idx": i, "type": "sentence", "exists": illust_exists(sp),
+                      "url": f"/illust/{lv}/{folder}/{i}.png",
                       "ko": s.get("ko", ""), "en": s.get("en", "")})
     return jsonify({"word_id": word_id, "word": korean,
                     "meaning": word.get("meaning", ""), "level": lv, "items": items})
@@ -841,34 +1366,69 @@ def serve_illust(lv, word, filename):
     dirpath = f"{ILLUST_DIR}/lv{lv}/{word}"
     return send_from_directory(dirpath, filename)
 
-_regen_thread = None
+_regen_threads = {}   # key: (word_id, idx) → Thread
+_regen_status  = {}   # key: (word_id, idx) → {status, log, error}
 
-def _run_regen(word_id, idx):
+def _run_regen(word_id, idx, notes=""):
     """단일 이미지 재생성 (백그라운드 스레드) — VLM 통합 검증 포함"""
+    key = (word_id, idx)
+    _regen_status[key] = {"status": "running", "started_at": datetime.now().isoformat()}
     cmd = [sys.executable, "/app/generate_illustrations.py",
            "--db", "/app/data/LanguageTest/words_db.json",
            "--regen", str(word_id),
-           "--vlm-verify"]  # 재생성 시 항상 텍스트+비율+스타일 검증
+           "--vlm-verify"]
     if idx is not None and idx >= 0:
         cmd += ["--regen-idx", str(idx)]
-    subprocess.run(cmd)
+    if notes:
+        cmd += ["--regen-issues", notes]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        out_tail = (result.stdout or "")[-800:]
+        err_tail = (result.stderr or "")[-800:]
+        if result.returncode != 0:
+            _regen_status[key] = {"status": "failed", "log": out_tail, "error": err_tail}
+            app.logger.error(f"[regen] word={word_id} idx={idx} 실패\nSTDERR:\n{err_tail}\nSTDOUT:\n{out_tail}")
+        else:
+            _regen_status[key] = {"status": "done", "log": out_tail}
+            app.logger.info(f"[regen] word={word_id} idx={idx} 완료\n{out_tail}")
+    except subprocess.TimeoutExpired:
+        _regen_status[key] = {"status": "timeout", "error": "subprocess 10분 초과"}
+        app.logger.error(f"[regen] word={word_id} idx={idx} 타임아웃 (10분 초과)")
+    except Exception as e:
+        _regen_status[key] = {"status": "error", "error": str(e)}
+        app.logger.error(f"[regen] word={word_id} idx={idx} 예외: {e}")
 
 @app.route("/api/illustrations/regen", methods=["POST"])
 def api_illust_regen():
-    """개별 이미지 재생성: {"word_id": 301, "idx": 3}  (idx=-1 또는 미지정이면 word.png)"""
-    global _regen_thread
+    """개별 이미지 재생성: {"word_id": 301, "idx": 3, "notes": "..."}"""
+    global _regen_threads
     data = request.get_json(silent=True) or {}
     word_id = int(data.get("word_id", 0))
     idx = data.get("idx")  # None=word, 0~9=sentence
+    notes = data.get("notes", "")
     if not word_id:
         return jsonify({"error": "word_id 필요"}), 400
-    if _regen_thread and _regen_thread.is_alive():
-        return jsonify({"error": "재생성 진행 중"}), 409
     regen_idx = int(idx) if idx is not None and int(idx) >= 0 else None
-    _regen_thread = threading.Thread(target=_run_regen, args=(word_id, regen_idx), daemon=True)
-    _regen_thread.start()
+    key = (word_id, regen_idx)
+    # 동일 이미지가 이미 재생성 중이면 거부
+    if key in _regen_threads and _regen_threads[key].is_alive():
+        return jsonify({"error": "해당 이미지 재생성 진행 중"}), 409
+    t = threading.Thread(target=_run_regen, args=(word_id, regen_idx, notes), daemon=True)
+    _regen_threads[key] = t
+    t.start()
     label = f"예문[{regen_idx}]" if regen_idx is not None else "단어"
     return jsonify({"status": "started", "word_id": word_id, "target": label})
+
+@app.route("/api/illustrations/regen/log")
+def api_illust_regen_log():
+    """재생성 상태/에러 로그 조회"""
+    word_id = int(request.args.get("word_id", 0))
+    idx_raw = request.args.get("idx", "none")
+    regen_idx = int(idx_raw) if idx_raw not in ("none", "-1", "", "null") else None
+    key = (word_id, regen_idx)
+    info = dict(_regen_status.get(key, {"status": "unknown"}))
+    info["running"] = key in _regen_threads and _regen_threads[key].is_alive()
+    return jsonify(info)
 
 @app.route("/api/illustrations/cancel", methods=["POST"])
 def api_cancel_illustrations():
@@ -942,6 +1502,116 @@ def api_audit_results():
         return jsonify({"error": "감사 결과 없음"}), 404
     running = bool(_audit_thread and _audit_thread.is_alive())
     return jsonify({**data, "running": running})
+
+_audit_regen_thread = None
+_audit_regen_progress = {"status": "idle"}
+
+def _run_audit_regen_all():
+    global _audit_regen_progress
+    _audit_regen_progress = {"status": "running"}
+    subprocess.run([sys.executable, "/app/generate_illustrations.py",
+                    "--db", "/app/data/LanguageTest/words_db.json",
+                    "--regen-audit-failed"])
+    _audit_regen_progress = {"status": "done"}
+
+def _run_audit_regen_selected(entries):
+    global _audit_regen_progress
+    total = len(entries)
+    _audit_regen_progress = {"status": "running", "total": total, "done": 0, "errors": 0}
+    for entry in entries:
+        word_id = int(entry["word_id"])
+        sent_idx = int(entry.get("sent_idx", -1))
+        issues = entry.get("issues", "")
+        cmd = [sys.executable, "/app/generate_illustrations.py",
+               "--db", "/app/data/LanguageTest/words_db.json",
+               "--regen", str(word_id), "--vlm-verify"]
+        if sent_idx >= 0:
+            cmd += ["--regen-idx", str(sent_idx)]
+        if issues and issues != "—":
+            cmd += ["--regen-issues", issues]
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode == 0:
+            _audit_regen_progress["done"] = _audit_regen_progress.get("done", 0) + 1
+        else:
+            _audit_regen_progress["errors"] = _audit_regen_progress.get("errors", 0) + 1
+    _audit_regen_progress = {**_audit_regen_progress, "status": "done"}
+
+@app.route("/api/illustrations/audit/regen", methods=["POST"])
+def api_audit_regen():
+    global _audit_regen_thread
+    if _audit_regen_thread and _audit_regen_thread.is_alive():
+        return jsonify({"error": "재생성 진행 중"}), 409
+    data = request.get_json(silent=True) or {}
+    all_failed = data.get("all_failed", False)
+    entries = data.get("entries", [])
+    if all_failed:
+        _audit_regen_thread = threading.Thread(target=_run_audit_regen_all, daemon=True)
+    elif entries:
+        _audit_regen_thread = threading.Thread(target=_run_audit_regen_selected, args=(entries,), daemon=True)
+    else:
+        return jsonify({"error": "entries 또는 all_failed 필요"}), 400
+    _audit_regen_thread.start()
+    return jsonify({"status": "started"})
+
+@app.route("/api/illustrations/audit/regen/status")
+def api_audit_regen_status():
+    running = bool(_audit_regen_thread and _audit_regen_thread.is_alive())
+    return jsonify({**_audit_regen_progress, "running": running})
+
+# ─── 회화 API ─────────────────────────────────────────────────
+@app.route("/api/conv/themes")
+def api_conv_themes():
+    db = load_conv_db()
+    clog = load_conv_log()
+    log_map = {(e["theme_id"], e["lang"]): e for e in clog}
+    themes = []
+    for t in db.get("themes", []):
+        langs = {}
+        for lang in ["EN", "JP", "CN", "VN", "ES"]:
+            entry = log_map.get((t["id"], lang))
+            langs[lang] = {
+                "rendered": bool(entry and os.path.exists(entry.get("video_path", ""))),
+                "uploaded": bool(entry and entry.get("uploaded")),
+                "video_id": entry.get("video_id") if entry else None,
+            }
+        themes.append({
+            "id": t["id"], "emoji": t.get("emoji", "💬"),
+            "title": t.get("title", {}),
+            "phrase_count": len(t.get("phrases", [])),
+            "color": t.get("color", "#818cf8"),
+            "langs": langs,
+        })
+    return jsonify({"themes": themes})
+
+@app.route("/api/conv/render", methods=["POST"])
+def api_conv_render():
+    data = request.get_json(silent=True) or {}
+    theme_id = data.get("theme_id")
+    lang = data.get("lang", "EN")
+    if not theme_id:
+        return jsonify({"error": "theme_id 필요"}), 400
+    ok, msg = run_conv_render_bg(theme_id, lang)
+    if not ok:
+        return jsonify({"error": msg}), 409
+    return jsonify({"status": "started", "theme_id": theme_id, "lang": lang})
+
+@app.route("/api/conv/render/status")
+def api_conv_render_status():
+    running = bool(_conv_render_thread and _conv_render_thread.is_alive())
+    return jsonify({**_conv_render_progress, "running": running})
+
+@app.route("/api/conv/upload", methods=["POST"])
+def api_conv_upload():
+    data = request.get_json(silent=True) or {}
+    theme_id = data.get("theme_id")
+    lang = data.get("lang", "EN")
+    if not theme_id:
+        return jsonify({"error": "theme_id 필요"}), 400
+    video_id, err = run_conv_upload(theme_id, lang)
+    if err:
+        return jsonify({"error": err}), 500
+    return jsonify({"status": "ok", "video_id": video_id,
+                    "youtube_url": f"https://youtube.com/watch?v={video_id}"})
 
 # ─── HTML ─────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
@@ -1026,6 +1696,12 @@ tr:hover td{background:var(--bg3);}
 /* MISC */
 .pulse{animation:pulse 1.8s infinite;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes regenProg{0%{width:0%}60%{width:75%}85%{width:88%}95%{width:93%}100%{width:96%}}
+@keyframes regenSpin{to{transform:rotate(360deg)}}
+.regen-overlay{position:absolute;inset:0;background:rgba(0,0,0,.78);border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:10;}
+.regen-overlay .regen-spinner{width:28px;height:28px;border:3px solid rgba(255,255,255,.15);border-top-color:#6366f1;border-radius:50%;animation:regenSpin .8s linear infinite;}
+.regen-overlay .regen-bar-wrap{width:75%;height:5px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden;}
+.regen-overlay .regen-bar{height:100%;background:linear-gradient(90deg,#6366f1,#818cf8);border-radius:3px;animation:regenProg 270s ease-out forwards;}
 .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:16px;font-size:.7rem;background:var(--border);border:1px solid var(--border2);}
 .num-input{background:var(--border);border:1px solid var(--border2);border-radius:5px;color:var(--text);padding:4px 8px;font-size:.78rem;width:68px;}
 .view{display:none;}.view:first-child{display:block;}
@@ -1097,6 +1773,11 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   </div>
   <div class="s-item" data-view="youtube" onclick="nav(this,'youtube')" style="--c:#f87171;">
     <span>▶</span><span>YouTube</span>
+  </div>
+  <div class="s-sep"></div>
+  <div class="s-group">회화</div>
+  <div class="s-item" data-view="conv" onclick="nav(this,'conv')" style="--c:#ec4899;">
+    <span>💬</span><span>기본 회화</span>
   </div>
 </div>
 
@@ -1216,57 +1897,105 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <button class="tab on" id="rp-tab-batch" onclick="rpTab('batch')">📅 오늘 배치</button>
     <button class="tab" id="rp-tab-custom" onclick="rpTab('custom')">🎬 커스텀</button>
     <button class="tab" id="rp-tab-history" onclick="rpTab('history')">🗓 날짜별</button>
+    <button class="tab" id="rp-tab-live" onclick="rpTab('live')">📊 진행 상황</button>
     <button class="tab" id="rp-tab-config" onclick="rpTab('config')">⚙️ 설정</button>
   </div>
-  <!-- 탭 내용: 배치 -->
+  <!-- 탭 내용: 배치 (일별 자동 시스템) -->
   <div id="rp-batch">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-      <div><div id="rp-today-date" style="font-weight:700;font-size:.86rem;"></div><div id="rp-today-sub" style="font-size:.68rem;color:var(--muted);"></div></div>
-      <div style="display:flex;gap:6px;">
-        <button id="rp-target-desktop" onclick="setBatchTarget('desktop')" class="btn btn-p" style="font-size:.7rem;padding:4px 10px;">💻 GPU</button>
-        <button id="rp-target-nas" onclick="setBatchTarget('nas')" class="btn btn-m" style="font-size:.7rem;padding:4px 10px;">🖥 NAS</button>
+    <!-- 자동 업로드 토글 -->
+    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
+      <div>
+        <div style="font-weight:700;font-size:.85rem;">매일 자동 렌더링 & 업로드</div>
+        <div style="font-size:.68rem;color:var(--muted);margin-top:2px;">Lv1 단어 1개 · 본편+쇼츠 · 5개 언어 · 현지 아침 7:30</div>
+      </div>
+      <label style="position:relative;display:inline-block;width:52px;height:28px;cursor:pointer;">
+        <input type="checkbox" id="daily-auto-toggle" onchange="setDailyAuto(this.checked)" style="opacity:0;width:0;height:0;">
+        <span id="daily-toggle-slider" style="position:absolute;inset:0;background:#444;border-radius:28px;transition:.3s;">
+          <span id="daily-toggle-knob" style="position:absolute;left:3px;top:3px;width:22px;height:22px;background:#fff;border-radius:50%;transition:.3s;"></span>
+        </span>
+      </label>
+    </div>
+
+    <!-- 오늘의 단어 -->
+    <div style="background:var(--bg);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <div style="font-size:.72rem;color:var(--muted);font-weight:600;">오늘의 단어 · Lv1</div>
+        <div id="daily-lv1-progress" style="font-size:.68rem;color:var(--muted2);"></div>
+      </div>
+      <div id="daily-word-display" style="display:flex;align-items:center;gap:12px;">
+        <div style="font-size:1.6rem;font-weight:700;color:var(--blue);" id="daily-word-ko">—</div>
+        <div style="font-size:.82rem;color:var(--muted);" id="daily-word-meaning"></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+        <span style="font-size:.65rem;color:var(--muted2);">ID:</span>
+        <input id="daily-word-id-input" class="inp" type="number" min="1" max="300" style="width:70px;font-size:.72rem;padding:2px 6px;" placeholder="ID">
+        <button onclick="dailySetWord()" class="btn btn-m" style="font-size:.68rem;padding:3px 10px;">단어 변경</button>
+        <span id="daily-illust-badge" style="margin-left:auto;font-size:.65rem;"></span>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-      <label style="font-size:.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px;">
-        <input type="checkbox" id="rp-select-all" onchange="toggleAllBatchCheck()" style="accent-color:var(--green);">전체 선택
-      </label>
-      <div id="rp-batch-queue" style="margin-left:auto;font-size:.68rem;color:var(--muted);"></div>
+
+    <!-- 언어별 상태 -->
+    <div style="background:var(--bg);border-radius:10px;padding:10px 14px;margin-bottom:12px;">
+      <div style="font-size:.7rem;color:var(--muted);font-weight:600;margin-bottom:8px;">언어별 렌더링 & 업로드</div>
+      <table style="width:100%;font-size:.7rem;border-collapse:collapse;" id="daily-lang-table">
+        <thead><tr style="color:var(--muted2);font-size:.65rem;">
+          <th style="text-align:left;padding:3px 6px;">언어</th>
+          <th style="text-align:center;padding:3px 6px;">본편</th>
+          <th style="text-align:center;padding:3px 6px;">쇼츠</th>
+          <th style="text-align:left;padding:3px 6px;">업로드 예약</th>
+        </tr></thead>
+        <tbody id="daily-lang-tbody"></tbody>
+      </table>
     </div>
-    <div id="rp-batch-list"></div>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
-      <label style="font-size:.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px;">
-        <input type="checkbox" id="rp-auto-upload" style="accent-color:var(--green);">렌더링 후 YouTube 자동 업로드
-      </label>
+
+    <!-- 렌더링 현황 -->
+    <div id="daily-render-status" style="display:none;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:10px;font-size:.72rem;color:var(--amber);font-weight:600;"></div>
+
+    <!-- 수동 트리거 -->
+    <div style="display:flex;gap:8px;">
+      <button onclick="dailyTrigger()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.78rem;">▶ 지금 렌더링 시작</button>
     </div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <button id="rp-render-all" onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;">▶ 전체 렌더링</button>
-      <button id="rp-cancel-btn" onclick="cancelBatchRender()" class="btn btn-r" style="display:none;flex:1;justify-content:center;">⏹ 렌더링 취소</button>
-    </div>
+    <div style="margin-top:6px;font-size:.65rem;color:var(--muted2);text-align:center;">자동 OFF 상태에서도 수동으로 실행 가능</div>
   </div>
   <!-- 탭 내용: 커스텀 -->
   <div id="rp-custom" style="display:none;">
     <div class="sec">렌더링 대상</div>
-    <div class="g4" style="margin-bottom:12px;">
-      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">시험</div>
-        <select id="rc-exam" onchange="updateCustomPreview()" class="inp" style="width:100%;"><option value="TOPIK">🇰🇷 TOPIK</option><option value="TOEIC">📝 TOEIC</option><option value="JLPT">🌸 JLPT</option><option value="IELTS">🎓 IELTS</option><option value="HSK">🐉 HSK</option></select></div>
-      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">언어</div>
-        <select id="rc-lang" onchange="updateCustomPreview()" class="inp" style="width:100%;"><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select></div>
-      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">등급</div>
-        <select id="rc-level" onchange="updateCustomPreview()" class="inp" style="width:100%;"><option value="1">1급</option><option value="2">2급</option><option value="3">3급</option><option value="4">4급</option><option value="5">5급</option><option value="6">6급</option></select></div>
-      <div><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">수량</div>
-        <input type="number" id="rc-count" value="10" min="1" max="30" onchange="updateCustomPreview()" oninput="updateCustomPreview()" class="inp" style="width:100%;"></div>
-    </div>
-    <div class="card-sm" style="margin-bottom:14px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-        <span style="font-size:.68rem;color:var(--muted2);font-weight:600;">ID 범위 (선택)</span>
-        <span id="rc-id-range-hint" style="font-size:.6rem;color:var(--muted2);"></span>
+    <div style="margin-bottom:10px;">
+      <div id="rc-targets">
+        <div class="rc-target-row" style="display:flex;gap:6px;align-items:flex-end;margin-bottom:6px;">
+          <div style="flex:3;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">시험</div>
+            <select class="rc-exam inp" onchange="updateCustomPreview()" style="width:100%;"><option value="TOPIK">🇰🇷 TOPIK</option><option value="TOEIC">📝 TOEIC</option><option value="JLPT">🌸 JLPT</option><option value="IELTS">🎓 IELTS</option><option value="HSK">🐉 HSK</option></select></div>
+          <div style="flex:2;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">등급</div>
+            <select class="rc-level inp" onchange="updateCustomPreview()" style="width:100%;"><option value="1">1급</option><option value="2">2급</option><option value="3">3급</option><option value="4">4급</option><option value="5">5급</option><option value="6">6급</option></select></div>
+          <div style="flex:2.5;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">ID <span style="font-weight:400;opacity:.7;">(숫자·범위·쉼표)</span></div>
+            <input class="rc-ids inp" placeholder="예: 1, 3~10, 15" oninput="updateCustomPreview()" style="width:100%;"></div>
+          <div style="width:28px;flex-shrink:0;"></div>
+        </div>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <input type="number" id="rc-start-id" placeholder="시작" onchange="updateCustomPreview()" oninput="updateCustomPreview()" class="inp" style="flex:1;">
-        <span style="color:var(--muted2);">~</span>
-        <input type="number" id="rc-end-id" placeholder="끝" onchange="updateCustomPreview()" oninput="updateCustomPreview()" class="inp" style="flex:1;">
-        <button onclick="document.getElementById('rc-start-id').value='';document.getElementById('rc-end-id').value='';updateCustomPreview();" class="btn btn-m" style="font-size:.66rem;padding:4px 8px;">초기화</button>
+      <button onclick="addTargetRow()" class="btn btn-m" style="font-size:.68rem;padding:5px 12px;margin-top:4px;">＋ 추가</button>
+    </div>
+    <div style="margin-bottom:12px;">
+      <div style="font-size:.62rem;color:var(--muted2);margin-bottom:6px;">언어 <span style="color:var(--muted2);font-weight:400;">(복수 선택 가능)</span></div>
+      <div id="rc-lang-btns" style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="rc-lang-btn active" data-lang="EN" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--blue);background:var(--blue)22;color:var(--blue);cursor:pointer;">🇺🇸 EN</button>
+        <button class="rc-lang-btn" data-lang="JP" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇯🇵 JP</button>
+        <button class="rc-lang-btn" data-lang="CN" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇨🇳 CN</button>
+        <button class="rc-lang-btn" data-lang="VN" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇻🇳 VN</button>
+        <button class="rc-lang-btn" data-lang="ES" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇪🇸 ES</button>
+        <button class="rc-lang-btn" data-lang="KO" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇰🇷 KO</button>
+      </div>
+    </div>
+    <div style="margin-bottom:12px;">
+      <div style="font-size:.62rem;color:var(--muted2);margin-bottom:6px;">포맷 <span style="color:var(--muted2);font-weight:400;">(복수 선택 가능)</span></div>
+      <div style="display:flex;gap:6px;">
+        <button class="rc-fmt-btn active" data-fmt="youtube" onclick="toggleFmtBtn(this)"
+          style="padding:5px 16px;font-size:.72rem;border-radius:6px;border:1px solid var(--green);background:var(--green)22;color:var(--green);cursor:pointer;flex:1;">
+          ▶ 본편 (YouTube)
+        </button>
+        <button class="rc-fmt-btn active" data-fmt="reels" onclick="toggleFmtBtn(this)"
+          style="padding:5px 16px;font-size:.72rem;border-radius:6px;border:1px solid var(--amber);background:var(--amber)22;color:var(--amber);cursor:pointer;flex:1;">
+          ⚡ 릴스 (Shorts)
+        </button>
       </div>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:6px;">
@@ -1285,6 +2014,30 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   <div id="rp-history" style="display:none;">
     <input type="date" id="rp-date-pick" onchange="loadHistoryDate()" class="inp" style="width:100%;margin-bottom:12px;">
     <div id="rp-history-list"></div>
+  </div>
+  <!-- 탭 내용: 진행 상황 -->
+  <div id="rp-live" style="display:none;">
+    <div id="live-summary" style="margin-bottom:12px;padding:12px;background:var(--bg3);border-radius:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <span id="live-status-label" style="font-size:.8rem;font-weight:700;color:var(--green);">대기 중</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="live-timing" style="font-size:.62rem;color:var(--muted2);"></span>
+          <button id="live-cancel-btn" onclick="cancelBatchRender()" style="display:none;font-size:.68rem;padding:3px 10px;border-radius:5px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-weight:600;">⏹ 취소</button>
+        </div>
+      </div>
+      <div style="background:rgba(255,255,255,.08);border-radius:4px;height:8px;overflow:hidden;margin-bottom:6px;">
+        <div id="live-pbar" style="height:100%;background:linear-gradient(90deg,#6366f1,#3fb950);border-radius:4px;width:0%;transition:width .4s;"></div>
+      </div>
+      <div style="display:flex;gap:16px;font-size:.66rem;color:var(--muted2);">
+        <span>✅ 완료: <b id="live-done" style="color:var(--green);">0</b></span>
+        <span>⏳ 대기: <b id="live-pending" style="color:var(--amber);">0</b></span>
+        <span>⟳ 진행: <b id="live-running" style="color:#58a6ff;">0</b></span>
+        <span>✕ 실패: <b id="live-failed" style="color:var(--red);">0</b></span>
+        <span>↷ 건너뜀: <b id="live-skipped" style="color:var(--muted);">0</b></span>
+        <span style="margin-left:auto;">합계: <b id="live-total">0</b></span>
+      </div>
+    </div>
+    <div id="live-list" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;"></div>
   </div>
   <!-- 탭 내용: 설정 -->
   <div id="rp-config" style="display:none;">
@@ -1345,7 +2098,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <div class="sec">일러스트 미리보기 / 재생성</div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
       <span style="font-size:.74rem;color:var(--muted);">등급:</span>
-      <select id="illust-browse-level" class="inp" style="width:60px;" onchange="loadIllustBrowse()">
+      <select id="illust-browse-level" class="inp" style="width:60px;" onchange="onIllustLevelChange()">
         <option value="1">1급</option><option value="2">2급</option><option value="3">3급</option>
         <option value="4">4급</option><option value="5">5급</option><option value="6">6급</option>
       </select>
@@ -1354,6 +2107,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <button onclick="loadIllustBrowse()" class="btn btn-a">조회</button>
       <button onclick="illustBrowseNav(-1)" class="btn btn-m">&lt; 이전</button>
       <button onclick="illustBrowseNav(1)" class="btn btn-m">다음 &gt;</button>
+      <span id="illust-browse-id-range" style="font-size:.62rem;color:var(--muted2);"></span>
       <span id="illust-browse-info" style="font-size:.78rem;font-weight:600;margin-left:8px;"></span>
     </div>
     <div id="illust-browse-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;"></div>
@@ -1386,13 +2140,20 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <button onclick="loadAuditResults()" class="btn btn-m">결과 새로고침</button>
     </div>
     <div id="audit-status" style="display:none;margin-bottom:8px;font-size:.74rem;color:var(--amber);font-weight:600;"></div>
-    <div id="audit-summary" style="display:none;margin-bottom:10px;padding:8px 12px;border-radius:6px;background:var(--bg);font-size:.75rem;"></div>
+    <div id="audit-summary" style="display:none;margin-bottom:8px;padding:8px 12px;border-radius:6px;background:var(--bg);font-size:.75rem;"></div>
+    <div id="audit-regen-actions" style="display:none;margin-bottom:10px;padding:6px 0;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button onclick="auditRegenAll()" class="btn" style="background:#ef4444;color:#fff;font-size:.73rem;padding:4px 12px;" id="audit-regen-all-btn">✗ 실패 전체 재생성</button>
+      <button onclick="auditRegenSelected()" class="btn btn-m" style="font-size:.73rem;padding:4px 12px;" id="audit-regen-sel-btn">☑ 선택 재생성</button>
+      <span id="audit-regen-status" style="font-size:.72rem;color:var(--amber);font-weight:600;"></span>
+    </div>
     <div id="audit-results" style="display:none;overflow-x:auto;">
       <table style="width:100%;font-size:.72rem;">
         <thead><tr style="color:var(--muted);">
+          <th style="padding:4px 8px;"><input type="checkbox" id="audit-check-all" onchange="auditToggleAll(this.checked)" title="실패 전체 선택" style="cursor:pointer;"></th>
           <th style="text-align:left;padding:4px 8px;">ID</th>
           <th style="text-align:left;padding:4px 8px;">단어</th>
           <th style="text-align:left;padding:4px 8px;">급</th>
+          <th style="text-align:left;padding:4px 8px;">예문</th>
           <th style="text-align:left;padding:4px 8px;">결과</th>
           <th style="text-align:left;padding:4px 8px;">문제</th>
         </tr></thead>
@@ -1418,6 +2179,38 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     </div>
     <div class="card" style="margin-bottom:14px;"><div class="sec">영상별 조회수 TOP 20</div><canvas id="chart-yt-views" height="130"></canvas></div>
     <div class="card"><div class="sec">영상 통계</div><div style="overflow-x:auto;"><table><thead><tr><th>Day</th><th>단어</th><th>등급</th><th>조회수</th><th>좋아요</th><th>YouTube</th></tr></thead><tbody id="yt-tbody"></tbody></table></div></div>
+  </div>
+</div>
+
+<!-- ══ 기본 회화 ══════════════════════════════════════════ -->
+<div id="view-conv" class="view">
+  <div class="bc"><span class="cur">💬 기본 회화</span></div>
+  <!-- 언어 선택 -->
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+    <span style="font-size:.76rem;color:var(--muted);">언어:</span>
+    <div id="conv-lang-btns" style="display:flex;gap:6px;">
+      <button class="btn btn-p conv-lang-btn active" data-lang="EN" onclick="convSetLang('EN')">🇺🇸 EN</button>
+      <button class="btn btn-m conv-lang-btn" data-lang="JP" onclick="convSetLang('JP')">🇯🇵 JP</button>
+      <button class="btn btn-m conv-lang-btn" data-lang="CN" onclick="convSetLang('CN')">🇨🇳 CN</button>
+      <button class="btn btn-m conv-lang-btn" data-lang="VN" onclick="convSetLang('VN')">🇻🇳 VN</button>
+      <button class="btn btn-m conv-lang-btn" data-lang="ES" onclick="convSetLang('ES')">🇪🇸 ES</button>
+    </div>
+    <button class="btn btn-m" onclick="loadConvThemes()" style="margin-left:auto;">↺ 새로고침</button>
+  </div>
+  <!-- 렌더링 진행 상태 -->
+  <div id="conv-progress" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+      <span id="conv-prog-label" style="font-size:.78rem;font-weight:600;color:var(--amber);">렌더링 중...</span>
+      <span id="conv-prog-pct" style="font-size:.78rem;font-weight:700;color:var(--amber);">0%</span>
+    </div>
+    <div class="pbar-bg" style="height:6px;"><div id="conv-prog-bar" class="pbar" style="height:6px;background:var(--amber);width:0%;"></div></div>
+    <div id="conv-prog-msg" style="font-size:.66rem;color:var(--muted);margin-top:5px;"></div>
+  </div>
+  <!-- 테마 그리드 -->
+  <div id="conv-themes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;"></div>
+  <div id="conv-empty" style="display:none;text-align:center;padding:48px;color:var(--muted);">
+    <div style="font-size:2rem;margin-bottom:10px;">📂</div>
+    <div>conversations_db.json 파일이 없거나 비어 있습니다</div>
   </div>
 </div>
 
@@ -1454,6 +2247,7 @@ function nav(el,view){
   if(view.startsWith('lang:')) renderLangView(view);
   if(view.startsWith('lang:') || view.startsWith('exam:')) loadNodeData(view);
   if(view==='render'){loadBatchData();rpTab('batch');}
+  if(view==='conv') loadConvThemes();
 }
 
 function toggleExam(el, view){
@@ -1908,22 +2702,44 @@ async function loadIllustBrowse(){
   const ts=Date.now();
   grid.innerHTML=d.items.map(it=>{
     const label=it.type==='word'?'단어 이미지':`예문 ${it.idx+1}`;
-    const sub=it.type==='sentence'?`<div style="font-size:.6rem;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(it.ko||'')}">${it.ko||''}</div>`:'';
+    const sub=it.type==='sentence'?`<div style="font-size:.6rem;color:var(--muted);margin-top:2px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(it.ko||'')}">${it.ko||''}</div>`:'';
     const img=it.exists
       ?`<img src="${it.url}?t=${ts}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;cursor:pointer;" onclick="illustPreview('${it.url}?t=${ts}')">`
       :`<div style="width:100%;aspect-ratio:1;background:var(--bg);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.7rem;">미생성</div>`;
-    const btnId=`regen-btn-${it.type==='word'?'w':it.idx}`;
+    const key=it.type==='word'?'w':it.idx;
+    const btnId=`regen-btn-${key}`;
+    const notesId=`regen-notes-${key}`;
+    const wrapId=`regen-img-wrap-${key}`;
     return `<div style="background:var(--bg3);border-radius:8px;padding:8px;text-align:center;">
       <div style="font-size:.7rem;font-weight:600;margin-bottom:4px;">${label}</div>
-      ${img}${sub}
-      <button id="${btnId}" onclick="regenIllust(${d.word_id},${it.idx})" class="btn btn-m" style="margin-top:6px;font-size:.65rem;width:100%;padding:3px 0;">🔄 재생성</button>
+      <div id="${wrapId}" style="position:relative;">${img}${sub}</div>
+      <button id="${btnId}" onclick="regenIllust(${d.word_id},${it.idx},'${notesId}')" class="btn btn-m" style="margin-top:6px;font-size:.65rem;width:100%;padding:3px 0;">🔄 재생성</button>
+      <textarea id="${notesId}" placeholder="수정 요청 (예: 카페 말고 마트로, 문 닫힌 모습 강조...)" rows="2" style="width:100%;margin-top:4px;padding:4px 6px;font-size:.62rem;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:5px;resize:vertical;box-sizing:border-box;"></textarea>
     </div>`;
   }).join('');
 }
 
-function illustBrowseNav(dir){
+// 등급별 전체 ID 범위 (1급:1~300, 2급:301~600 ... 6급:1501~1800)
+function lvIdRange(lv){
+  const n=+lv;
+  return {min:(n-1)*300+1, max:n*300};
+}
+
+function onIllustLevelChange(){
+  const lv=+document.getElementById('illust-browse-level').value||1;
+  const {min,max}=lvIdRange(lv);
   const inp=document.getElementById('illust-browse-id');
-  inp.value=Math.min(300,Math.max(1,(+inp.value||1)+dir));
+  inp.min=min; inp.max=max; inp.value=min;
+  const hint=document.getElementById('illust-browse-id-range');
+  if(hint) hint.textContent=`(${min}~${max})`;
+  loadIllustBrowse();
+}
+
+function illustBrowseNav(dir){
+  const lv=+document.getElementById('illust-browse-level').value||1;
+  const {min,max}=lvIdRange(lv);
+  const inp=document.getElementById('illust-browse-id');
+  inp.value=Math.min(max,Math.max(min,(+inp.value||min)+dir));
   loadIllustBrowse();
 }
 
@@ -1935,42 +2751,199 @@ function illustPreview(url){
   document.body.appendChild(overlay);
 }
 
-async function regenIllust(wordId,idx){
+async function regenIllust(wordId,idx,notesId){
   const label=idx<0?'단어 이미지':`예문[${idx+1}]`;
   const btnId=idx<0?'regen-btn-w':`regen-btn-${idx}`;
   const btn=document.getElementById(btnId);
+  const notesEl=notesId?document.getElementById(notesId):null;
+  const notes=notesEl?notesEl.value.trim():'';
   if(btn){btn.disabled=true;btn.textContent='⏳ 생성 중...';}
   const st=document.getElementById('illust-regen-status');
-  st.style.display='block';st.textContent=`🔄 ${label} 재생성 중...`;
-  const r=await fetch('/api/illustrations/regen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word_id:wordId,idx:idx})});
+  st.style.display='block';
+  st.textContent=notes?`🔄 ${label} 수정 반영 재생성 중...`:`🔄 ${label} 재생성 중...`;
+  const r=await fetch('/api/illustrations/regen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word_id:wordId,idx:idx,notes:notes})});
   const d=await r.json();
   if(!r.ok){st.textContent='오류: '+(d.error||'');if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}return;}
-  // 폴링: 완료 대기
+  // 이미지 카드 위에 진행 오버레이 표시
+  const key=idx<0?'w':idx;
+  const wrap=document.getElementById(`regen-img-wrap-${key}`);
+  if(wrap){
+    const ov=document.createElement('div');
+    ov.className='regen-overlay';
+    ov.innerHTML=`<div class="regen-spinner"></div>
+      <div style="font-size:.7rem;color:#fff;font-weight:600;">생성 중...</div>
+      <div class="regen-bar-wrap"><div class="regen-bar"></div></div>`;
+    wrap.appendChild(ov);
+  }
+  // 폴링: 완료 대기 + 실패 감지
   const _regenLv=document.getElementById('illust-browse-level').value||1;
   if(_regenPoll)clearInterval(_regenPoll);
+  let _regenPollCount=0;
   _regenPoll=setInterval(async()=>{
+    _regenPollCount++;
+    // 매 5회(10초)마다 서버 상태도 확인
+    if(_regenPollCount%5===0){
+      try{
+        const logR=await fetch(`/api/illustrations/regen/log?word_id=${wordId}&idx=${idx}`);
+        if(logR.ok){
+          const logD=await logR.json();
+          if(logD.status==='failed'||logD.status==='error'||logD.status==='timeout'){
+            clearInterval(_regenPoll);_regenPoll=null;
+            const errRaw=logD.error||logD.log||'알 수 없는 오류';
+            // 파이썬 에러는 스택 끝에 있으므로 뒤에서 자름
+            const errMsg=errRaw.slice(-400);
+            st.style.color='var(--red)';
+            st.textContent=`❌ 재생성 실패: ${errMsg}`;
+            const wrapE=document.getElementById(`regen-img-wrap-${key}`);
+            if(wrapE){const ovE=wrapE.querySelector('.regen-overlay');if(ovE)ovE.remove();}
+            if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}
+            return;
+          }
+        }
+      }catch(e){}
+    }
     const cr=await fetch('/api/illustrations/word/'+wordId+'?level='+_regenLv);
     if(!cr.ok)return;
     const cd=await cr.json();
     const item=cd.items.find(i=>i.idx===idx);
     if(item&&item.exists){
       clearInterval(_regenPoll);_regenPoll=null;
+      st.style.color='';
       st.textContent=`✅ ${label} 재생성 완료!`;
       setTimeout(()=>{st.style.display='none';},3000);
+      // 오버레이 제거 후 새로고침
+      const wrap2=document.getElementById(`regen-img-wrap-${key}`);
+      if(wrap2){const ov2=wrap2.querySelector('.regen-overlay');if(ov2)ov2.remove();}
       loadIllustBrowse();
       loadOverview();
     }
   },2000);
-  // 타임아웃 60초
-  setTimeout(()=>{
-    if(_regenPoll){clearInterval(_regenPoll);_regenPoll=null;
-      st.textContent='⚠ 시간 초과 — 새로고침하여 확인하세요';
-      if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}
-    }
-  },60000);
+  // 타임아웃 10분
+  setTimeout(async()=>{
+    if(!_regenPoll)return;
+    clearInterval(_regenPoll);_regenPoll=null;
+    // 마지막으로 서버 로그 확인
+    let errDetail='';
+    try{
+      const logR=await fetch(`/api/illustrations/regen/log?word_id=${wordId}&idx=${idx}`);
+      if(logR.ok){const logD=await logR.json();errDetail=logD.error||logD.log||'';}
+    }catch(e){}
+    st.style.color='var(--red)';
+    st.textContent=`⚠ 시간 초과${errDetail?' — '+errDetail.slice(-150):''}`;
+    const wrap3=document.getElementById(`regen-img-wrap-${key}`);
+    if(wrap3){const ov3=wrap3.querySelector('.regen-overlay');if(ov3)ov3.remove();}
+    if(btn){btn.disabled=false;btn.textContent='🔄 재생성';}
+  },600000);
+}
+
+// ── 일별 자동 시스템 ────────────────────────────────────────
+const _DAILY_FLAG={'EN':'🇺🇸','CN':'🇹🇼','JP':'🇯🇵','VN':'🇻🇳','ES':'🇲🇽'};
+const _DAILY_NAME={'EN':'English','CN':'中文','JP':'日本語','VN':'Tiếng Việt','ES':'Español'};
+let _dailyPollTimer=null;
+
+async function loadDailyStatus(){
+  const r=await fetch('/api/daily/status');
+  if(!r.ok)return;
+  const d=await r.json();
+  const s=d.state||{};
+  const w=d.word;
+
+  // 토글 상태
+  const tog=document.getElementById('daily-auto-toggle');
+  const slider=document.getElementById('daily-toggle-slider');
+  const knob=document.getElementById('daily-toggle-knob');
+  if(tog){
+    tog.checked=!!s.auto_upload;
+    slider.style.background=s.auto_upload?'var(--green)':'#444';
+    knob.style.left=s.auto_upload?'27px':'3px';
+  }
+
+  // 오늘의 단어
+  document.getElementById('daily-word-ko').textContent=w?w.word:'—';
+  document.getElementById('daily-word-meaning').textContent=w?('= '+w.meaning):'';
+  const inp=document.getElementById('daily-word-id-input');
+  if(inp&&s.current_word_id)inp.value=s.current_word_id;
+
+  // Lv1 진행
+  const done=s.current_word_id||0;
+  document.getElementById('daily-lv1-progress').textContent=`진행 ${done} / ${d.lv1_total||300} (Lv1)`;
+
+  // 일러스트 배지
+  const ibadge=document.getElementById('daily-illust-badge');
+  if(ibadge) ibadge.innerHTML=s.illust_done
+    ?`<span style="color:var(--green);font-weight:700;">✓ 일러스트</span>`
+    :`<span style="color:var(--amber);">⏳ 일러스트 생성 중...</span>`;
+
+  // 언어별 상태 테이블
+  const tbody=document.getElementById('daily-lang-tbody');
+  const stCell=(ok,rendering)=>ok
+    ?`<span style="color:var(--green);font-weight:700;">✓</span>`
+    :(rendering?`<span style="color:var(--amber);">⏳</span>`:`<span style="color:var(--muted2);">○</span>`);
+  const rows=_DAILY_LANGS.map(lg=>{
+    const ls=(s.langs||{})[lg]||{};
+    const ytOk=ls.youtube_rendered,rlOk=ls.reels_rendered;
+    const ytUp=ls.youtube_uploaded,rlUp=ls.reels_uploaded;
+    const isRend=d.rendering;
+    const vidLink=ls.youtube_video_id?`<a href="https://youtube.com/watch?v=${ls.youtube_video_id}" target="_blank" style="color:var(--green);font-size:.65rem;">▶</a>`:'';
+    const rlLink=ls.reels_video_id?`<a href="https://youtube.com/watch?v=${ls.reels_video_id}" target="_blank" style="color:var(--green);font-size:.65rem;">▶</a>`:'';
+    const uploadCell=ytUp?`<span style="color:var(--green);font-size:.65rem;">✓ 예약완료 ${vidLink}${rlLink}</span>`
+      :`<span style="color:var(--muted2);font-size:.65rem;">${ls.publish_local||ls.publish_at||''}</span>`;
+    return `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:4px 6px;">${_DAILY_FLAG[lg]||''} ${_DAILY_NAME[lg]||lg}</td>
+      <td style="text-align:center;padding:4px 6px;">${stCell(ytOk,isRend)}</td>
+      <td style="text-align:center;padding:4px 6px;">${stCell(rlOk,isRend)}</td>
+      <td style="padding:4px 6px;">${uploadCell}</td>
+    </tr>`;
+  }).join('');
+  tbody.innerHTML=rows;
+
+  // 렌더링 상태
+  const rs=document.getElementById('daily-render-status');
+  if(d.rendering){
+    rs.style.display='block';
+    rs.textContent='⏳ 렌더링 중...';
+  } else {
+    rs.style.display='none';
+  }
+}
+
+const _DAILY_LANGS=['EN','CN','JP','VN','ES'];
+
+async function setDailyAuto(on){
+  const slider=document.getElementById('daily-toggle-slider');
+  const knob=document.getElementById('daily-toggle-knob');
+  slider.style.background=on?'var(--green)':'#444';
+  knob.style.left=on?'27px':'3px';
+  await fetch('/api/daily/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({auto_upload:on})});
+  loadDailyStatus();
+}
+
+async function dailyTrigger(){
+  await fetch('/api/daily/trigger',{method:'POST'});
+  setTimeout(loadDailyStatus,1000);
+}
+
+async function dailySetWord(){
+  const v=parseInt(document.getElementById('daily-word-id-input').value);
+  if(!v||v<1||v>300){alert('1~300 사이 ID를 입력하세요');return;}
+  await fetch('/api/daily/set-word',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({word_id:v})});
+  loadDailyStatus();
+}
+
+// 배치 탭 열릴 때 폴링 시작
+function _startDailyPoll(){
+  loadDailyStatus();
+  if(_dailyPollTimer)clearInterval(_dailyPollTimer);
+  _dailyPollTimer=setInterval(loadDailyStatus,5000);
+}
+function _stopDailyPoll(){
+  if(_dailyPollTimer){clearInterval(_dailyPollTimer);_dailyPollTimer=null;}
 }
 
 // ── 스타일 감사 ────────────────────────────────────────────
+let _auditData=null;
 async function runStyleAudit(){
   const raw=document.getElementById('audit-ids').value.trim();
   if(!raw){alert('감사할 단어 ID를 입력하세요 (예: 1,2,3)');return;}
@@ -2002,6 +2975,7 @@ async function loadAuditResults(){
   _renderAuditResults(await r.json());
 }
 function _renderAuditResults(d){
+  _auditData=d;
   const summary=document.getElementById('audit-summary');
   const total=(d.pass||0)+(d.fail||0)+(d.skip||0);
   const passRate=total>0?Math.round((d.pass||0)/total*100):0;
@@ -2010,6 +2984,9 @@ function _renderAuditResults(d){
   summary.innerHTML=`<span style="color:${color};font-weight:700;">통과 ${d.pass||0} / 실패 ${d.fail||0} / 스킵 ${d.skip||0}</span>`+
     ` <span style="color:var(--muted);">(통과율 ${passRate}%)</span>`+
     (d.audited_at?` <span style="color:var(--muted2);font-size:.68rem;">${d.audited_at.slice(0,16)}</span>`:'');
+  // 실패 항목 있으면 재생성 버튼 표시
+  const actions=document.getElementById('audit-regen-actions');
+  if((d.fail||0)>0){actions.style.display='flex';}else{actions.style.display='none';}
   const tbody=document.getElementById('audit-tbody');
   // 문제 유형별 뱃지 색상
   const _tagColor={
@@ -2022,11 +2999,14 @@ function _renderAuditResults(d){
     perspective:'투시', style:'스타일', palette:'색상',
     anatomy:'해부학이상', physics:'물리오류',
   };
-  const rows=(d.results||[]).map(r=>{
+  const rows=(d.results||[]).map((r,i)=>{
     const ok=r.passed;
     const badge=ok
-      ?`<span style="color:var(--green);font-weight:700;">✓ OK</span>`
-      :`<span style="color:var(--red);font-weight:700;">✗ FAIL</span>`;
+      ?`<span style="color:var(--green);font-weight:700;">✓ 확인</span>`
+      :`<span style="color:var(--red);font-weight:700;">✗ 실패</span>`;
+    const cbCell=ok
+      ?`<td style="padding:4px 8px;"></td>`
+      :`<td style="padding:4px 8px;text-align:center;"><input type="checkbox" class="audit-chk" data-idx="${i}" style="cursor:pointer;" onchange="_auditChkChange()"></td>`;
     // [anatomy,scale,...] 태그 파싱
     const tagMatch=(r.issues||'').match(/\[([^\]]+)\]/);
     const tags=tagMatch?tagMatch[1].split(',').map(s=>s.trim()):[];
@@ -2038,16 +3018,76 @@ function _renderAuditResults(d){
     }).join('');
     const issueText=detail?`<div style="font-size:.67rem;color:var(--muted);margin-top:3px;">${detail}</div>`:'';
     const issuesCell=ok?`<span style="color:var(--muted2);">—</span>`:`${tagBadges}${issueText}`;
+    const si = r.sent_idx ?? -1;
+    const sentLabel = si < 0
+      ? `<span style="color:var(--muted2);font-size:.65rem;">단어</span>`
+      : `<span style="font-weight:700;color:var(--blue);">#${si + 1}</span>`;
     return `<tr style="border-top:1px solid var(--border);">
+      ${cbCell}
       <td style="padding:4px 8px;">${r.word_id}</td>
       <td style="padding:4px 8px;font-weight:600;">${r.word}</td>
       <td style="padding:4px 8px;">${r.level}급</td>
+      <td style="padding:4px 8px;text-align:center;">${sentLabel}</td>
       <td style="padding:4px 8px;">${badge}</td>
       <td style="padding:6px 8px;max-width:360px;">${issuesCell}</td>
     </tr>`;
   }).join('');
-  tbody.innerHTML=rows||'<tr><td colspan="5" style="padding:12px;text-align:center;color:var(--muted);">결과 없음</td></tr>';
+  tbody.innerHTML=rows||'<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--muted);">결과 없음</td></tr>';
   document.getElementById('audit-results').style.display='block';
+}
+function _auditChkChange(){
+  const chks=document.querySelectorAll('.audit-chk');
+  const all=document.getElementById('audit-check-all');
+  if(!all)return;
+  const total=chks.length, checked=[...chks].filter(c=>c.checked).length;
+  all.indeterminate=checked>0&&checked<total;
+  all.checked=checked===total&&total>0;
+}
+function auditToggleAll(checked){
+  document.querySelectorAll('.audit-chk').forEach(c=>{c.checked=checked;});
+}
+async function auditRegenAll(){
+  if(!confirm('감사에서 실패한 이미지를 전체 재생성합니다. 계속할까요?'))return;
+  _triggerAuditRegen({all_failed:true});
+}
+async function auditRegenSelected(){
+  const chks=[...document.querySelectorAll('.audit-chk:checked')];
+  if(!chks.length){alert('재생성할 항목을 선택하세요');return;}
+  const entries=chks.map(c=>{
+    const idx=parseInt(c.dataset.idx);
+    const r=(_auditData.results||[])[idx];
+    return {word_id:r.word_id, sent_idx:r.sent_idx??-1, issues:r.issues||''};
+  });
+  _triggerAuditRegen({entries});
+}
+async function _triggerAuditRegen(body){
+  const allBtn=document.getElementById('audit-regen-all-btn');
+  const selBtn=document.getElementById('audit-regen-sel-btn');
+  const st=document.getElementById('audit-regen-status');
+  allBtn.disabled=true;selBtn.disabled=true;
+  st.textContent='⏳ 재생성 요청 중...';
+  const r=await fetch('/api/illustrations/audit/regen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok){st.textContent='오류: '+(d.error||'');allBtn.disabled=false;selBtn.disabled=false;return;}
+  st.textContent='🔄 재생성 중...';
+  const poll=setInterval(async()=>{
+    const sr=await fetch('/api/illustrations/audit/regen/status');
+    const sd=await sr.json();
+    if(sd.status==='running'){
+      const prog=sd.total?` (${(sd.done||0)+' / '+sd.total})`:' ';
+      st.textContent=`🔄 재생성 중${prog}...`;
+    } else {
+      clearInterval(poll);
+      allBtn.disabled=false;selBtn.disabled=false;
+      if(sd.status==='done'){
+        const errs=sd.errors||0;
+        st.textContent=errs>0?`완료 (오류 ${errs}건)`:'✓ 재생성 완료';
+        setTimeout(loadAuditResults,800);
+      } else {
+        st.textContent='✗ 재생성 실패';
+      }
+    }
+  },2000);
 }
 
 function setEl(id,val){const e=document.getElementById(id);if(e)e.textContent=val;}
@@ -2057,17 +3097,133 @@ let _rpTab='batch', _batchData=null, _configSlots=[];
 let _batchChecked=new Set();
 let _batchTarget='desktop', _customTarget='desktop';
 
+let _livePollTimer=null;
+
 function rpTab(tab){
   _rpTab=tab;
-  ['batch','custom','history','config'].forEach(t=>{
+  ['batch','custom','history','live','config'].forEach(t=>{
     const v=document.getElementById('rp-'+t);if(v)v.style.display=t===tab?'block':'none';
     const b=document.getElementById('rp-tab-'+t);
     if(b){b.classList.toggle('on',t===tab);}
   });
-  if(tab==='batch') loadBatchData();
+  if(_livePollTimer){clearInterval(_livePollTimer);_livePollTimer=null;}
+  _stopDailyPoll();
+  if(tab==='batch'){_startDailyPoll();}
   if(tab==='custom') updateCustomPreview();
   if(tab==='history'){const dp=document.getElementById('rp-date-pick');if(dp)dp.value=new Date().toISOString().slice(0,10);loadHistoryDate();}
   if(tab==='config') loadConfigSlots();
+  if(tab==='live'){loadLiveStatus();_livePollTimer=setInterval(loadLiveStatus,2000);}
+}
+
+async function loadLiveStatus(){
+  try{
+    const r=await fetch('/api/batch/today');
+    if(!r.ok) return;
+    const d=await r.json();
+    const bq=d.queue||{};
+    const items=bq.items||[];
+    const status=bq.status||'idle';
+
+    // 카운트
+    const done=items.filter(i=>['rendered','uploaded','generated','done'].includes(i.status)).length;
+    const pending=items.filter(i=>i.status==='pending').length;
+    const running=items.filter(i=>i.status==='rendering'||i.status==='uploading').length;
+    const failed=items.filter(i=>i.status==='failed').length;
+    const skipped=items.filter(i=>i.status==='skipped'||i.status==='cancelled').length;
+    const total=items.length;
+    const pct=total>0?Math.round((bq.current||0)/total*100):0;
+
+    // 헤더
+    const lbl=document.getElementById('live-status-label');
+    const cancelBtn=document.getElementById('live-cancel-btn');
+    if(lbl){
+      if(status==='running'){
+        lbl.innerHTML='<span class="pulse" style="color:#3fb950;">⟳ 렌더링 진행 중</span>';
+        if(cancelBtn) cancelBtn.style.display='inline-block';
+      } else {
+        if(cancelBtn) cancelBtn.style.display='none';
+        if(status==='done'||status==='completed') lbl.innerHTML='<span style="color:#3fb950;">✅ 완료</span>';
+        else if(status==='failed') lbl.innerHTML='<span style="color:var(--red);">✕ 실패</span>';
+        else if(status==='cancelled') lbl.innerHTML='<span style="color:#8b949e;">✕ 취소됨</span>';
+        else lbl.innerHTML='<span style="color:var(--muted);">대기 중</span>';
+      }
+    }
+
+    // 타이밍
+    const timEl=document.getElementById('live-timing');
+    if(timEl&&bq.started_at){
+      const elapsed=Math.round((Date.now()-new Date(bq.started_at).getTime())/1000);
+      const m=Math.floor(elapsed/60), s=elapsed%60;
+      const tgt=bq.target==='desktop'?'💻 GPU':'🖥 NAS';
+      timEl.textContent=`${tgt} · 경과 ${m}분 ${s}초`;
+    } else if(timEl) timEl.textContent='';
+
+    // 진행바
+    const pb=document.getElementById('live-pbar');
+    if(pb) pb.style.width=pct+'%';
+
+    // 카운터
+    const setN=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+    setN('live-done',done); setN('live-pending',pending); setN('live-running',running);
+    setN('live-failed',failed); setN('live-skipped',skipped); setN('live-total',total);
+
+    // 항목 목록
+    const lvC={'1':'#3fb950','2':'#58a6ff','3':'#d29922','4':'#f78166','5':'#bc8cff','6':'#f87171'};
+    const statusIcon={
+      pending:'<span style="color:#f59e0b;">⏳</span>',
+      rendering:'<span style="color:#58a6ff;" class="pulse">⟳</span>',
+      uploading:'<span style="color:#818cf8;" class="pulse">⬆</span>',
+      rendered:'<span style="color:#3fb950;">✅</span>',
+      uploaded:'<span style="color:#3fb950;">✅</span>',
+      generated:'<span style="color:#818cf8;">✓</span>',
+      done:'<span style="color:#3fb950;">✅</span>',
+      failed:'<span style="color:var(--red);">✕</span>',
+      skipped:'<span style="color:#8b949e;">⏭</span>',
+      cancelled:'<span style="color:#8b949e;">✕</span>',
+    };
+    const el=document.getElementById('live-list');
+    if(el&&total>0){
+      el.innerHTML=items.map((it,i)=>{
+        const lv=it.level||'?';
+        const c=lvC[lv]||'#8b949e';
+        const ic=statusIcon[it.status]||'<span style="color:#8b949e;">·</span>';
+        const bold=it.status==='rendering'||it.status==='uploading'?'font-weight:700;':'';
+        const bg=it.status==='rendering'?'background:#1c3a2a;':
+                 it.status==='failed'?'background:#2d1515;':'';
+        const isDone=['done','rendered','generated'].includes(it.status);
+        const isUploaded=it.status==='uploaded'||it.video_id;
+        const uploadBtn=isDone&&!isUploaded
+          ?`<button onclick="liveUpload(${it.word_id},'${it.lang||'EN'}','${it.exam||'TOPIK'}')"
+              style="font-size:.6rem;padding:2px 8px;border-radius:4px;border:none;
+                     background:var(--blue);color:#fff;cursor:pointer;white-space:nowrap;">
+              ⬆ 업로드
+            </button>`
+          : (isUploaded
+              ? (it.video_id
+                  ? `<a href="https://youtube.com/watch?v=${it.video_id}" target="_blank"
+                       style="font-size:.6rem;color:var(--green);">▶ 보기</a>`
+                  : `<span style="font-size:.6rem;color:var(--green);">✓ 업로드됨</span>`)
+              : '');
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;font-size:.72rem;${bg}">
+          <span style="color:#484f58;min-width:20px;text-align:right;">${i+1}</span>
+          ${ic}
+          <span style="color:${c};font-weight:700;min-width:22px;">${lv}급</span>
+          <span style="min-width:24px;font-size:.68rem;">${_FLAGS[it.lang||'EN']||it.lang||''}</span>
+          <span style="${bold}flex:1;">${it.word||('ID '+it.word_id)}</span>
+          <span style="color:var(--muted2);font-size:.62rem;">${it.exam||''} · ${it.lang||''}</span>
+          ${uploadBtn}
+          <span style="font-size:.66rem;color:var(--muted);">${it.status||''}</span>
+        </div>`;
+      }).join('');
+    } else if(el){
+      el.innerHTML='<div style="color:var(--muted);text-align:center;padding:20px;font-size:.78rem;">진행 중인 배치가 없습니다</div>';
+    }
+
+    // 완료되면 폴링 중단
+    if(status!=='running'&&_livePollTimer){
+      clearInterval(_livePollTimer);_livePollTimer=null;
+    }
+  }catch(e){}
 }
 
 async function loadBatchData(){
@@ -2083,6 +3239,7 @@ const _STATUS_HTML={
   no_word:'<span style="color:#484f58;font-size:.72rem;">— 완료</span>',
   skipped:'<span style="color:#8b949e;font-size:.72rem;">⏭ 건너뜀</span>',
   cancelled:'<span style="color:#f87171;font-size:.72rem;">✕ 취소됨</span>',
+  failed:'<span style="color:#f87171;font-size:.72rem;">✕ 실패</span>',
 };
 
 function renderBatchList(d){
@@ -2193,6 +3350,7 @@ function setBatchTarget(t){
 async function renderBatchAll(){
   const btn=document.getElementById('rp-render-all');
   btn.disabled=true;btn.textContent='⏳ 요청 중...';
+  let started=false;
   try{
     const autoUpload=document.getElementById('rp-auto-upload').checked;
     const batch=(_batchData||{}).batch||[];
@@ -2206,9 +3364,25 @@ async function renderBatchAll(){
     const r=await fetch('/api/render/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok) alert('오류: '+(d.error||''));
-    else{_batchChecked.clear();setTimeout(loadBatchData,500);}
+    else{started=true;_batchChecked.clear();setTimeout(loadBatchData,500);}
   }catch(e){alert('실패: '+e);}
-  finally{btn.disabled=false;btn.textContent='▶ 전체 렌더링';}
+  finally{
+    // 시작 성공하면 loadBatchData가 버튼 상태를 갱신하므로 여기서 리셋 안 함
+    if(!started){btn.disabled=false;btn.textContent='▶ 전체 렌더링';}
+  }
+}
+
+async function liveUpload(wordId, lang, exam){
+  const btn=event.target;
+  btn.disabled=true; btn.textContent='⏳...';
+  try{
+    const r=await fetch('/api/render/upload',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({word_id:wordId,lang,exam})});
+    const d=await r.json();
+    if(!r.ok){btn.textContent='✕ 실패'; alert('업로드 오류: '+(d.error||''));}
+    else{btn.textContent='✓ 완료'; setTimeout(loadLiveStatus,1000);}
+  }catch(e){btn.textContent='✕ 오류'; alert(String(e));}
 }
 
 async function cancelBatchRender(){
@@ -2254,6 +3428,41 @@ async function renderSingle(wordId,exam,lang,btnEl){
 }
 
 // ── 커스텀 렌더링 ─────────────────────────────────────────
+function getSelectedLangs(){
+  return [...document.querySelectorAll('.rc-lang-btn.active')].map(b=>b.dataset.lang);
+}
+function getSelectedFmts(){
+  return [...document.querySelectorAll('.rc-fmt-btn.active')].map(b=>b.dataset.fmt);
+}
+function toggleLangBtn(btn){
+  const active=btn.classList.toggle('active');
+  if(active){
+    btn.style.borderColor='var(--blue)';btn.style.background='var(--blue)22';btn.style.color='var(--blue)';
+  } else {
+    btn.style.borderColor='var(--border)';btn.style.background='transparent';btn.style.color='var(--muted)';
+  }
+  if(getSelectedLangs().length===0){
+    btn.classList.add('active');
+    btn.style.borderColor='var(--blue)';btn.style.background='var(--blue)22';btn.style.color='var(--blue)';
+  }
+  updateCustomPreview();
+}
+function toggleFmtBtn(btn){
+  const fmt=btn.dataset.fmt;
+  const color=fmt==='youtube'?'var(--green)':'var(--amber)';
+  const active=btn.classList.toggle('active');
+  if(active){
+    btn.style.borderColor=color;btn.style.background=color.replace(')',')').replace('var(','').replace(')','')+'22'.replace('22','')+'22';
+    btn.style.background=color+'22';btn.style.color=color;
+  } else {
+    btn.style.borderColor='var(--border)';btn.style.background='transparent';btn.style.color='var(--muted)';
+  }
+  if(getSelectedFmts().length===0){
+    btn.classList.add('active');
+    btn.style.borderColor=color;btn.style.background=color+'22';btn.style.color=color;
+  }
+  updateCustomPreview();
+}
 function setCustomTarget(t){
   _customTarget=t;
   const dBtn=document.getElementById('rc-target-desktop');
@@ -2270,24 +3479,65 @@ function updateCustomPreview(){
   _customPreviewTimer=setTimeout(_doCustomPreview,300);
 }
 
+// ── 시험/등급/ID 다중 행 관리 ────────────────────────────────
+const _EXAM_OPTS=`<option value="TOPIK">🇰🇷 TOPIK</option><option value="TOEIC">📝 TOEIC</option><option value="JLPT">🌸 JLPT</option><option value="IELTS">🎓 IELTS</option><option value="HSK">🐉 HSK</option>`;
+const _LEVEL_OPTS=`<option value="1">1급</option><option value="2">2급</option><option value="3">3급</option><option value="4">4급</option><option value="5">5급</option><option value="6">6급</option>`;
+
+function parseIds(str){
+  if(!str||!str.trim())return[];
+  const ids=new Set();
+  for(const part of str.split(',')){
+    const t=part.trim();
+    if(!t)continue;
+    const m=t.match(/^(\d+)\s*[~\-]\s*(\d+)$/);
+    if(m){for(let i=+m[1];i<=+m[2];i++)ids.add(i);}
+    else if(/^\d+$/.test(t))ids.add(+t);
+  }
+  return [...ids].sort((a,b)=>a-b);
+}
+
+function getTargetRows(){
+  return [...document.querySelectorAll('#rc-targets .rc-target-row')].map(row=>({
+    exam:row.querySelector('.rc-exam').value,
+    level:row.querySelector('.rc-level').value,
+    ids_str:(row.querySelector('.rc-ids')||{value:''}).value.trim()
+  }));
+}
+
+function addTargetRow(){
+  const container=document.getElementById('rc-targets');
+  const div=document.createElement('div');
+  div.className='rc-target-row';
+  div.style.cssText='display:flex;gap:6px;align-items:flex-end;margin-bottom:6px;';
+  div.innerHTML=`
+    <div style="flex:3;"><select class="rc-exam inp" onchange="updateCustomPreview()" style="width:100%;">${_EXAM_OPTS}</select></div>
+    <div style="flex:2;"><select class="rc-level inp" onchange="updateCustomPreview()" style="width:100%;">${_LEVEL_OPTS}</select></div>
+    <div style="flex:2.5;"><input class="rc-ids inp" placeholder="예: 1, 3~10, 15" oninput="updateCustomPreview()" style="width:100%;"></div>
+    <button onclick="removeTargetRow(this)" class="btn btn-m" style="width:28px;padding:5px 0;font-size:.9rem;flex-shrink:0;justify-content:center;" title="삭제">×</button>`;
+  container.appendChild(div);
+  updateCustomPreview();
+}
+
+function removeTargetRow(el){
+  const rows=document.querySelectorAll('#rc-targets .rc-target-row');
+  if(rows.length<=1)return;
+  el.closest('.rc-target-row').remove();
+  updateCustomPreview();
+}
+
 async function _doCustomPreview(){
-  const exam=document.getElementById('rc-exam').value;
-  const lang=document.getElementById('rc-lang').value;
-  const level=document.getElementById('rc-level').value;
-  const count=Math.max(1,Math.min(30,+document.getElementById('rc-count').value||10));
-  const startId=document.getElementById('rc-start-id').value;
-  const endId=document.getElementById('rc-end-id').value;
-  let url=`/api/render/preview?exam=${exam}&lang=${lang}&level=${level}&count=${count}`;
-  if(startId) url+=`&start_id=${startId}`;
-  if(endId) url+=`&end_id=${endId}`;
+  const targets=getTargetRows();
+  const langs=getSelectedLangs();
+  const {exam,level,ids_str}=targets[0];
+  const lang=langs[0]||'EN';
+  let url=`/api/render/preview?exam=${exam}&lang=${lang}&level=${level}`;
+  if(ids_str) url+=`&ids=${encodeURIComponent(ids_str)}`;
   try{
     const r=await fetch(url);
     const d=await r.json();
     const el=document.getElementById('rc-preview');
     const remEl=document.getElementById('rc-remaining');
-    const hintEl=document.getElementById('rc-id-range-hint');
     if(remEl) remEl.textContent=`남은 단어: ${d.remaining||0}개`;
-    if(hintEl && d.level_min_id!=null) hintEl.textContent=`이 등급 범위: ID ${d.level_min_id} ~ ${d.level_max_id} (${d.level_total}개)`;
     if(!d.words||!d.words.length){
       el.innerHTML='<div style="color:#484f58;text-align:center;padding:16px;font-size:.78rem;">렌더링할 단어가 없습니다</div>';
       document.getElementById('rc-start').disabled=true;
@@ -2295,6 +3545,8 @@ async function _doCustomPreview(){
     }
     document.getElementById('rc-start').disabled=false;
     const lvC={'1':'#3fb950','2':'#58a6ff','3':'#d29922','4':'#f78166','5':'#bc8cff','6':'#f87171'};
+    const langBadges=langs.map(l=>`<span style="font-size:.58rem;background:var(--blue)22;color:var(--blue);border-radius:4px;padding:1px 5px;margin-left:2px;">${l}</span>`).join('');
+    const extraLabel=targets.length>1?`<span style="font-size:.6rem;color:var(--muted2);margin-left:4px;">+${targets.length-1}개 시험</span>`:'';
     el.innerHTML=d.words.map((w,i)=>{
       const c=lvC[w.level]||'#8b949e';
       return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#1c2128;border-radius:7px;margin-bottom:4px;border:1px solid #21262d;">
@@ -2302,40 +3554,52 @@ async function _doCustomPreview(){
         <span style="color:${c};font-size:.68rem;font-weight:700;">Lv.${w.level}</span>
         <span style="font-weight:600;font-size:.82rem;">${w.word}</span>
         <span style="font-size:.6rem;" title="${w.has_illust?'일러스트 있음':'일러스트 없음'}">${w.has_illust?'🖼':'<span style="opacity:.3;">🖼</span>'}</span>
+        ${langBadges}
         <span style="color:#8b949e;font-size:.68rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${w.meaning}</span>
         <span style="color:#484f58;font-size:.64rem;">ID ${w.id}</span>
       </div>`;
     }).join('');
-    document.getElementById('rc-start').textContent=`▶ 렌더링 시작 (${d.words.length}개 · ${_customTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;
+    const fmts=getSelectedFmts();
+    const fmtLabel=fmts.length===2?'본편+릴스':fmts[0]==='youtube'?'본편':'릴스';
+    const totalWords=d.words.length*targets.length;
+    const total=totalWords*langs.length*fmts.length;
+    document.getElementById('rc-start').textContent=`▶ 렌더링 시작 (${d.words.length}개 × ${targets.length}개 시험 × ${langs.length}개 언어 × ${fmtLabel} = ${total}개 · ${_customTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;
     updateCustomTimeEst();
   }catch(e){}
 }
 
 function updateCustomTimeEst(){
-  const count=Math.max(1,+document.getElementById('rc-count').value||1);
+  const targets=getTargetRows();
+  const langs=getSelectedLangs();
   const perMin=_customTarget==='desktop'?3:12;
-  const total=count*perMin;
+  // ID 지정된 행은 ID수, 없으면 30으로 추정
+  const totalWords=targets.reduce((s,t)=>{
+    const ids=parseIds(t.ids_str);
+    return s+(ids.length||30);
+  },0);
+  const fmtCnt=(getSelectedFmts()||[1]).length||1;
+  const total=totalWords*langs.length*fmtCnt*perMin;
   const el=document.getElementById('rc-time-est');
-  if(el) el.textContent=`예상 소요: ~${total}분 (${count}개 × ${perMin}분)`;
+  if(el) el.textContent=`예상 소요: ~${total}분 (${totalWords}개 × ${langs.length}개 언어 × ${fmtCnt}개 포맷 × ${perMin}분)`;
 }
 
 async function startCustomRender(){
-  const exam=document.getElementById('rc-exam').value;
-  const lang=document.getElementById('rc-lang').value;
-  const level=+document.getElementById('rc-level').value;
-  const count=Math.max(1,Math.min(30,+document.getElementById('rc-count').value||10));
-  const startId=+document.getElementById('rc-start-id').value||null;
-  const endId=+document.getElementById('rc-end-id').value||null;
-  const target=_customTarget;
-  let range=startId||endId?` (ID ${startId||'?'}~${endId||'?'})`:'';
-  const msg=`${exam} ${lang} ${level}급 × 최대 ${count}개${range}\n위치: ${target==='desktop'?'💻 데스크탑 GPU':'🖥 NAS CPU'}\n\n시작할까요?`;
+  const targets=getTargetRows();
+  const langs=getSelectedLangs();
+  const fmts=getSelectedFmts();
+  const renderTarget=_customTarget;
+  const targetDesc=targets.map(t=>{
+    const ids=parseIds(t.ids_str);
+    return `${t.exam} ${t.level}급${ids.length?` [ID: ${t.ids_str}]`:''}`;
+  }).join(', ');
+  const fmtLabel=fmts.length===2?'본편+릴스':fmts[0]==='youtube'?'본편':'릴스';
+  const totalWords=targets.reduce((s,t)=>{const ids=parseIds(t.ids_str);return s+(ids.length||30);},0);
+  const msg=`[${targetDesc}]\n언어: [${langs.join(', ')}]\n포맷: ${fmtLabel}\n총 약 ${totalWords*langs.length*fmts.length}개 렌더링\n위치: ${renderTarget==='desktop'?'💻 데스크탑 GPU':'🖥 NAS CPU'}\n\n시작할까요?`;
   if(!confirm(msg)) return;
   const btn=document.getElementById('rc-start');
   btn.disabled=true;btn.textContent='⏳ 요청 중...';
   try{
-    const body={exam,lang,level,count,target};
-    if(startId) body.start_id=startId;
-    if(endId) body.end_id=endId;
+    const body={targets,langs,formats:fmts,target:renderTarget};
     const r=await fetch('/api/render/custom',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body)});
     const d=await r.json();
@@ -2413,8 +3677,132 @@ function resetSchedule(){
 // ── 초기화 ──────────────────────────────────────────────
 updateIllustCost2();
 loadOverview();
+// 일러스트 browse 초기화: 1급 시작 ID(1) + 범위 힌트
+(()=>{
+  const lv=+document.getElementById('illust-browse-level').value||1;
+  const {min,max}=lvIdRange(lv);
+  const inp=document.getElementById('illust-browse-id');
+  inp.min=min; inp.max=max; inp.value=min;
+  const hint=document.getElementById('illust-browse-id-range');
+  if(hint) hint.textContent=`(${min}~${max})`;
+})();
 setInterval(loadOverview,5000);
 setInterval(()=>{if(_currentView==='render'&&_rpTab==='batch')loadBatchData();},5000);
+setInterval(()=>{if(_currentView==='conv')pollConvProgress();},3000);
+
+// ── 기본 회화 ────────────────────────────────────────────────
+let _convLang = 'EN';
+let _convThemes = [];
+
+function convSetLang(lang){
+  _convLang = lang;
+  document.querySelectorAll('.conv-lang-btn').forEach(b=>{
+    b.className = 'btn conv-lang-btn ' + (b.dataset.lang===lang ? 'btn-p active' : 'btn-m');
+  });
+  renderConvThemes();
+}
+
+async function loadConvThemes(){
+  try{
+    const r = await fetch('/api/conv/themes');
+    const d = await r.json();
+    _convThemes = d.themes || [];
+    renderConvThemes();
+    document.getElementById('conv-empty').style.display = _convThemes.length ? 'none' : 'block';
+    document.getElementById('conv-themes').style.display = _convThemes.length ? 'grid' : 'none';
+  }catch(e){
+    document.getElementById('conv-empty').style.display = 'block';
+    document.getElementById('conv-themes').style.display = 'none';
+  }
+}
+
+function renderConvThemes(){
+  const el = document.getElementById('conv-themes');
+  if(!el) return;
+  el.innerHTML = _convThemes.map(t => {
+    const ls = t.langs[_convLang] || {};
+    const rendered = ls.rendered;
+    const uploaded = ls.uploaded;
+    const vid = ls.video_id;
+    const ko = t.title.ko || t.id;
+    const local = t.title[_convLang.toLowerCase()] || ko;
+    return `<div class="card" style="border-left:3px solid ${t.color};">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <span style="font-size:1.4rem;">${t.emoji}</span>
+        <div>
+          <div style="font-weight:700;font-size:.9rem;">${ko}</div>
+          <div style="font-size:.72rem;color:var(--muted);">${local} · ${t.phrase_count}개 구문</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+        <span class="badge ${rendered?'badge-g':'badge-m'}">${rendered?'✓ 렌더됨':'○ 미렌더'}</span>
+        <span class="badge ${uploaded?'badge-g':'badge-m'}">${uploaded?'✓ 업로드':'○ 미업로드'}</span>
+        ${vid?`<a href="https://youtube.com/watch?v=${vid}" target="_blank" class="badge badge-p">▶ YT</a>`:''}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-a" onclick="convRender('${t.id}')" style="flex:1;" ${rendered?'title="재렌더링"':''}>
+          🎬 ${rendered?'재렌더':'렌더링'}
+        </button>
+        <button class="btn btn-g" onclick="convUpload('${t.id}')" style="flex:1;" ${!rendered?'disabled title="먼저 렌더링 필요"':''}>
+          ⬆ 업로드
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function convRender(themeId){
+  if(!confirm(`[${_convLang}] "${themeId}" 테마를 렌더링할까요?`)) return;
+  try{
+    const r = await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({theme_id:themeId, lang:_convLang})});
+    const d = await r.json();
+    if(!r.ok) { alert('오류: '+(d.error||'')); return; }
+    document.getElementById('conv-progress').style.display = 'block';
+  }catch(e){ alert('실패: '+e); }
+}
+
+async function convUpload(themeId){
+  if(!confirm(`[${_convLang}] "${themeId}" 영상을 YouTube에 업로드할까요?`)) return;
+  try{
+    const r = await fetch('/api/conv/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({theme_id:themeId, lang:_convLang})});
+    const d = await r.json();
+    if(!r.ok) { alert('오류: '+(d.error||'')); return; }
+    alert(`업로드 완료!\nhttps://youtube.com/watch?v=${d.video_id}`);
+    loadConvThemes();
+  }catch(e){ alert('실패: '+e); }
+}
+
+async function pollConvProgress(){
+  try{
+    const r = await fetch('/api/conv/render/status');
+    const d = await r.json();
+    const prog = document.getElementById('conv-progress');
+    if(!prog) return;
+    if(d.status === 'idle'){ prog.style.display='none'; return; }
+    prog.style.display = 'block';
+    const pct = d.pct || 0;
+    document.getElementById('conv-prog-bar').style.width = pct+'%';
+    document.getElementById('conv-prog-pct').textContent = pct+'%';
+    document.getElementById('conv-prog-msg').textContent = d.msg || '';
+    if(d.status === 'done'){
+      document.getElementById('conv-prog-label').textContent = '✓ 렌더링 완료';
+      document.getElementById('conv-prog-label').style.color = 'var(--green)';
+      document.getElementById('conv-prog-bar').style.background = 'var(--green)';
+      document.getElementById('conv-prog-pct').style.color = 'var(--green)';
+      setTimeout(()=>{ prog.style.display='none'; loadConvThemes(); }, 3000);
+    } else if(d.status === 'failed'){
+      document.getElementById('conv-prog-label').textContent = '✗ 렌더링 실패';
+      document.getElementById('conv-prog-label').style.color = 'var(--red)';
+    } else {
+      document.getElementById('conv-prog-label').textContent = `🎬 렌더링 중... [${d.lang||''}] ${d.theme_id||''}`;
+      document.getElementById('conv-prog-label').style.color = 'var(--amber)';
+    }
+  }catch(e){}
+}
+
+
 </script>
 
 

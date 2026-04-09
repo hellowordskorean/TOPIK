@@ -63,7 +63,7 @@ def get_youtube_client(lang: str = "EN"):
         else:
             print(f"  [{lang}] YouTube 인증 필요 - 브라우저에서 로그인하세요")
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=8080)
+            creds = flow.run_local_server(port=0)  # 0 = 사용 가능한 포트 자동 선택
         os.makedirs(os.path.dirname(token_file), exist_ok=True)
         with open(token_file, "wb") as f:
             pickle.dump(creds, f)
@@ -72,19 +72,39 @@ def get_youtube_client(lang: str = "EN"):
 
 # ─── 재생목록 관리 ──────────────────────────────────────────
 PLAYLIST_TITLES = {
-    "EN": "TOPIK Level {level} - Korean Vocabulary",
-    "JP": "TOPIK {level}級 - 韓国語単語",
-    "CN": "TOPIK {level}级 - 韩语词汇",
-    "VN": "TOPIK Cấp {level} - Từ vựng tiếng Hàn",
-    "ES": "TOPIK Nivel {level} - Vocabulario coreano",
+    "EN": "🇰🇷 TOPIK Lv.{level} Korean Word of the Day",
+    "JP": "🇰🇷 TOPIK {level}級 韓国語 今日の一語",
+    "CN": "🇰🇷 TOPIK {level}级 每日韩语单词",
+    "VN": "🇰🇷 TOPIK Cấp {level} - Tiếng Hàn mỗi ngày",
+    "ES": "🇰🇷 TOPIK N{level} - Coreano del día",
 }
 
 PLAYLIST_DESCS = {
-    "EN": "TOPIK Level {level} Korean vocabulary words with example sentences and illustrations.",
-    "JP": "TOPIK {level}級の韓国語単語を例文とイラストで学びます。",
-    "CN": "TOPIK {level}级韩语词汇，配有例句和插图。",
-    "VN": "Từ vựng tiếng Hàn TOPIK cấp {level} với câu ví dụ và minh họa.",
-    "ES": "Vocabulario coreano TOPIK nivel {level} con oraciones de ejemplo e ilustraciones.",
+    "EN": (
+        "Master TOPIK Level {level} Korean vocabulary one word at a time! "
+        "Daily videos with example sentences, pronunciation, and illustrations. "
+        "Perfect for beginners and TOPIK exam prep. 🔔 Subscribe for daily updates!"
+    ),
+    "JP": (
+        "TOPIK {level}級の必須単語を毎日1語ずつマスターしよう！"
+        "例文・発音・イラスト付きで楽しく学べます。"
+        "韓国語検定対策・旅行・K-POP好きにおすすめ。🔔 チャンネル登録で毎日更新通知！"
+    ),
+    "CN": (
+        "每天一个TOPIK {level}级韩语词汇！配例句、发音和插图，轻松学韩语。"
+        "适合TOPIK考试备考、韩国留学、打工族。🔔 订阅频道每日更新！"
+    ),
+    "VN": (
+        "Học từ vựng tiếng Hàn TOPIK cấp {level} mỗi ngày — 1 từ, 1 video, miễn phí! "
+        "Có câu ví dụ, phát âm và hình minh họa. Phù hợp EPS-TOPIK, du học, K-pop. "
+        "🔔 Đăng ký để nhận video mỗi ngày!"
+    ),
+    "ES": (
+        "¡Aprende vocabulario coreano TOPIK N{level} cada día! "
+        "1 palabra, oraciones de ejemplo, pronunciación e ilustraciones. "
+        "Ideal para fans de K-pop, K-drama y quienes preparan el TOPIK. "
+        "🔔 ¡Suscríbete para no perderte ningún video!"
+    ),
 }
 
 
@@ -179,161 +199,235 @@ def add_to_playlist(youtube, playlist_id: str, video_id: str):
 
 
 # ─── 언어별 메타데이터 템플릿 ────────────────────────────────
+# 타깃별 전략:
+#   EN  — K-드라마·K-팝 팬, TOPIK 시험 준비생, 한국 여행/유학 희망자
+#   JP  — 한국어 검정 준비생, K-팝 팬, 한국 여행·거주자 (일본 최대 학습층)
+#   CN  — 한국 유학·취업 준비생, TOPIK 시험 응시자, 한류 팬
+#   VN  — EPS-TOPIK 취업 목적 학습자, 한국 유학생, K-팝·K-드라마 팬
+#   ES  — K-팝·K-드라마 팬 (멕시코·중남미), 한국 문화 관심층
+
 LANG_META = {
     "EN": {
         "sent_key": "en",
         "default_lang": "ko",
-        "level_fmt": lambda lv: f"{lv}급",
-        "title":   "[TOPIK {level}] {word} = {meaning} | Korean Word of the Day #{day}",
-        "heading": "Korean Word of the Day",
-        "word_label": "단어 | Word",
-        "sent_label": "예문 | Example Sentences",
+        "level_fmt": lambda lv: f"Lv.{lv}",
+        # 제목: 단어=의미 → 검색 노출 + 호기심 유발
+        "title": "🇰🇷 {word} = {meaning} | Korean Word of the Day #{day:03d} [TOPIK {level}]",
+        # 설명 첫 줄(검색 결과에 노출되는 핵심 훅)
+        "hook": "You'll hear this word EVERY DAY in Korea 🔥 Master it in 60 seconds!",
+        "word_label": "📌 TODAY'S WORD",
+        "sent_label": "📖 Example Sentences",
         "meaning_label": "Meaning",
         "pron_label": "Pronunciation",
         "pos_label": "Part of Speech",
-        "study":     "📚 Study more vocabulary at: https://studioroomkr.com/HW/topik/en/",
-        "comment":   '💬 Leave a comment with your own sentence using "{word}"!',
-        "subscribe": "🔔 Subscribe for daily TOPIK vocabulary videos!",
-        "hashtags":  "#Korean #{word} #TOPIK #LearnKorean #KoreanVocabulary #한국어 #토픽 #KoreanWordOfTheDay",
-        "tags": ["Korean", "TOPIK", "Learn Korean", "Korean vocabulary",
-                 "Korean word of the day", "Korean for beginners", "Korean language",
-                 "Korean study", "Korean lessons", "한국어", "토픽", "토픽단어", "한국어 공부"],
+        "comment_hook": '🗣️ Challenge: Write your own sentence using "{word}" in the comments! The best one gets pinned 📌',
+        "subscribe": "🔔 New Korean word dropped EVERY DAY — Subscribe so you never miss one!",
+        "study": "📚 Full word list + flashcards → https://studioroomkr.com/HW/topik/en/",
+        "hashtags": (
+            "#KoreanWordOfTheDay #LearnKorean #TOPIK #Korean #KoreanVocabulary "
+            "#한국어 #토픽 #KoreanStudy #KoreanForBeginners #KDrama #KPop "
+            "#KoreanLanguage #한국어공부 #StudyKorean #DailyKorean"
+        ),
+        "tags": [
+            "Korean word of the day", "learn Korean", "Korean vocabulary", "TOPIK",
+            "Korean for beginners", "Korean language", "Korean study", "daily Korean",
+            "TOPIK vocabulary", "Korean words", "Korean lessons", "speak Korean",
+            "K-pop Korean", "K-drama Korean", "Korean pronunciation", "Hangul",
+            "한국어", "한국어 공부", "토픽", "토픽단어", "토픽 단어장",
+            "Korean tutorial", "Korean alphabet", "Korean culture",
+        ],
     },
+
     "JP": {
         "sent_key": "jp",
         "default_lang": "ko",
         "level_fmt": lambda lv: f"{lv}級",
-        "title":   "[TOPIK {level}] {word} = {meaning} | 毎日の韓国語単語 #{day}",
-        "heading": "毎日の韓国語単語",
-        "word_label": "단어 | 単語",
-        "sent_label": "예문 | 例文",
+        # 제목: 【TOPIK級】형식 + 일본어 의미 명시 (검색 최적화)
+        "title": "【TOPIK{level}】{word}＝{meaning}｜韓国語 今日の一語 #{day:03d}",
+        "hook": "ネイティブが毎日使う必須単語！1日1語で韓国語をマスターしよう🔥",
+        "word_label": "📌 今日の単語",
+        "sent_label": "📖 例文",
         "meaning_label": "意味",
         "pron_label": "発音",
         "pos_label": "品詞",
-        "study":     "📚 もっと単語を勉強する: https://studioroomkr.com/HW/topik/jp/",
-        "comment":   '💬 「{word}」を使って文を作ってみよう！',
-        "subscribe": "🔔 チャンネル登録で毎日韓国語を学ぼう！",
-        "hashtags":  "#韓国語 #{word} #TOPIK #韓国語勉強 #韓国語単語 #한국어 #토픽 #毎日韓国語",
-        "tags": ["韓国語", "TOPIK", "韓国語勉強", "韓国語単語", "毎日韓国語",
-                 "韓国語初心者", "トピック", "한국어", "토픽", "토픽단어",
-                 "韓国語講座", "韓国語学習"],
+        "comment_hook": '🗣️ 「{word}」を使って例文を作ってみよう！コメントに書いてね👇 上手な文はピン留めするよ📌',
+        "subscribe": "🔔 毎日新しい韓国語単語を投稿中！チャンネル登録＆ベルマークで通知をONに！",
+        "study": "📚 単語一覧＆フラッシュカード → https://studioroomkr.com/HW/topik/jp/",
+        "hashtags": (
+            "#韓国語 #韓国語単語 #TOPIK #韓国語勉強 #韓国語検定 "
+            "#한국어 #토픽 #毎日韓国語 #韓国語初心者 #ハングル "
+            "#韓国語日常会話 #韓国語学習 #韓流 #韓国語講座"
+        ),
+        "tags": [
+            "韓国語", "韓国語単語", "TOPIK", "韓国語勉強", "韓国語検定",
+            "毎日韓国語", "韓国語初心者", "ハングル", "韓国語日常会話",
+            "韓国語学習", "韓国語講座", "トピック", "韓国語発音",
+            "한국어", "토픽", "토픽단어", "韓国語会話", "K-POP韓国語",
+            "韓流", "韓国旅行", "韓国留学", "TOPIK1級", "TOPIK2級",
+        ],
     },
+
     "CN": {
         "sent_key": "cn",
         "default_lang": "ko",
         "level_fmt": lambda lv: f"{lv}级",
-        "title":   "[TOPIK {level}] {word} = {meaning} | 每日韩语单词 #{day}",
-        "heading": "每日韩语单词",
-        "word_label": "단어 | 单词",
-        "sent_label": "예문 | 例句",
+        # 제목: TOPIK 시험 키워드 강조 (중국인 학습 동기의 핵심)
+        "title": "【TOPIK{level}】{word}＝{meaning} | 每日韩语单词 #{day:03d}",
+        "hook": "这个韩语词你会吗？韩国人天天说！一天一词，轻松通过TOPIK🔥",
+        "word_label": "📌 今日单词",
+        "sent_label": "📖 例句",
         "meaning_label": "意思",
         "pron_label": "发音",
         "pos_label": "词性",
-        "study":     "📚 学习更多词汇: https://studioroomkr.com/HW/topik/cn/",
-        "comment":   '💬 用「{word}」造一个句子吧！',
-        "subscribe": "🔔 订阅频道，每天学习韩语词汇！",
-        "hashtags":  "#韩语 #{word} #TOPIK #学韩语 #韩语单词 #한국어 #토픽 #每日韩语",
-        "tags": ["韩语", "TOPIK", "学韩语", "韩语单词", "每日韩语",
-                 "韩语入门", "韩语学习", "한국어", "토픽", "토픽단어",
-                 "韩语词汇", "韩语课程"],
+        "comment_hook": '🗣️ 用「{word}」造个句子，写在评论区吧！优秀例句会被置顶📌',
+        "subscribe": "🔔 每天更新韩语单词！订阅频道，开启通知，不错过任何一个词！",
+        "study": "📚 全部单词表＋单词卡 → https://studioroomkr.com/HW/topik/cn/",
+        "hashtags": (
+            "#韩语 #韩语单词 #TOPIK #学韩语 #韩语入门 "
+            "#한국어 #토픽 #每日韩语 #韩语能力考试 #韩语学习 "
+            "#韩语词汇 #韩流 #韩语初学者 #TOPIK考试"
+        ),
+        "tags": [
+            "韩语", "韩语单词", "TOPIK", "学韩语", "韩语入门",
+            "每日韩语", "韩语能力考试", "韩语学习", "韩语词汇",
+            "韩语初学者", "韩语课程", "TOPIK考试", "韩语发音",
+            "한국어", "토픽", "토픽단어", "韩流", "韩语留学",
+            "韩国留学", "韩语打工", "K-POP韩语", "韩语对话",
+        ],
     },
+
     "VN": {
         "sent_key": "vn",
         "default_lang": "ko",
         "level_fmt": lambda lv: f"Cấp {lv}",
-        "title":   "[TOPIK {level}] {word} = {meaning} | Từ vựng tiếng Hàn #{day}",
-        "heading": "Từ vựng tiếng Hàn mỗi ngày",
-        "word_label": "단어 | Từ vựng",
-        "sent_label": "예문 | Câu ví dụ",
+        # 제목: EPS-TOPIK 키워드 포함 (베트남 최대 학습 동기)
+        "title": "{word} = {meaning} | Tiếng Hàn mỗi ngày #{day:03d} | TOPIK {level}",
+        "hook": "Học 1 từ tiếng Hàn mỗi ngày — dễ nhớ, dễ dùng, miễn phí! 🇰🇷🔥",
+        "word_label": "📌 Từ hôm nay",
+        "sent_label": "📖 Câu ví dụ",
         "meaning_label": "Nghĩa",
         "pron_label": "Phát âm",
         "pos_label": "Loại từ",
-        "study":     "📚 Học thêm từ vựng: https://studioroomkr.com/HW/topik/vn/",
-        "comment":   '💬 Hãy đặt câu với từ "{word}" nhé!',
-        "subscribe": "🔔 Đăng ký kênh để học tiếng Hàn mỗi ngày!",
-        "hashtags":  "#tiếngHàn #{word} #TOPIK #họctiếngHàn #từvựngtiếngHàn #한국어 #토픽",
-        "tags": ["tiếng Hàn", "TOPIK", "học tiếng Hàn", "từ vựng tiếng Hàn",
-                 "tiếng Hàn mỗi ngày", "tiếng Hàn cho người mới",
-                 "한국어", "토픽", "토픽단어", "tiếng Hàn cơ bản"],
+        "comment_hook": '🗣️ Thử đặt câu với từ "{word}" và viết vào bình luận nhé! Câu hay nhất sẽ được ghim📌',
+        "subscribe": "🔔 Mỗi ngày 1 từ mới — Đăng ký và bật thông báo để không bỏ lỡ!",
+        "study": "📚 Danh sách từ đầy đủ + flashcard → https://studioroomkr.com/HW/topik/vn/",
+        "hashtags": (
+            "#tiếngHàn #họctiếngHàn #TOPIK #từvựngtiếngHàn #EPStiếngHàn "
+            "#한국어 #토픽 #tiếngHànmỗingày #tiếngHàncơbản #họctiếngHànmiễnphí "
+            "#tiếngHàngiaotiếp #đihànquốc #EPSTOPIK"
+        ),
+        "tags": [
+            "tiếng Hàn", "học tiếng Hàn", "TOPIK", "từ vựng tiếng Hàn",
+            "tiếng Hàn mỗi ngày", "tiếng Hàn cơ bản", "EPS tiếng Hàn",
+            "EPSTOPIK", "tiếng Hàn giao tiếp", "học tiếng Hàn miễn phí",
+            "tiếng Hàn cho người mới", "đi Hàn Quốc", "tiếng Hàn xuất khẩu lao động",
+            "한국어", "토픽", "토픽단어", "tiếng Hàn online", "K-pop tiếng Hàn",
+            "tiếng Hàn thực tế", "tiếng Hàn du học", "ngữ pháp tiếng Hàn",
+        ],
     },
+
     "ES": {
         "sent_key": "es",
         "default_lang": "ko",
-        "level_fmt": lambda lv: f"Nivel {lv}",
-        "title":   "[TOPIK {level}] {word} = {meaning} | Palabra coreana del día #{day}",
-        "heading": "Palabra coreana del día",
-        "word_label": "단어 | Palabra",
-        "sent_label": "예문 | Oraciones de ejemplo",
+        "level_fmt": lambda lv: f"N{lv}",
+        # 제목: K-팝 팬 유입 + TOPIK 키워드
+        "title": "🇰🇷 {word} = {meaning} | Coreano del día #{day:03d} [TOPIK {level}]",
+        "hook": "¿Sabes esta palabra coreana? ¡La escucharás en TODOS los K-dramas! 🔥",
+        "word_label": "📌 La palabra de hoy",
+        "sent_label": "📖 Oraciones de ejemplo",
         "meaning_label": "Significado",
         "pron_label": "Pronunciación",
-        "pos_label": "Categoría",
-        "study":     "📚 Estudia más vocabulario: https://studioroomkr.com/HW/topik/sp/",
-        "comment":   '💬 ¡Escribe una oración usando "{word}"!',
-        "subscribe": "🔔 ¡Suscríbete para videos diarios de vocabulario coreano!",
-        "hashtags":  "#coreano #{word} #TOPIK #aprenderCoreano #vocabularioCoreano #한국어 #토픽",
-        "tags": ["coreano", "TOPIK", "aprender coreano", "vocabulario coreano",
-                 "palabra coreana del día", "coreano para principiantes",
-                 "한국어", "토픽", "토픽단어", "idioma coreano"],
+        "pos_label": "Categoría gramatical",
+        "comment_hook": '🗣️ ¡Escribe una oración con "{word}" en los comentarios! La mejor se fija arriba📌',
+        "subscribe": "🔔 Nueva palabra coreana CADA DÍA — ¡Suscríbete y activa la campanita!",
+        "study": "📚 Lista completa de palabras + flashcards → https://studioroomkr.com/HW/topik/sp/",
+        "hashtags": (
+            "#ApenderCoreano #CoreanoDelDía #TOPIK #Coreano #VocabularioCoreano "
+            "#한국어 #토픽 #CoreanoParaPrincipiantes #KpopEspañol #KdramaEspañol "
+            "#IdiomasCoreano #CoreanoGratis #LearnKorean"
+        ),
+        "tags": [
+            "aprender coreano", "coreano del día", "TOPIK", "vocabulario coreano",
+            "coreano para principiantes", "idioma coreano", "coreano gratis",
+            "coreano kpop", "coreano kdrama", "coreano básico",
+            "aprender coreano desde cero", "coreano México", "coreano latino",
+            "한국어", "토픽", "토픽단어", "K-pop español", "BTS coreano",
+            "coreano pronunciación", "frases en coreano", "hangul",
+        ],
     },
 }
 
+
 # ─── 메타데이터 생성 ─────────────────────────────────────────
-def generate_metadata(word: dict, day_number: int, lang: str = "EN") -> dict:
-    """단어 정보로 유튜브 메타데이터 자동 생성 (다국어 지원)"""
-
+def generate_metadata(word: dict, day_number: int, lang: str = "EN",
+                      lang_meaning: str = None) -> dict:
+    """단어 정보로 유튜브 메타데이터 자동 생성 (다국어 지원)
+    lang_meaning: 언어별 의미 (없으면 word['meaning'] 사용)
+    """
     L = LANG_META.get(lang, LANG_META["EN"])
-    level = word["level"]
-    ko_word = word["word"]
-    meaning = word["meaning"]
-    roman = word["romanization"]
-    pos = word["part_of_speech"]
+    level    = word["level"]
+    ko_word  = word["word"]
+    meaning  = lang_meaning or word.get("meaning", "")
+    roman    = word.get("romanization", "")
+    pos      = word.get("part_of_speech", word.get("pos", ""))
     level_str = L["level_fmt"](level)
-    sent_key = L["sent_key"]
+    sent_key  = L["sent_key"]
 
-    # 제목
-    title = L["title"].format(level=level_str, word=ko_word, meaning=meaning, day=day_number)
-
-    # 예문 (해당 언어 키 → en 폴백)
-    sentences_text = "\n".join(
-        f"  {i+1}. {s['ko']}\n     → {s.get(sent_key, s.get('en', ''))}"
-        for i, s in enumerate(word["sentences"])
+    # ── 제목 (100자 제한) ───────────────────────────────────
+    title = L["title"].format(
+        level=level_str, word=ko_word, meaning=meaning, day=day_number
     )
 
-    description = f"""✅ {L['heading']} #{day_number}
+    # ── 예문 텍스트 (최대 5개, 너무 길면 설명 잘림 방지) ──
+    sents = (word.get("sentences") or word.get("examples") or [])[:5]
+    sentences_text = "\n".join(
+        f"  {i+1}. {s['ko']}\n     → {s.get(sent_key) or s.get('en', '')}"
+        for i, s in enumerate(sents)
+    )
 
-━━━━━━━━━━━━━━━━━━━━
-{L['word_label']}
-━━━━━━━━━━━━━━━━━━━━
-🇰🇷 한국어: {ko_word}
-📖 {L['meaning_label']}: {meaning}
-🔤 {L['pron_label']}: [{roman}]
-📝 {L['pos_label']}: {pos}
-📊 TOPIK Level: {level_str}
+    # ── 발음/품사 줄 (없으면 생략) ─────────────────────────
+    pron_line = f"🔤 {L['pron_label']}: [{roman}]\n" if roman else ""
+    pos_line  = f"📝 {L['pos_label']}: {pos}\n"      if pos   else ""
 
-━━━━━━━━━━━━━━━━━━━━
-{L['sent_label']}
-━━━━━━━━━━━━━━━━━━━━
-{sentences_text}
+    # ── 설명 본문 ──────────────────────────────────────────
+    description = (
+        f"{L['hook']}\n\n"
+        f"{'─'*36}\n"
+        f"{L['word_label']}\n"
+        f"{'─'*36}\n"
+        f"🇰🇷 {ko_word}\n"
+        f"💡 {L['meaning_label']}: {meaning}\n"
+        f"{pron_line}"
+        f"{pos_line}"
+        f"📊 TOPIK {level_str}\n\n"
+        f"{'─'*36}\n"
+        f"{L['sent_label']}\n"
+        f"{'─'*36}\n"
+        f"{sentences_text}\n\n"
+        f"{'─'*36}\n"
+        f"{L['comment_hook'].format(word=ko_word)}\n\n"
+        f"{L['subscribe']}\n"
+        f"{L['study']}\n\n"
+        f"{L['hashtags']}"
+    )
 
-━━━━━━━━━━━━━━━━━━━━
-{L['study']}
-{L['comment'].format(word=ko_word)}
-{L['subscribe']}
-
-{L['hashtags'].format(word=ko_word)}
-"""
-
-    # 태그: 공통 + 언어별 + 단어 고유
-    tags = L["tags"] + [
-        ko_word, meaning, roman, pos,
-        f"TOPIK {level_str}",
-    ]
+    # ── 태그: 기본 + 단어 고유 (500자 제한 내) ────────────
+    word_tags = [t for t in [ko_word, meaning, f"TOPIK {level_str}"] if t]
+    all_tags  = L["tags"] + word_tags
+    # 500자 초과 시 뒤에서부터 제거
+    selected, total = [], 0
+    for t in all_tags:
+        if total + len(t) + 1 <= 498:
+            selected.append(t)
+            total += len(t) + 1
+        if len(selected) >= 30:
+            break
 
     return {
-        "title": title[:100],
-        "description": description,
-        "tags": tags[:30],
-        "category_id": "27",
+        "title":            title[:100],
+        "description":      description[:4900],
+        "tags":             selected,
+        "category_id":      "27",   # Education
         "default_language": L["default_lang"],
     }
 
@@ -424,8 +518,9 @@ def save_upload_log(log: dict, log_path: str = "logs/uploads.json"):
 # ─── 엔트리포인트 ────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="유튜브 업로드")
-    parser.add_argument("--video", required=True, help="MP4 파일 경로")
-    parser.add_argument("--word-id", type=int, required=True, help="단어 ID")
+    parser.add_argument("--auth-only", action="store_true", help="OAuth 인증만 수행 (업로드 없음)")
+    parser.add_argument("--video", help="MP4 파일 경로")
+    parser.add_argument("--word-id", type=int, help="단어 ID")
     parser.add_argument("--db", default="/app/data/LanguageTest/words_db.json")
     parser.add_argument("--log", default="logs/uploads.json")
     parser.add_argument("--schedule-hours", type=int, default=0,
@@ -434,6 +529,16 @@ if __name__ == "__main__":
     parser.add_argument("--lang", default="EN", choices=["EN","JP","CN","VN","ES"],
                         help="대상 언어 (제목/설명/태그 언어)")
     args = parser.parse_args()
+
+    # 인증만 수행
+    if args.auth_only:
+        print(f"[{args.lang}] YouTube OAuth 인증을 시작합니다. 브라우저에서 로그인하세요...")
+        get_youtube_client(lang=args.lang)
+        print(f"[{args.lang}] 인증 완료! 토큰 저장됨.")
+        sys.exit(0)
+
+    if not args.video or not args.word_id:
+        parser.error("--auth-only 없이는 --video 와 --word-id 가 필요합니다")
 
     # 단어 로드
     with open(args.db, encoding="utf-8") as f:

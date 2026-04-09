@@ -50,7 +50,7 @@ _VLM_VERIFY = False
 
 OUTPUT_DIR    = Path("/app/assets/illustrations")
 PROMPTS_FILE  = Path("/app/data/LanguageTest/illustration_prompts.json")
-SCENE_CACHE   = Path("/app/data/LanguageTest/scene_cache.json")
+SCENE_CACHE   = Path("/app/logs/scene_cache.json")  # /app/data는 dashboard에서 ro 마운트
 FLAGGED_FILE  = Path("/app/logs/illust_flagged.json")
 USAGE_FILE    = Path("/app/logs/illust_usage.json")
 
@@ -89,53 +89,82 @@ def _track_usage(success: bool, exhausted: bool = False):
         data["exhausted_at"] = datetime.now().strftime("%H:%M:%S")
     _save_usage(data)
 
-# ── 스타일 (일관성을 위해 캐릭터·컬러·기법을 엄격히 명세) ─────────
-_STYLE = (
-    # [아트 스타일] 일관된 그림책 플랫 일러스트
-    "flat vector picture-book illustration style, clean 2px ink outlines, "
-    "semi-flat cel shading with soft gradients — NOT watercolor, NOT painterly, NOT photorealistic, "
-    "same consistent art style as if drawn by a single illustrator, "
+# ── 웹툰 동물 캐릭터 스타일 ─────────────────────────────────────
+_LOCAL_ANIMALS = [
+    "tabby cat wearing a striped vest",
+    "beagle dog wearing a cozy scarf",
+    "gray cat wearing a polka-dot blouse",
+    "golden retriever dog wearing a button-up shirt",
+    "dalmatian dog wearing a yellow bandana",
+    "calico cat wearing glasses and a blazer",
+    "poodle wearing a beret and stylish sweater",
+    "corgi wearing an apron",
+    "gray cat wearing a plaid shirt",
+    "shiba inu wearing a traditional outfit",
+]
 
-    # [캐릭터 디자인 고정] 동일한 캐릭터 템플릿
-    "FIXED CHARACTER DESIGN: round-faced East Asian person, "
-    "head-to-body ratio 1:4.5 (head is 18-22% of total figure height), "
-    "large round eyes with small pupils, tiny round nose, small gentle smile, "
-    "smooth warm peach skin tone, dark rounded hair — "
-    "use IDENTICAL character proportions in every single image, "
+_LEARNER_OUTFITS = [
+    "casual sweater and jeans",
+    "hoodie and backpack",
+    "colorful cardigan",
+    "striped shirt and cap",
+    "cozy knit sweater",
+    "light jacket with tote bag",
+    "denim jacket",
+    "floral blouse and skirt",
+    "sporty tracksuit",
+    "trench coat",
+]
 
-    # [스케일 & 비율 강제] 거인·소인 방지
-    "STRICT SCALE RULES: "
-    "standing adult human figure must occupy 50-65% of frame height (never 100%, never below 40%), "
-    "all objects correctly scaled to human: "
-    "chair seat at knee height, table top at hip height, "
-    "door frame 15% taller than person, counter at waist height, "
-    "coffee cup is hand-sized, bag is torso-sized, "
-    "NO objects larger than a human unless naturally so (building, tree), "
+def _pick_characters(word_id: int) -> tuple[str, str]:
+    """단어 ID 기반으로 동물 캐릭터 쌍 선택 (결정론적)"""
+    local  = _LOCAL_ANIMALS[word_id % len(_LOCAL_ANIMALS)]
+    outfit = _LEARNER_OUTFITS[word_id % len(_LEARNER_OUTFITS)]
+    return local, f"red panda wearing {outfit}"
 
-    # [투시 고정] 일관된 시점
-    "CONSISTENT PERSPECTIVE: "
-    "natural eye-level camera at 150cm height, slight 3/4 angle view, "
-    "ground plane always visible, objects recede naturally into background, "
-    "foreground items slightly larger than background items, "
-    "horizon line at vertical center or lower-third, "
-    "NO extreme bird's eye view, NO worm's eye view, "
-
-    # [컬러 팔레트 고정]
-    "LOCKED COLOR PALETTE: warm cream-white background (#FFF8F0), "
-    "muted pastel blue for sky/clothing, sage green for plants/nature, "
-    "soft golden yellow for warmth, warm peach for skin, gentle coral accents — "
-    "NO neon colors, NO very dark or black-dominant backgrounds, "
-    "consistent warm overall tone, "
-
-    # [구도]
-    "centered balanced composition, one clear focal point, square 1:1 format, "
-    "maximum 2 characters per scene, "
-
-    # [텍스트 완전 금지]
-    "ABSOLUTE NO TEXT: zero letters, zero numbers, zero characters in any language, "
-    "no speech bubbles, no labels, no signs, no captions, "
-    "all surfaces and objects must be completely blank or show only simple abstract shapes"
+_WEBTOON_STYLE_BASE = (
+    "warm watercolor and pencil sketch illustration style, "
+    "soft loose brushwork with visible watercolor paper texture, "
+    "gentle pencil outlines (not thick black ink), "
+    "watercolor wash backgrounds that are slightly soft and misty, "
+    "warm peach and cream sky, muted earth tones, "
+    "soft golden hour lighting throughout the scene, "
+    "pastel palette: warm peach, dusty rose, sage green, muted yellow, soft blue-gray, "
+    "NO neon colors, NO dark or black-dominant areas, "
+    "cute chibi anthropomorphic animal characters, "
+    "STRICT PROPORTION RULES: "
+    "head-to-body ratio 1:1.2 — head is nearly as tall as the body, very large round head, "
+    "body is short and chubby, legs are extremely short and stubby (almost no visible legs), "
+    "arms are short and rounded, "
+    "total character height = 35 to 40 percent of the full frame height, "
+    "both characters same height, positioned side by side in lower third of frame, "
+    "full character visible from top of head to bottom of feet, "
+    "characters have slightly more detail/contrast than the soft background, "
+    "NO shoes NO boots NO sandals NO footwear — all characters have bare paws, "
+    "Korean location background is soft and slightly faded behind the characters, "
+    "depth: characters sharp in foreground, background gently blurred/misty, "
+    "warm atmospheric haze giving a cozy golden hour feel, "
+    "square 1:1 composition, "
+    "upper 35% of image is open sky or soft gradient — keep it uncluttered, "
+    "STRICT NO TEXT RULE: absolutely zero letters, zero words, zero numbers in any language, "
+    "replace ALL signage and labels with visual symbols and icons only: "
+    "pharmacy→red cross symbol, hair salon→scissors icon, restaurant→fork-and-spoon icon, "
+    "cafe→coffee cup icon, hospital→red cross emblem, convenience store→colorful shelf display, "
+    "bus destination→colored stripe pattern, menu board→illustrated food picture display, "
+    "price tags→coin stack icon, receipts→dotted line pattern paper, "
+    "phone screens→simple geometric icon UI, "
+    "EXCEPTION: 'TAXI' yellow rooftop sign is allowed as a recognizable international symbol, "
+    "all other storefronts must use pictogram icons only — NO readable text anywhere"
 )
+
+def _webtoon_style(word_id: int) -> str:
+    local, learner = _pick_characters(word_id)
+    return (
+        f"TWO animal characters in frame: "
+        f"LEFT={local} (demonstrating the word), "
+        f"RIGHT={learner} (learner observing), "
+        + _WEBTOON_STYLE_BASE
+    )
 
 # ── AI 장면 생성 시스템 ───────────────────────────────────────
 # 품사별 시각화 가이드
@@ -580,6 +609,40 @@ def _ai_improve_scene(original_scene: str, issues: list[str],
         return original_scene
 
 
+def _pre_improve_scene_for_regen(word: dict, sent_idx: int,
+                                 issues_str: str, client) -> str | None:
+    """재생성 전 감사 실패 이유를 반영해 장면 프롬프트를 AI로 사전 개선.
+    개선된 장면을 캐시에 저장 후 반환. 이슈 없으면 None 반환."""
+    if not issues_str or issues_str.strip() in ("", "—"):
+        return None
+    issues_list = [i.strip() for i in issues_str.split("|") if i.strip()]
+    if not issues_list:
+        return None
+
+    ck = f"word_{word['id']}" if sent_idx < 0 else f"sent_{word['id']}_{sent_idx}"
+
+    # 기존 캐시 장면을 기반으로 개선 (없으면 새로 생성)
+    existing_scene = _scene_cache.get(ck)
+    if not existing_scene:
+        if sent_idx < 0:
+            existing_scene = _ai_word_scene(word, client)
+        else:
+            sents = word.get("sentences", [])
+            sent = sents[sent_idx] if sent_idx < len(sents) else {}
+            existing_scene = _ai_sentence_scene(word, sent, sent_idx, client)
+
+    sent_obj = None
+    if sent_idx >= 0:
+        sents = word.get("sentences", [])
+        sent_obj = sents[sent_idx] if sent_idx < len(sents) else None
+
+    print(f"  [사전 개선] 알려진 문제 반영: {', '.join(i.split(':')[0] for i in issues_list)}")
+    improved = _ai_improve_scene(existing_scene, issues_list, word, sent_obj, client)
+    _scene_cache[ck] = improved
+    _save_scene_cache()
+    return improved
+
+
 # ── Fallback 프롬프트 (client 없을 때) ───────────────────────
 def _word_prompt_fallback(meaning: str) -> str:
     keyword = meaning.split(",")[0].strip()
@@ -601,25 +664,40 @@ def _sentence_scene_fallback(word: dict, sent: dict) -> str:
 
 # ── 텍스트 유발 토큰 치환 ─────────────────────────────────────
 _BANNED_SUBSTITUTIONS = [
-    (r'\bshop\b',           'room with product shelves'),
-    (r'\bstore\b',          'room with displayed items'),
-    (r'\bstorefront\b',     'plain building exterior'),
-    (r'\bfacade\b',         'plain building front'),
-    (r'\bsign\b',           'blank placard'),
-    (r'\blabel\b',          'tag with a simple icon'),
-    (r'\bbanner\b',         'hanging cloth decoration'),
-    (r'\bposter\b',         'framed picture on the wall'),
-    (r'\bmenu board\b',     'blank chalkboard'),
-    (r'\bprice tag\b',      'small hanging tag'),
-    (r'\bsmartphone\b',     'small flat device'),
-    (r'\blaptop\b',         'open portable computer'),
-    (r'\bnewspaper\b',      'folded paper with wavy lines'),
-    (r'\bmagazine\b',       'illustrated booklet'),
-    (r'\bscreen\b',         'glowing rectangular surface'),
-    (r'\bawning\b',         'striped overhead cover'),
-    (r'\bentrance\b',       'open doorway'),
-    (r'\bbookshelves?\b',   'tall shelves'),
-    (r'\bcaf[eé]\b',        'warm counter with hot drinks'),
+    (r'\bshop sign\b',          'colorful awning with a simple icon symbol'),
+    (r'\bstore sign\b',         'colorful awning with a simple icon symbol'),
+    (r'\bsign\b',               'blank placard with a simple pictogram'),
+    (r'\bbanner\b',             'hanging colored cloth decoration'),
+    (r'\bposter\b',             'framed illustration on the wall'),
+    (r'\blabel\b',              'small tag with a simple icon'),
+    (r'\bprice tag\b',          'small coin-stack icon'),
+    (r'\bmenu board\b',         'illustrated food-picture display board'),
+    (r'\bmenu\b',               'illustrated food-picture board'),
+    (r'\bchalkboard\b',         'blank chalkboard with chalk drawing of food'),
+    (r'\bsmartphone\b',         'small handheld device with a glowing screen showing simple icons'),
+    (r'\bcell phone\b',         'small handheld device with glowing icon screen'),
+    (r'\blaptop\b',             'open portable computer with abstract icon screen'),
+    (r'\bscreen\b',             'glowing surface showing simple geometric icons'),
+    (r'\bdisplay\b',            'glowing panel with simple pictogram icons'),
+    (r'\bmonitor\b',            'glowing rectangular screen with simple icons'),
+    (r'\bnewspaper\b',          'folded paper printed with wavy decorative lines'),
+    (r'\bmagazine\b',           'colorful booklet with illustrated cover'),
+    (r'\bbook\b',               'illustrated storybook with picture cover'),
+    (r'\bdocument\b',           'paper sheet with wavy-line pattern'),
+    (r'\breceipt\b',            'small paper strip with dotted line pattern'),
+    (r'\bticket\b',             'small colored card with stripe pattern'),
+    (r'\bpassport\b',           'small dark booklet with embossed emblem'),
+    (r'\bform\b',               'paper sheet with checkbox symbols'),
+    (r'\bshop\b',               'room with product shelves'),
+    (r'\bstore\b',              'room with displayed items'),
+    (r'\bcaf[eé]\b',            'warm counter with coffee cup icons'),
+    (r'\bentrance\b',           'open decorative doorway'),
+    (r'\breception\b',          'front counter with bell icon'),
+    (r'\bbus destination\b',    'bus with colored stripe pattern on front'),
+    (r'\bpharmacy sign\b',      'storefront with red cross symbol'),
+    (r'\bhospital sign\b',      'building with red cross emblem'),
+    (r'\bhair salon sign\b',    'storefront with scissors icon'),
+    (r'\brestaurant sign\b',    'storefront with fork-and-spoon icon'),
 ]
 
 def _lint_prompt(prompt: str) -> str:
@@ -629,9 +707,9 @@ def _lint_prompt(prompt: str) -> str:
     return prompt
 
 
-def _apply_style(content: str) -> str:
-    """커스텀 프롬프트 + lint + 스타일"""
-    return f"{_lint_prompt(content)}. {_STYLE}"
+def _apply_style(content: str, word_id: int = 0) -> str:
+    """커스텀 프롬프트 + lint + 웹툰 스타일"""
+    return f"{_lint_prompt(content)}. {_webtoon_style(word_id)}"
 
 
 # ── 장면 캐시 ────────────────────────────────────────────────
@@ -645,9 +723,12 @@ def _load_scene_cache():
         print(f"  장면 캐시 로드: {len(_scene_cache)}개")
 
 def _save_scene_cache():
-    SCENE_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SCENE_CACHE, "w", encoding="utf-8") as f:
-        json.dump(_scene_cache, f, ensure_ascii=False, indent=2)
+    try:
+        SCENE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SCENE_CACHE, "w", encoding="utf-8") as f:
+            json.dump(_scene_cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"  [캐시 저장 실패: {e}]")
 
 
 
@@ -688,7 +769,7 @@ def get_word_custom_prompt(word_id: int) -> str | None:
     """단어 ID로 커스텀 word_prompt 반환 (없으면 None)"""
     entry = _custom_prompts.get(str(word_id))
     if entry and entry.get("word_prompt"):
-        return _apply_style(entry["word_prompt"])
+        return _apply_style(entry["word_prompt"], word_id)
     return None
 
 
@@ -698,23 +779,23 @@ def get_sentence_custom_prompt(word_id: int, sent_idx: int) -> str | None:
     if entry:
         sentences = entry.get("sentences", [])
         if sent_idx < len(sentences) and sentences[sent_idx]:
-            return _apply_style(sentences[sent_idx])
+            return _apply_style(sentences[sent_idx], word_id)
     return None
 
 
-def word_dir(korean_word: str, level: int) -> Path:
-    """단어별 폴더: illustrations/lv{level}/{word}/"""
-    return OUTPUT_DIR / f"lv{level}" / korean_word
+def word_dir(word: dict) -> Path:
+    """단어별 폴더: illustrations/lv{level}/{id}_{word}/"""
+    return OUTPUT_DIR / f"lv{word['level']}" / f"{word['id']}_{word['word']}"
 
 
-def word_img_path(korean_word: str, level: int) -> Path:
-    """단어 일러스트: illustrations/lv{level}/{word}/word.png"""
-    return word_dir(korean_word, level) / "word.png"
+def word_img_path(word: dict) -> Path:
+    """단어 일러스트: illustrations/lv{level}/{id}_{word}/word.png"""
+    return word_dir(word) / "word.png"
 
 
-def sent_img_path(korean_word: str, level: int, idx: int) -> Path:
-    """예문 일러스트: illustrations/lv{level}/{word}/{idx}.png"""
-    return word_dir(korean_word, level) / f"{idx}.png"
+def sent_img_path(word: dict, idx: int) -> Path:
+    """예문 일러스트: illustrations/lv{level}/{id}_{word}/{idx}.png"""
+    return word_dir(word) / f"{idx}.png"
 
 
 def _log_error(msg: str):
@@ -760,23 +841,46 @@ def _generate_once_flux(prompt: str, output_path: Path) -> bool:
         return False
 
 
+_IMAGE_MODEL = "gemini-3.1-flash-image-preview"
+
+
+def _save_generated_image(response, output_path: Path) -> bool:
+    """generate_content 응답에서 이미지를 꺼내 저장. 성공 시 True 반환."""
+    parts = []
+    try:
+        parts = response.candidates[0].content.parts
+    except Exception:
+        try:
+            parts = response.parts
+        except Exception:
+            return False
+    for part in parts:
+        try:
+            if part.inline_data and part.inline_data.data:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(part.inline_data.data)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _generate_once(prompt: str, output_path: Path, client) -> bool:
-    """단일 이미지 생성 — 백엔드에 따라 Imagen / Flux 분기"""
+    """단일 이미지 생성 — 백엔드에 따라 Gemini Image / Flux 분기"""
     if _BACKEND == "flux":
         return _generate_once_flux(prompt, output_path)
-    # ── Imagen 4 Fast ──────────────────────────────────────
+    # ── Gemini Flash Image ──────────────────────────────────
     try:
-        response = client.models.generate_images(
-            model="imagen-4.0-fast-generate-001",
-            prompt=prompt,
-            config=types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio="1:1",
+        response = client.models.generate_content(
+            model=_IMAGE_MODEL,
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                response_modalities=[types.Modality.IMAGE],
+                image_config=types.ImageConfig(aspect_ratio="1:1"),
             ),
         )
-        if response.generated_images:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            response.generated_images[0].image.save(str(output_path))
+        if _save_generated_image(response, output_path):
             _track_usage(success=True)
             return True
         _log_error(f"빈 응답 (이미지 없음): {output_path.name} | prompt: {prompt[:100]}")
@@ -1031,14 +1135,17 @@ def generate_image(prompt: str, output_path: Path, client,
     """이미지 생성 + VLM 하네스 루프 (--vlm-verify 활성화 시)
     검증: 텍스트 / 스타일·비율·해부·물리 / 교육적 명확성
     실패 시: 문제 유형별 프롬프트 강화 → AI 개선 → 재생성 반복"""
-    if output_path.exists():
+    if output_path.exists() and output_path.stat().st_size > 0:
         return True
+    elif output_path.exists():
+        output_path.unlink()  # 빈 파일 제거 후 재생성
 
     max_attempts = 5 if _VLM_VERIFY else 1
+    word_id = word["id"] if word else 0
     # 커스텀 프롬프트는 이미 _apply_style 처리됨 → 중복 방지
-    is_full_prompt = _STYLE[:30] in prompt
+    is_full_prompt = "TWO animal characters in frame:" in prompt
     current_scene = prompt
-    current_prompt = prompt if is_full_prompt else _apply_style(_lint_prompt(prompt))
+    current_prompt = prompt if is_full_prompt else _apply_style(_lint_prompt(prompt), word_id)
 
     for attempt in range(max_attempts):
         ok = _generate_once(current_prompt, output_path, client)
@@ -1092,11 +1199,11 @@ def generate_image(prompt: str, output_path: Path, client,
                 _scene_cache[ck] = improved
                 _save_scene_cache()
 
-        # 커스텀 프롬프트는 이미 _STYLE 포함 → 중복 방지
+        # 커스텀 프롬프트는 이미 스타일 포함 → 중복 방지
         if is_full_prompt:
             current_prompt = _lint_prompt(current_scene)
         else:
-            current_prompt = _apply_style(_lint_prompt(current_scene))
+            current_prompt = _apply_style(_lint_prompt(current_scene), word_id)
 
     if word:
         _flag_image(word, sent_idx, current_prompt, "harness failed after all retries")
@@ -1104,18 +1211,17 @@ def generate_image(prompt: str, output_path: Path, client,
 
 
 def generate_one(word: dict, client) -> bool:
-    """단어 일러스트 생성 → illustrations/lv{level}/{word}/word.png
+    """단어 일러스트 생성 → illustrations/lv{level}/{id}_{word}/word.png
     우선순위: 커스텀 프롬프트 → AI 장면 생성 → fallback"""
     korean_word = word["word"]
-    level = word["level"]
     custom_full = get_word_custom_prompt(word["id"])
     if custom_full:
         print(f"  [커스텀] {korean_word}")
-        return generate_image(custom_full, word_img_path(korean_word, level), client,
+        return generate_image(custom_full, word_img_path(word), client,
                               word=word, sent_idx=-1)
     # AI 장면 생성 (캐시 활용)
     scene = _ai_word_scene(word, client)
-    return generate_image(scene, word_img_path(korean_word, level), client,
+    return generate_image(scene, word_img_path(word), client,
                           word=word, sent_idx=-1)
 
 
@@ -1130,11 +1236,11 @@ def build_sentence_prompt(word: dict, sent: dict, sent_idx: int = -1) -> str:
 
 
 def generate_sentences(word: dict, client) -> tuple[int, int]:
-    """예문 일러스트 생성 → illustrations/lv{level}/{word}/{idx}.png
+    """예문 일러스트 생성 → illustrations/lv{level}/{id}_{word}/{idx}.png
     AI 장면 생성 → 이미지 생성 → VLM 하네스 검증 루프"""
     done, fail = 0, 0
     for idx, sent in enumerate(word.get("sentences", [])):
-        output_path = sent_img_path(word["word"], word["level"], idx)
+        output_path = sent_img_path(word, idx)
         en = sent.get("en", "")
         # 우선순위: 커스텀 → AI 장면 생성
         custom = get_sentence_custom_prompt(word["id"], idx)
@@ -1185,6 +1291,8 @@ def main():
                         help="특정 단어 ID의 이미지 재생성 (기존 삭제 후)")
     parser.add_argument("--regen-idx", type=int, default=None,
                         help="--regen과 함께: 재생성할 예문 인덱스 (0-9). 미지정시 word.png 재생성")
+    parser.add_argument("--regen-issues", type=str, default=None,
+                        help="재생성 시 반영할 감사 실패 이유 ('text:설명 | style:설명' 형식)")
     parser.add_argument("--backend", default="imagen", choices=["imagen", "flux"],
                         help="이미지 생성 백엔드: imagen (기본) | flux (Flux Schnell/Replicate)")
     parser.add_argument("--vlm-verify", action="store_true",
@@ -1275,7 +1383,7 @@ def main():
         for w in target_words:
             lv = w["level"]
             # ── 단어 이미지 감사 ──────────────────────────────
-            wp = word_img_path(w["word"], lv)
+            wp = word_img_path(w)
             label = f"[{w['id']}] {w['word']} (lv{lv}) word"
             if not wp.exists():
                 print(f"  {label} — [SKIP] 이미지 없음")
@@ -1298,7 +1406,7 @@ def main():
                 time.sleep(0.3)
             # ── 예문 이미지 감사 ──────────────────────────────
             for idx, sent in enumerate(w.get("sentences", [])):
-                sp = sent_img_path(w["word"], lv, idx)
+                sp = sent_img_path(w, idx)
                 slabel = f"[{w['id']}] {w['word']} (lv{lv}) sent[{idx}]"
                 if not sp.exists():
                     print(f"  {slabel} — [SKIP] 이미지 없음")
@@ -1347,7 +1455,6 @@ def main():
         with open(args.db, encoding="utf-8") as f:
             db = json.load(f)
         id_to_word = {w["id"]: w for w in db}
-        global _VLM_VERIFY
         _VLM_VERIFY = True  # 재생성 시 검증 강제 활성화
         word_fails = [e for e in failed_entries if e.get("sent_idx", -1) == -1]
         sent_fails = [e for e in failed_entries if e.get("sent_idx", -1) >= 0]
@@ -1361,14 +1468,19 @@ def main():
                 print(f"  [SKIP] ID {wid} DB에 없음")
                 continue
             lv = word["level"]
-            target = word_img_path(word["word"], lv)
-            print(f"  [{wid}] {word['word']} (lv{lv}) word — {entry.get('issues','?')[:70]}")
+            target = word_img_path(word)
+            issues_str = entry.get("issues", "")
+            print(f"  [{wid}] {word['word']} (lv{lv}) word — {issues_str[:70]}")
             if target.exists():
                 target.unlink()
-            ck = f"word_{word['id']}"
-            if ck in _scene_cache:
-                del _scene_cache[ck]
-                _save_scene_cache()
+            # 감사 실패 이유를 반영해 장면 프롬프트 사전 개선 → 캐시에 저장
+            improved = _pre_improve_scene_for_regen(word, -1, issues_str, client)
+            if not improved:
+                # 이슈 정보 없으면 캐시 초기화 후 새로 생성
+                ck = f"word_{word['id']}"
+                if ck in _scene_cache:
+                    del _scene_cache[ck]
+                    _save_scene_cache()
             ok = generate_one(word, client)
             if ok:
                 success += 1
@@ -1391,15 +1503,21 @@ def main():
                 print(f"  [SKIP] ID {wid} 예문[{idx}] 없음")
                 continue
             sent = sents[idx]
-            target = sent_img_path(word["word"], lv, idx)
-            print(f"  [{wid}] {word['word']} (lv{lv}) sent[{idx}] — {entry.get('issues','?')[:70]}")
+            target = sent_img_path(word, idx)
+            issues_str = entry.get("issues", "")
+            print(f"  [{wid}] {word['word']} (lv{lv}) sent[{idx}] — {issues_str[:70]}")
             if target.exists():
                 target.unlink()
-            ck = f"sent_{word['id']}_{idx}"
-            if ck in _scene_cache:
-                del _scene_cache[ck]
-                _save_scene_cache()
-            scene = _ai_sentence_scene(word, sent, idx, client)
+            # 감사 실패 이유를 반영해 장면 프롬프트 사전 개선
+            improved = _pre_improve_scene_for_regen(word, idx, issues_str, client)
+            if improved:
+                scene = improved
+            else:
+                ck = f"sent_{word['id']}_{idx}"
+                if ck in _scene_cache:
+                    del _scene_cache[ck]
+                    _save_scene_cache()
+                scene = _ai_sentence_scene(word, sent, idx, client)
             ok = generate_image(scene, target, client, word=word, sent_idx=idx, sent=sent)
             if ok:
                 success += 1
@@ -1419,38 +1537,64 @@ def main():
             print(f"단어 ID {args.regen}를 찾을 수 없습니다.")
             return
         lv = word["level"]
+        issues_str = args.regen_issues or ""
         if args.regen_idx is not None:
             # 예문 1장 재생성
             idx = args.regen_idx
-            target = sent_img_path(word["word"], lv, idx)
+            target = sent_img_path(word, idx)
             if target.exists():
                 target.unlink()
                 print(f"기존 삭제: {target}")
-            # 장면 캐시 초기화 (신형 키) → AI가 새로 설계
+            sent = word.get("sentences", [])[idx] if idx < len(word.get("sentences", [])) else {}
+            # 예문 재생성: 캐시를 항상 먼저 삭제 → 예문 기반 완전 새 장면 생성
             cache_key = f"sent_{word['id']}_{idx}"
             if cache_key in _scene_cache:
                 del _scene_cache[cache_key]
                 _save_scene_cache()
-                print(f"장면 캐시 초기화: {cache_key}")
-            sent = word.get("sentences", [])[idx] if idx < len(word.get("sentences", [])) else {}
-            # AI 장면 생성 (캐시 cleared이므로 새로 생성됨)
+                print(f"  [캐시 삭제] {cache_key}")
+            # 사용자 노트 또는 예문 텍스트로 추가 개선 지시
+            if not issues_str and sent:
+                ko = sent.get("ko", "")
+                en = sent.get("en", "")
+                if en or ko:
+                    issues_str = (
+                        f"educational:이미지가 이 예문을 명확히 표현해야 함 — "
+                        f"{en} / {ko}. "
+                        "예문의 구체적인 행동·상황·장소를 중심으로 장면을 재설계할 것"
+                    )
+            # 캐시 삭제 후 _ai_sentence_scene이 새 장면 생성 → 추가 노트 있으면 개선 적용
             scene = _ai_sentence_scene(word, sent, idx, client)
+            if issues_str:
+                try:
+                    improved = _ai_improve_scene(scene, [s.strip() for s in issues_str.split("|") if s.strip()],
+                                                 word, sent, client)
+                    if improved:
+                        scene = improved
+                        _scene_cache[cache_key] = improved
+                        _save_scene_cache()
+                except Exception as e_imp:
+                    print(f"  [장면 개선 오류, 기본 장면 사용: {e_imp}]")
             print(f"재생성: {word['word']} 예문[{idx}]")
             ok = generate_image(scene, target, client, word=word, sent_idx=idx, sent=sent)
             _save_scene_cache()
             print("성공" if ok else "실패")
         else:
             # 단어 이미지 재생성
-            target = word_img_path(word["word"], lv)
+            target = word_img_path(word)
             if target.exists():
                 target.unlink()
                 print(f"기존 삭제: {target}")
-            # 단어 장면 캐시 초기화 → AI가 새로 설계
-            cache_key = f"word_{word['id']}"
-            if cache_key in _scene_cache:
-                del _scene_cache[cache_key]
-                _save_scene_cache()
-                print(f"장면 캐시 초기화: {cache_key}")
+            # 감사 실패 이유 반영 사전 개선 (없으면 캐시 초기화 후 새로 생성)
+            try:
+                improved = _pre_improve_scene_for_regen(word, -1, issues_str, client)
+            except Exception as e_pre:
+                print(f"  [사전 개선 오류, 기본 생성으로 대체: {e_pre}]")
+                improved = None
+            if not improved:
+                cache_key = f"word_{word['id']}"
+                if cache_key in _scene_cache:
+                    del _scene_cache[cache_key]
+                    _save_scene_cache()
             print(f"재생성: {word['word']} 단어 이미지")
             ok = generate_one(word, client)
             print("성공" if ok else "실패")
@@ -1475,13 +1619,13 @@ def main():
 
     # 생성 필요한 수 계산
     need_word = [] if args.sentences_only else [
-        w for w in words if not word_img_path(w["word"], w["level"]).exists()
+        w for w in words if not word_img_path(w).exists()
     ]
     need_sent = [] if args.words_only else [
         (w, idx, sent)
         for w in words
         for idx, sent in enumerate(w.get("sentences", []))
-        if not sent_img_path(w["word"], w["level"], idx).exists()
+        if not sent_img_path(w, idx).exists()
     ]
     total = len(need_word) + len(need_sent)
 
@@ -1503,7 +1647,7 @@ def main():
 
             # ── 단어 일러스트 ──────────────────────────────────
             if not args.sentences_only:
-                wpath = word_img_path(word["word"], word["level"])
+                wpath = word_img_path(word)
                 if not wpath.exists():
                     src = "커스텀" if get_word_custom_prompt(word["id"]) else "기본"
                     keyword = word["meaning"].split(",")[0].strip().split()[0]
@@ -1523,7 +1667,7 @@ def main():
             if not args.words_only:
                 sents = word.get("sentences", [])
                 for idx, sent in enumerate(sents):
-                    spath = sent_img_path(word["word"], word["level"], idx)
+                    spath = sent_img_path(word, idx)
                     if spath.exists():
                         continue
                     custom = get_sentence_custom_prompt(word["id"], idx)

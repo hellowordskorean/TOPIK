@@ -19,9 +19,10 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 
-# Windows cp949 인코딩 문제 방지
-if sys.stdout.encoding != "utf-8":
+# Windows cp949 인코딩 문제 방지 (pythonw.exe는 stdout/stderr가 None)
+if sys.stdout is not None and sys.stdout.encoding != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr is not None and sys.stderr.encoding != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # .env 로드
@@ -53,11 +54,34 @@ def _detect_fonts():
                         "C:/Windows/Fonts/arialbd.ttf"],
         "english":     ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                         "C:/Windows/Fonts/arial.ttf"],
+        # 일본어 폰트 (히라가나·가타카나·한자)
+        "jp":          ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                        "C:/Windows/Fonts/NotoSansJP-Regular.otf",
+                        "C:/Windows/Fonts/msgothic.ttc",
+                        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+                        "C:/Windows/Fonts/malgun.ttf"],
+        # 중국어 폰트 (간체)
+        "cn":          ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                        "C:/Windows/Fonts/msyh.ttc",
+                        "C:/Windows/Fonts/simsun.ttc",
+                        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+                        "C:/Windows/Fonts/malgun.ttf"],
     }
     result = {}
     for key, paths in candidates.items():
         result[key] = next((p for p in paths if os.path.exists(p)), paths[0])
     return result
+
+
+def _lang_font(lang_code: str, size: int) -> ImageFont.FreeTypeFont:
+    """언어 코드에 맞는 폰트 반환 (JP/CN → CJK 폰트, 기타 → english)"""
+    if lang_code == "JP":
+        return get_font("jp", size)
+    elif lang_code == "CN":
+        return get_font("cn", size)
+    return get_font("english", size)
 
 _fonts = _detect_fonts()
 
@@ -166,19 +190,26 @@ def log_video(word: dict, output_path: str, music_src: str = None, file_size: in
         if os.path.exists(log_path):
             with open(log_path, encoding="utf-8") as f:
                 log = json.load(f)
+        _lang = word.get("language", "EN")
+        _exam = word.get("exam", "TOPIK")
         entry = {
             "word_id":      word["id"],
             "word":         word["word"],
             "level":        word["level"],
             "meaning":      word["meaning"],
-            "exam":         "TOPIK",
-            "language":     "EN",
+            "exam":         _exam,
+            "language":     _lang,
             "output_path":  output_path,
             "music_file":   os.path.basename(music_src) if music_src else None,
             "file_size":    file_size,
             "generated_at": datetime.now().isoformat(),
         }
-        log = [x for x in log if x.get("word_id") != word["id"]]
+        # 같은 단어+언어+시험 항목만 교체 (다른 언어는 유지)
+        log = [x for x in log if not (
+            x.get("word_id") == word["id"] and
+            x.get("language", "EN") == _lang and
+            x.get("exam", "TOPIK") == _exam
+        )]
         log.append(entry)
         log.sort(key=lambda x: x["word_id"])
         os.makedirs(_app_path("logs"), exist_ok=True)
@@ -255,6 +286,14 @@ def get_audio_duration(path: str) -> float:
 def draw_gradient_bg(img: Image.Image):
     """크림색 단색 배경"""
     ImageDraw.Draw(img).rectangle([0, 0, W, H], fill=C["bg"])
+
+_COMMENT_CTA = {
+    "EN": "Write a sentence using today's word\nin the comments below!",
+    "JP": "今日の単語を使った例文を\nコメントに書いてみよう！",
+    "CN": "用今天的单词造个句子\n写在评论区吧！",
+    "VN": "Hãy viết câu ví dụ với từ hôm nay\nvào phần bình luận nhé!",
+    "ES": "¡Escribe una oración con\nla palabra de hoy en los comentarios!",
+}
 
 _POS_MAP = {
     "EN": {"명사": "Noun", "동사": "Verb", "형용사": "Adjective", "부사": "Adverb",
@@ -352,7 +391,7 @@ def draw_word_card(img: Image.Image, word: dict, bg_path: str = None, progress: 
 
     # 품사 (대상 언어로 표기: Noun, 名詞, etc.)
     pos_text = _translate_pos(word.get("part_of_speech", ""), word.get("language", "EN"))
-    font_pos = get_font("english", 34)
+    font_pos = _lang_font(lang_code, 34)
     draw.text((cx, card_y + 194), pos_text,
               font=font_pos, fill=(*C["text_muted"], int(220 * p)), anchor="mm")
 
@@ -361,10 +400,12 @@ def draw_word_card(img: Image.Image, word: dict, bg_path: str = None, progress: 
     draw.text((cx, card_y + 390), word["word"],
               font=font_word, fill=(*C["accent"], int(255 * p)), anchor="mm")
 
-    # 로마자 [ gage ] (파란색)
-    font_roman = get_font("english", 38)
-    draw.text((cx, card_y + 524), f"[ {word['romanization']} ]",
-              font=font_roman, fill=(*C["accent"], int(220 * p)), anchor="mm")
+    # 로마자 [ gage ] (파란색) — per-language DB에는 없을 수 있음
+    roman = word.get("romanization", "")
+    if roman:
+        font_roman = get_font("english", 38)
+        draw.text((cx, card_y + 524), f"[ {roman} ]",
+                  font=font_roman, fill=(*C["accent"], int(220 * p)), anchor="mm")
 
     # 얇은 구분선
     div2_y = card_y + 566
@@ -372,7 +413,7 @@ def draw_word_card(img: Image.Image, word: dict, bg_path: str = None, progress: 
                    fill=(*C["divider"], int(255 * p)))
 
     # 뜻 (그레이, 1.5배 사이즈)
-    font_meaning = get_font("english", 72)
+    font_meaning = _lang_font(lang_code, 72)
     draw.text((cx, card_y + 660), word["meaning"],
               font=font_meaning, fill=(*C["text_secondary"], int(230 * p)), anchor="mm")
 
@@ -430,8 +471,9 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     text_y = py + ph + 60  # pill 아래 여백
 
     situation = sentence.get("situation", "")
+    _lc_sit = word.get("language", "EN").upper()
     if situation:
-        font_sit = get_font("english", 38)
+        font_sit = _lang_font(_lc_sit, 38)
         draw.text((cx, text_y), f"#{situation}",
                   font=font_sit, fill=C["text_muted"], anchor="mm")
         text_y += 75
@@ -465,8 +507,8 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     text_y += 36
 
     # 번역 텍스트 (48px) — 긴 문장 두 줄 허용
-    font_en = get_font("english", 48)
     _lc = word.get("language", "EN").upper()
+    font_en = _lang_font(_lc, 48)
     _sk = {"EN": "en", "JP": "jp", "CN": "cn", "VN": "vn", "ES": "es"}.get(_lc, "en")
     en_text = sentence.get(_sk) or sentence.get("en", "")
     en_hi = find_en_highlight(en_text, word["meaning"])
@@ -495,6 +537,60 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     ic_r = 36
     draw_card_shadow(img, ic_x, ic_top, ic_w, ic_h, radius=ic_r)
     draw_illustration_in_card(img, bg_path, ic_x, ic_top, ic_w, ic_h, radius=ic_r)
+
+_LANG_LABEL = {
+    "EN": "English",
+    "JP": "日本語",
+    "CN": "中文",
+    "VN": "Tiếng Việt",
+    "ES": "Español",
+}
+
+# 대상 언어로 "한국어"를 표기하는 방식
+_KOREAN_IN_LANG = {
+    "EN": "Korean",
+    "JP": "韓国語",
+    "CN": "韩语",
+    "VN": "Tiếng Hàn",
+    "ES": "Coreano",
+}
+
+_THUMB_LANG_COLORS = {
+    "EN": (50,  92, 200),
+    "JP": (219, 68,  85),
+    "CN": (200, 50,  50),
+    "VN": (218, 165, 32),
+    "ES": (230, 126, 34),
+}
+
+def render_thumbnail(src_frame: str, dest_path: str, word: dict):
+    """썸네일: 상단 컬러 바에 대상 언어로 'Korean' 표기"""
+    img = Image.open(src_frame).convert("RGBA")
+    cx = W // 2
+
+    lang_code     = word.get("language", "EN").upper()
+    lang_color    = _THUMB_LANG_COLORS.get(lang_code, (50, 92, 200))
+    korean_label  = _KOREAN_IN_LANG.get(lang_code, "Korean")
+
+    # ── 상단 컬러 바 (lang_color, 하단 모서리만 라운드) ──────
+    bar_h = 170
+    bar_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    bd = ImageDraw.Draw(bar_ov)
+    # 둥근 사각형으로 바 그리기 (상단은 꽉 채워 각지게)
+    bd.rounded_rectangle([0, 0, W, bar_h], radius=60, fill=(*lang_color, 255))
+    bd.rectangle([0, 0, W, 60], fill=(*lang_color, 255))  # 상단 모서리 직각으로
+    img = Image.alpha_composite(img, bar_ov)
+    draw = ImageDraw.Draw(img)
+
+    # ── 언어 이름 (대상 언어로 "Korean") ─────────────────────
+    if lang_code in ("JP", "CN"):
+        font_label = get_font("korean_bold", 90)   # CJK는 한국어 폰트로 렌더
+    else:
+        font_label = get_font("english_bold", 90)
+    draw.text((cx, bar_h // 2), korean_label,
+              font=font_label, fill=(255, 255, 255, 255), anchor="mm")
+
+    img.convert("RGB").save(dest_path, "PNG")
 
 def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: float = 1.0):
     """아웃트로 — 라이트 테마"""
@@ -527,21 +623,57 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
               font=font_big, fill=(*C["accent"], int(255 * p)), anchor="mm")
 
     # = meaning
-    font_sub = get_font("english", 50)
+    _outro_lc = word.get("language", "EN").upper()
+    font_sub = _lang_font(_outro_lc, 50)
     draw.text((cx, card_y + 480), f"= {word['meaning']}",
               font=font_sub, fill=(*C["text_secondary"], int(210 * p)), anchor="mm")
 
-    # CTA (아래)
+    # CTA (아래) — 구독 유도
     font_cta = get_font("english", 30)
     cta_text = ("Follow for daily TOPIK vocab" if _VIDEO_FORMAT == "reels"
                 else "Like & Subscribe for daily TOPIK vocab")
     draw.text((cx, card_y + card_h + 60), cta_text,
               font=font_cta, fill=(*C["text_muted"], int(160 * p)), anchor="mm")
 
+    # 댓글 유도 CTA
+    lang_code = word.get("language", "EN").upper()
+    comment_text = _COMMENT_CTA.get(lang_code, _COMMENT_CTA["EN"])
+    font_comment = _lang_font(lang_code, 36) if lang_code in ("JP", "CN") else get_font("english", 36)
+    # 배경 박스
+    cta_y = card_y + card_h + 130
+    lines = comment_text.split("\n")
+    line_h = 46
+    box_h = line_h * len(lines) + 40
+    box_x1, box_x2 = cx - 400, cx + 400
+    cta_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(cta_ov).rounded_rectangle(
+        [box_x1, cta_y - 20, box_x2, cta_y + box_h],
+        radius=20, fill=(*C["accent"], int(220 * p))
+    )
+    img.paste(cta_ov, mask=cta_ov.split()[3])
+    draw = ImageDraw.Draw(img)
+    for i, line in enumerate(lines):
+        draw.text((cx, cta_y + i * line_h + 10), line,
+                  font=font_comment, fill=(255, 255, 255, int(255 * p)), anchor="mm")
+
 # ─── 배경 이미지 ─────────────────────────────────────────────
+def _find_illust_base(korean_word: str, level: int) -> str:
+    """일러스트 폴더 경로 반환 — 구 형식 {word} 또는 신 형식 {id}_{word} 모두 지원"""
+    old_base = _app_path(f"assets/illustrations/lv{level}/{korean_word}")
+    if os.path.isdir(old_base):
+        return old_base
+    # 신 형식: 숫자_단어 폴더 탐색
+    lv_dir = _app_path(f"assets/illustrations/lv{level}")
+    if os.path.isdir(lv_dir):
+        for entry in os.listdir(lv_dir):
+            parts = entry.split("_", 1)
+            if len(parts) == 2 and parts[0].isdigit() and parts[1] == korean_word:
+                return os.path.join(lv_dir, entry)
+    return old_base  # 없어도 경로는 반환 (존재 여부는 호출부에서 확인)
+
 def get_background(korean_word: str, meaning: str, level: int = 1, sentence_idx: int = None) -> str:
     """배경 이미지 경로 반환 (우선순위: 예문 일러스트 → 단어 일러스트 → Pexels → None)"""
-    base = _app_path(f"assets/illustrations/lv{level}/{korean_word}")
+    base = _find_illust_base(korean_word, level)
 
     # 1순위: 예문별 일러스트 (lv{level}/{word}/{idx}.png)
     if sentence_idx is not None:
@@ -897,12 +1029,15 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
             pct = 30 + int((frame_n / total_frames) * 55)  # 30~85%
             write_progress(f"3/4 프레임 렌더링 중... ({frame_n}/{total_frames})", pct=pct, word=word)
     
-    # 썸네일 저장 (인트로 첫 프레임)
-    thumb_path = output_path.rsplit(".", 1)[0] + "_thumb.png"
+    # 썸네일 저장 (인트로 첫 프레임) — thumbnail/ 폴더에 별도 저장
+    video_dir_for_thumb = os.path.dirname(output_path)
+    thumb_dir = os.path.join(os.path.dirname(video_dir_for_thumb), "thumbnail")
+    os.makedirs(thumb_dir, exist_ok=True)
+    thumb_name = os.path.splitext(os.path.basename(output_path))[0] + "_thumb.png"
+    thumb_path = os.path.join(thumb_dir, thumb_name)
     intro_frame = os.path.join(frames_dir, "frame_000000.png")
     if os.path.exists(intro_frame):
-        import shutil
-        shutil.copy2(intro_frame, thumb_path)
+        render_thumbnail(intro_frame, thumb_path, word)
         print(f"  [OK] 썸네일 저장: {thumb_path}")
 
     write_progress("4/4 FFmpeg 합성 중...", pct=88, word=word)
@@ -1025,7 +1160,7 @@ if __name__ == "__main__":
     os.makedirs(video_dir, exist_ok=True)
 
     fmt_suffix = "_reels" if args.format == "reels" else ""
-    filename = f"{args.exam.lower()}_{args.id:04d}_{word['word']}{fmt_suffix}"
+    filename = f"{args.exam.lower()}_{args.id:04d}_{word['word']}_{args.lang}{fmt_suffix}"
     output_path = os.path.join(video_dir, f"{filename}.mp4")
 
     with tempfile.TemporaryDirectory() as tmpdir:

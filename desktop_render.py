@@ -105,7 +105,7 @@ def mark_failed(q: dict, reason: str):
 
 
 # ─── 렌더링 ──────────────────────────────────────────────────
-def render(word_id: int, db_path: str, exam: str = "TOPIK", lang: str = "EN") -> bool:
+def render(word_id: int, db_path: str, exam: str = "TOPIK", lang: str = "EN", fmt: str = "youtube") -> bool:
     # Docker 컨테이너 경로 → 로컬 경로 변환
     # /app/data/ → Z:\Hellowords\data\ (공유 데이터는 youtube 상위 폴더)
     local_db = db_path.replace("/app/data/", str(NAS_DRIVE.parent / "data") + "/").replace("/app/", str(NAS_DRIVE) + "/").replace("/", os.sep)
@@ -114,22 +114,30 @@ def render(word_id: int, db_path: str, exam: str = "TOPIK", lang: str = "EN") ->
         local_db = str(NAS_DRIVE.parent / "data" / "LanguageTest" / "words_db.json")
     local_output = str(NAS_DRIVE / "output")
 
+    # pythonw.exe는 stdout/stderr=None이라 make_video.py가 즉시 충돌함
+    # → python.exe를 명시적으로 사용
+    python_exe = sys.executable.replace("pythonw.exe", "python.exe").replace("pythonw", "python")
+
     cmd = [
-        sys.executable, str(NAS_DRIVE / "make_video.py"),
+        python_exe, str(NAS_DRIVE / "make_video.py"),
         "--db", local_db,
         "--id", str(word_id),
         "--output", local_output,
         "--exam", exam,
         "--lang", lang,
+        "--format", fmt,
     ]
     log(f"렌더링 시작: word_id={word_id}  (native Python + FFmpeg)")
     log(f"명령어: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=str(NAS_DRIVE), env=_get_env())
+    result = subprocess.run(cmd, cwd=str(NAS_DRIVE), env=_get_env(),
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode == 0:
         log(f"렌더링 완료: word_id={word_id}")
         return True
     else:
         log(f"렌더링 실패: returncode={result.returncode}")
+        if result.stderr:
+            log(f"오류 내용: {result.stderr[-500:]}")
         return False
 
 
@@ -159,10 +167,11 @@ def main():
                 db_path = q.get("db_path", "/app/data/LanguageTest/words_db.json")
                 exam = q.get("exam", "TOPIK")
                 lang = q.get("lang", "EN")
-                log(f"대기 중인 작업 발견: word_id={word_id} ({exam}/{lang})")
+                fmt  = q.get("fmt", "youtube")
+                log(f"대기 중인 작업 발견: word_id={word_id} ({exam}/{lang}/{fmt})")
 
                 if claim_job(q):
-                    success = render(word_id, db_path, exam, lang)
+                    success = render(word_id, db_path, exam, lang, fmt)
                     q = read_queue()  # 다시 읽기 (NAS가 중간에 변경했을 수 있음)
                     if success:
                         mark_done(q)

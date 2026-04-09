@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-nanum \
     fonts-nanum-extra \
     fonts-dejavu-core \
+    fonts-wqy-microhei \
     curl \
     && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
