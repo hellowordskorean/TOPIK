@@ -480,17 +480,33 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
                   font=font_sit, fill=C["text_muted"], anchor="mm")
         text_y += 75
 
-    # 한국어 예문 (90px bold)
-    font_ko = get_font("korean_bold", 90)
-    ko_text = sentence["ko"]
+    # 한국어 예문 — 폰트·줄바꿈 자동 조절
+    MAX_KO_W = W - 80   # 1000px
+    ko_text  = sentence["ko"]
+    ko_size  = 90
+
+    # 1) 중간 공백에서 줄바꿈 시도 (12자 이상)
     if len(ko_text) >= 12:
         mid = len(ko_text) // 2
         for i in range(mid, len(ko_text)):
             if ko_text[i] == ' ':
                 ko_text = ko_text[:i] + '\n' + ko_text[i + 1:]
                 break
+
+    # 2) 가장 긴 줄이 MAX_KO_W를 넘으면 폰트 축소
+    font_ko = get_font("korean_bold", ko_size)
+    while ko_size > 44:
+        max_lw = max(
+            draw.textbbox((0, 0), line, font=font_ko)[2]
+            for line in ko_text.split('\n')
+        )
+        if max_lw <= MAX_KO_W:
+            break
+        ko_size -= 4
+        font_ko = get_font("korean_bold", ko_size)
+
     lines_ko = len(ko_text.split('\n'))
-    lh_ko = 110
+    lh_ko    = int(ko_size * 1.22)   # 90px → 110, 비례 유지
     draw_multiline_highlighted(
         img, cx, text_y + (lines_ko * lh_ko) // 2,
         ko_text, word["word"],
