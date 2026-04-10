@@ -471,13 +471,25 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     # ── 텍스트: 상황 → 한국어 → 로마자 → 영어 (이미지 위 영역에 배치) ──
     text_y = py + ph + 60  # pill 아래 여백
 
-    situation = sentence.get("situation", "")
     _lc_sit = word.get("language", "EN").upper()
+    _sk_sit = {"EN": "en", "JP": "jp", "CN": "cn", "VN": "vn", "ES": "es"}.get(_lc_sit, "en")
+    # 언어별 상황 설명 우선 (situation_jp, situation_cn 등 → 없으면 기본 situation)
+    situation = sentence.get(f"situation_{_sk_sit}") or sentence.get("situation", "")
     if situation:
         font_sit = _lang_font(_lc_sit, 38)
-        draw.text((cx, text_y), f"#{situation}",
-                  font=font_sit, fill=C["text_muted"], anchor="mm")
-        text_y += 75
+        # 상황 텍스트 너비 확인 → 두 줄 처리
+        _sit_max_w = W - 120
+        sit_text = f"#{situation}"
+        if draw.textbbox((0, 0), sit_text, font=font_sit)[2] > _sit_max_w:
+            mid_s = len(sit_text) // 2
+            split_at = sit_text.rfind(' ', 0, mid_s) if ' ' in sit_text[:mid_s+5] else mid_s
+            if split_at > 0:
+                sit_text = sit_text[:split_at] + '\n' + sit_text[split_at+1:]
+        sit_lines = sit_text.count('\n') + 1
+        for _sl, _sline in enumerate(sit_text.split('\n')):
+            draw.text((cx, text_y + _sl * 46), _sline,
+                      font=font_sit, fill=C["text_muted"], anchor="mm")
+        text_y += sit_lines * 46 + 29
 
     # 한국어 예문 — 폰트·줄바꿈 자동 조절
     MAX_KO_W = W - 80   # 1000px
@@ -513,13 +525,47 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     )
     text_y += lines_ko * lh_ko + 12
 
-    # IPA 발음기호 (34px, 뮤트 컬러)
-    ko_phonetics = get_phonetics(sentence["ko"])
-    if ko_phonetics:
-        font_ipa = get_font("english", 34)
-        draw.text((cx, text_y + 10), ko_phonetics,
-                  font=font_ipa, fill=C["text_muted"], anchor="mm")
-        text_y += 44
+    # 발음기호: 언어별 처리
+    _lc_ph = word.get("language", "EN").upper()
+    ko_phonetics_raw = get_phonetics(sentence["ko"])
+    if ko_phonetics_raw:
+        if _lc_ph == "JP":
+            # 일본어: 카타카나로 변환
+            ph_text = _roman_to_katakana(ko_phonetics_raw)
+            font_ph = _lang_font("JP", 34)
+        else:
+            # EN/CN/VN/ES: 로마자 그대로
+            ph_text = ko_phonetics_raw
+            font_ph = get_font("english", 34)
+        # 두 줄 자동 처리
+        ph_max_w = W - 120
+        if draw.textbbox((0, 0), ph_text, font=font_ph)[2] > ph_max_w:
+            words_ph = ph_text.split() if ' ' in ph_text else list(ph_text)
+            if ' ' in ph_text:
+                # 공백 기준 분리
+                mid_ph = len(words_ph) // 2
+                for _d in range(len(words_ph)):
+                    for _idx in (mid_ph - _d, mid_ph + _d):
+                        if 0 < _idx < len(words_ph):
+                            l1 = ' '.join(words_ph[:_idx])
+                            if draw.textbbox((0, 0), l1, font=font_ph)[2] <= ph_max_w:
+                                ph_text = l1 + '\n' + ' '.join(words_ph[_idx:])
+                                break
+                    else:
+                        continue
+                    break
+            else:
+                # 문자 기준 분리 (카타카나 등)
+                for _idx in range(len(ph_text) // 2, 0, -1):
+                    if draw.textbbox((0, 0), ph_text[:_idx], font=font_ph)[2] <= ph_max_w:
+                        ph_text = ph_text[:_idx] + '\n' + ph_text[_idx:]
+                        break
+        ph_lines = ph_text.count('\n') + 1
+        lh_ph = 40
+        for _pl, _pline in enumerate(ph_text.split('\n')):
+            draw.text((cx, text_y + 10 + _pl * lh_ph), _pline,
+                      font=font_ph, fill=C["text_muted"], anchor="mm")
+        text_y += 10 + ph_lines * lh_ph + 4
 
     text_y += 36
 
@@ -533,15 +579,23 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     _max_en_w = W - 120
     _tmp_draw = ImageDraw.Draw(img)
     if _tmp_draw.textbbox((0, 0), en_text, font=font_en)[2] > _max_en_w:
-        en_words = en_text.split()
-        line1, split_idx = [], len(en_words)
-        for _wi, _ew in enumerate(en_words):
-            _test = ' '.join(line1 + [_ew])
-            if _tmp_draw.textbbox((0, 0), _test, font=font_en)[2] > _max_en_w and line1:
-                split_idx = _wi
-                break
-            line1.append(_ew)
-        en_text = ' '.join(en_words[:split_idx]) + '\n' + ' '.join(en_words[split_idx:])
+        if ' ' in en_text:
+            # 단어 기준 분리 (EN, ES, VN)
+            en_words = en_text.split()
+            line1, split_idx = [], len(en_words)
+            for _wi, _ew in enumerate(en_words):
+                _test = ' '.join(line1 + [_ew])
+                if _tmp_draw.textbbox((0, 0), _test, font=font_en)[2] > _max_en_w and line1:
+                    split_idx = _wi
+                    break
+                line1.append(_ew)
+            en_text = ' '.join(en_words[:split_idx]) + '\n' + ' '.join(en_words[split_idx:])
+        else:
+            # 문자 기준 분리 (JP, CN — 공백 없음)
+            for _ci in range(len(en_text) // 2, 0, -1):
+                if _tmp_draw.textbbox((0, 0), en_text[:_ci], font=font_en)[2] <= _max_en_w:
+                    en_text = en_text[:_ci] + '\n' + en_text[_ci:]
+                    break
 
     en_lines = len(en_text.split('\n'))
     lh_en = _tmp_draw.textbbox((0, 0), "Ag", font=font_en)[3] + 14
@@ -949,6 +1003,46 @@ def get_phonetics(text: str) -> str:
         return result
     except Exception:
         return ""
+
+
+def _roman_to_katakana(roman: str) -> str:
+    """Korean Revised Romanization → Katakana (근사 변환)"""
+    _M2 = {
+        "gg": "ッ", "kk": "ッ", "dd": "ッ", "tt": "ッ", "bb": "ッ", "pp": "ッ", "ss": "ッ",
+        "ch": "チ", "sh": "シ", "ng": "ン",
+        "ga": "ガ", "gi": "ギ", "gu": "グ", "ge": "ゲ", "go": "ゴ",
+        "ka": "カ", "ki": "キ", "ku": "ク", "ke": "ケ", "ko": "コ",
+        "na": "ナ", "ni": "ニ", "nu": "ヌ", "ne": "ネ", "no": "ノ",
+        "da": "ダ", "di": "ディ", "du": "ドゥ", "de": "デ", "do": "ド",
+        "ta": "タ", "ti": "ティ", "tu": "トゥ", "te": "テ", "to": "ト",
+        "ra": "ラ", "ri": "リ", "ru": "ル", "re": "レ", "ro": "ロ",
+        "la": "ラ", "li": "リ", "lu": "ル", "le": "レ", "lo": "ロ",
+        "ma": "マ", "mi": "ミ", "mu": "ム", "me": "メ", "mo": "モ",
+        "ba": "バ", "bi": "ビ", "bu": "ブ", "be": "ベ", "bo": "ボ",
+        "pa": "パ", "pi": "ピ", "pu": "プ", "pe": "ペ", "po": "ポ",
+        "ha": "ハ", "hi": "ヒ", "hu": "フ", "he": "ヘ", "ho": "ホ",
+        "sa": "サ", "si": "シ", "su": "ス", "se": "セ", "so": "ソ",
+        "ja": "ジャ", "ji": "ジ", "ju": "ジュ", "je": "ジェ", "jo": "ジョ",
+        "ya": "ヤ", "yu": "ユ", "yo": "ヨ",
+        "wa": "ワ", "wi": "ウィ", "we": "ウェ", "wo": "ウォ",
+        "ae": "エ", "eo": "オ", "eu": "ウ", "oe": "ウェ", "ui": "ウィ",
+    }
+    _M1 = {
+        "a": "ア", "i": "イ", "u": "ウ", "e": "エ", "o": "オ",
+        "n": "ン", "k": "ク", "g": "ク", "t": "ト", "d": "ド",
+        "r": "ル", "l": "ル", "m": "ム", "b": "ブ", "p": "プ",
+        "h": "フ", "s": "ス", "j": "ジ", "c": "ク", "w": "ウ", "y": "イ",
+        "-": "・", " ": " ",
+    }
+    result, i, s = "", 0, roman.lower()
+    while i < len(s):
+        if i + 1 < len(s) and s[i:i+2] in _M2:
+            result += _M2[s[i:i+2]]; i += 2
+        elif s[i] in _M1:
+            result += _M1[s[i]]; i += 1
+        else:
+            result += s[i]; i += 1
+    return result
 
 
 # ─── 프레임 생성기 ───────────────────────────────────────────
