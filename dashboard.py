@@ -2160,6 +2160,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <div class="pbar-bg" style="flex:1;height:6px;"><div id="rp-batch-prog-bar" class="pbar" style="height:6px;width:0%;background:var(--green);"></div></div>
       <span id="rp-batch-prog-pct" style="font-size:.72rem;font-weight:700;color:var(--green);min-width:32px;text-align:right;">0%</span>
       <span id="rp-batch-prog-step" style="font-size:.62rem;color:var(--muted);white-space:nowrap;"></span>
+      <button onclick="cancelRender()" class="btn btn-d" style="font-size:.65rem;padding:3px 10px;white-space:nowrap;flex-shrink:0;">✕ 취소</button>
     </div>
   </div>
   <!-- 탭 -->
@@ -2223,7 +2224,9 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
 
     <!-- 수동 트리거 -->
     <div style="display:flex;gap:8px;">
-      <button onclick="dailyTrigger()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.78rem;">▶ 지금 렌더링 시작</button>
+      <button id="rp-render-all" onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.78rem;">▶ 전체 렌더링</button>
+      <button onclick="dailyTrigger()" class="btn btn-m" style="font-size:.78rem;padding:0 12px;">▶ 오늘</button>
+      <button id="rp-cancel-btn" onclick="cancelRender()" class="btn btn-d" style="display:none;font-size:.78rem;padding:0 14px;">✕ 취소</button>
     </div>
     <div style="margin-top:6px;font-size:.65rem;color:var(--muted2);text-align:center;">자동 OFF 상태에서도 수동으로 실행 가능</div>
   </div>
@@ -2278,7 +2281,10 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <span id="rc-remaining" style="font-size:.62rem;color:var(--muted2);"></span>
     </div>
     <div id="rc-preview" style="margin-bottom:12px;max-height:300px;overflow-y:auto;"></div>
-    <button id="rc-start" onclick="startCustomRender()" class="btn btn-g" style="width:100%;justify-content:center;">▶ 렌더링 시작</button>
+    <div style="display:flex;gap:8px;">
+      <button id="rc-start" onclick="startCustomRender()" class="btn btn-g" style="flex:1;justify-content:center;">▶ 렌더링 시작</button>
+      <button id="rc-cancel" onclick="cancelRender()" class="btn btn-d" style="display:none;padding:0 16px;">✕ 취소</button>
+    </div>
   </div>
   <!-- 탭 내용: 날짜별 -->
   <div id="rp-history" style="display:none;">
@@ -3649,6 +3655,9 @@ function renderBatchList(d){
   if(cancelBtn){
     cancelBtn.style.display=isRunning?'block':'none';
   }
+  // 커스텀 탭 취소 버튼도 동기화
+  const rcCancel=document.getElementById('rc-cancel');
+  if(rcCancel) rcCancel.style.display=isRunning?'':'none';
   // 전체선택 체크 동기화
   const selAll=document.getElementById('rp-select-all');
   if(selAll){
@@ -3943,6 +3952,20 @@ function updateCustomTimeEst(){
   if(el) el.textContent=`예상 소요: ~${total}분 (${totalWords}개 × ${langs.length}개 언어 × ${fmtCnt}개 포맷 × ${perMin}분)`;
 }
 
+async function cancelRender(){
+  if(!confirm('렌더링을 취소할까요?\n현재 처리 중인 영상이 완료된 후 다음 항목부터 중단됩니다.')) return;
+  try{
+    const r=await fetch('/api/render/cancel',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok){alert('취소 실패: '+(d.error||''));}
+    else{
+      const cc=document.getElementById('rc-cancel');
+      if(cc) cc.style.display='none';
+      loadBatchData();loadOverview();
+    }
+  }catch(e){alert('실패: '+e);}
+}
+
 async function startCustomRender(){
   const targets=getTargetRows();
   const langs=getSelectedLangs();
@@ -3957,6 +3980,7 @@ async function startCustomRender(){
   const msg=`[${targetDesc}]\n언어: [${langs.join(', ')}]\n포맷: ${fmtLabel}\n총 약 ${totalWords*langs.length*fmts.length}개 렌더링\n위치: ${renderTarget==='desktop'?'💻 데스크탑 GPU':'🖥 NAS CPU'}\n\n시작할까요?`;
   if(!confirm(msg)) return;
   const btn=document.getElementById('rc-start');
+  const cancelBtn=document.getElementById('rc-cancel');
   btn.disabled=true;btn.textContent='⏳ 요청 중...';
   try{
     const body={targets,langs,formats:fmts,target:renderTarget};
@@ -3964,7 +3988,10 @@ async function startCustomRender(){
       body:JSON.stringify(body)});
     const d=await r.json();
     if(!r.ok) alert('오류: '+(d.error||''));
-    else{rpTab('batch');loadOverview();}
+    else{
+      if(cancelBtn) cancelBtn.style.display='';
+      rpTab('batch');loadOverview();
+    }
   }catch(e){alert('실패: '+e);}
   finally{btn.disabled=false;updateCustomPreview();}
 }
