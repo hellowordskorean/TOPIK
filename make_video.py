@@ -955,11 +955,47 @@ def draw_illustration_in_card(img: Image.Image, bg_path: str,
             pass
 
 
+def _ko_extend_to_boundary(text: str, start: int, min_len: int) -> str:
+    """start 위치에서 단어 경계(공백·문장부호)까지 확장"""
+    _STOP = set(' .?!,。？！·…')
+    end = start + min_len
+    while end < len(text) and text[end] not in _STOP:
+        end += 1
+    return text[start:end]
+
+
+def _find_ko_match(line: str, word: str):
+    """한국어 문장에서 단어(활용형 포함)를 찾아 (start_idx, matched_str) 반환.
+    불규칙 활용(가깝다→가까워요 등)도 음절 접두사 매칭으로 처리."""
+    if not word:
+        return -1, ""
+    # 1. 정확히 일치
+    if word in line:
+        return line.index(word), word
+    # 2. 어간 추출 (다 제거)
+    stem = word[:-1] if word.endswith("다") else word
+    if stem and stem in line:
+        idx = line.index(stem)
+        return idx, _ko_extend_to_boundary(line, idx, len(stem))
+    # 3. 어간 앞부분 점진 축소 (불규칙 활용 대응, 최소 1음절)
+    for plen in range(len(stem) - 1, 0, -1):
+        prefix = stem[:plen]
+        for i in range(len(line)):
+            if line[i:i + plen] == prefix:
+                # 단어 첫 음절인지 확인 (앞이 공백이거나 문장 시작)
+                if i == 0 or line[i - 1] == ' ':
+                    matched = _ko_extend_to_boundary(line, i, plen)
+                    if matched:
+                        return i, matched
+    return -1, ""
+
+
 def draw_multiline_highlighted(img: Image.Image, cx: int, cy: int,
                                 text: str, target: str,
                                 font: ImageFont.FreeTypeFont,
                                 base_color: tuple, hi_color: tuple):
-    """멀티라인 텍스트에서 target 단어를 hi_color로 강조 렌더링"""
+    """멀티라인 텍스트에서 target 단어를 hi_color로 강조 렌더링
+    (불규칙 활용형도 음절 접두사 매칭으로 처리)"""
     draw = ImageDraw.Draw(img)
     lines = text.split('\n')
     lh = draw.textbbox((0, 0), "가나다", font=font)[3] + 14
@@ -968,16 +1004,17 @@ def draw_multiline_highlighted(img: Image.Image, cx: int, cy: int,
 
     for li, line in enumerate(lines):
         ly = start_y + li * lh + lh // 2
-        if target and target in line:
-            idx = line.index(target)
-            before, after = line[:idx], line[idx + len(target):]
+        idx, matched = _find_ko_match(line, target) if target else (-1, "")
+        if idx >= 0 and matched:
+            before = line[:idx]
+            after  = line[idx + len(matched):]
             bw = draw.textbbox((0, 0), before, font=font)[2] if before else 0
-            hw = draw.textbbox((0, 0), target, font=font)[2]
+            hw = draw.textbbox((0, 0), matched, font=font)[2]
             fw = draw.textbbox((0, 0), line, font=font)[2]
             sx = cx - fw // 2
             if before:
                 draw.text((sx, ly), before, font=font, fill=base_color, anchor="lm")
-            draw.text((sx + bw, ly), target, font=font, fill=hi_color, anchor="lm")
+            draw.text((sx + bw, ly), matched, font=font, fill=hi_color, anchor="lm")
             if after:
                 draw.text((sx + bw + hw, ly), after, font=font, fill=base_color, anchor="lm")
         else:
