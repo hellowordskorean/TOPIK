@@ -509,9 +509,10 @@ def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
         try:
             bq = load_json(BATCH_QUEUE_F, {})
             bq["current"] = i
-            # 다중 언어: (word_id, lang) 쌍으로 매칭
+            # (word_id, lang, fmt) 셋으로 매칭
             for item in bq.get("items", []):
-                if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
+                if (item["word_id"] == word_id and item.get("lang", lang) == job_lang
+                        and item.get("fmt", "youtube") == job_fmt):
                     item["status"] = "rendering"
                     break
             save_json(BATCH_QUEUE_F, bq)
@@ -562,27 +563,30 @@ def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
             if render_ok and auto_upload and words_map and word_id in words_map:
                 bq2 = load_json(BATCH_QUEUE_F, {})
                 for item in bq2.get("items", []):
-                    if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
+                    if (item["word_id"] == word_id and item.get("lang", lang) == job_lang
+                            and item.get("fmt", "youtube") == job_fmt):
                         item["status"] = "uploading"
                 save_json(BATCH_QUEUE_F, bq2)
 
                 word = words_map[word_id]
                 lv = word.get("level", 1)
-                video_path = f"/app/output/{exam}/{job_lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}_{job_lang}.mp4"
-                if not os.path.exists(video_path):
-                    video_path = f"/app/output/topik_{word_id:04d}_{word['word']}_{job_lang}.mp4"
+                sub_dir = "reels" if job_fmt == "reels" else "video"
+                suf = "_reels" if job_fmt == "reels" else ""
+                video_path = f"/app/output/{exam}/{job_lang}/lv{lv}/{sub_dir}/{exam.lower()}_{word_id:04d}_{word['word']}_{job_lang}{suf}.mp4"
                 if os.path.exists(video_path):
                     vid = run_upload(word, video_path, exam=exam, lang=job_lang)
                     if vid:
                         for item in bq2.get("items", []):
-                            if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
+                            if (item["word_id"] == word_id and item.get("lang", lang) == job_lang
+                                    and item.get("fmt", "youtube") == job_fmt):
                                 item["video_id"] = vid
         except Exception as e:
             render_ok = False
 
         bq = load_json(BATCH_QUEUE_F, {})
         for item in bq.get("items", []):
-            if item["word_id"] == word_id and item.get("lang", lang) == job_lang:
+            if (item["word_id"] == word_id and item.get("lang", lang) == job_lang
+                    and item.get("fmt", "youtube") == job_fmt):
                 item["status"] = "done" if render_ok else "failed"
                 break
         bq["current"] = i + 1
@@ -1209,29 +1213,48 @@ def api_batch_date():
 def api_render_batch():
     global _batch_thread
     data = request.get_json(silent=True) or {}
-    word_ids    = data.get("word_ids", [])
+    word_ids_req = data.get("word_ids", [])
     target      = data.get("target", "auto")
     auto_upload = data.get("auto_upload", False)
-    if not word_ids:
-        batch    = get_batch_today()
+    formats     = data.get("formats", ["youtube", "reels"])
+
+    batch = get_batch_today()
+    if word_ids_req:
+        word_ids = word_ids_req
+    else:
         word_ids = [b["word"]["id"] for b in batch if b.get("word") and b.get("status") == "pending"]
     if not word_ids:
         return jsonify({"error": "렌더링할 단어가 없습니다"}), 400
     bq = load_json(BATCH_QUEUE_F, {})
     if bq.get("status") == "running":
         return jsonify({"error": "이미 배치 렌더링 중"}), 409
-    # words_map 구성 (업로드 시 단어 정보 필요)
     db = get_db()
     words_map = {w["id"]: w for w in db if w["id"] in word_ids}
-    items = [{"word_id": wid, "word": words_map[wid]["word"] if wid in words_map else "", "status": "pending"} for wid in word_ids]
-    save_json(BATCH_QUEUE_F, {"status":"running","total":len(items),"current":0,
-        "items":items,"target":target,"auto_upload":auto_upload,
-        "started_at":datetime.now().isoformat()})
-    _batch_thread = threading.Thread(target=run_batch_render,
-        args=(word_ids, target), kwargs={"auto_upload": auto_upload, "words_map": words_map},
+    # batch에서 lang, exam, level 정보 취득
+    batch_meta = {b["word"]["id"]: (b.get("lang", "EN"), b.get("exam", "TOPIK"), b.get("level", 1))
+                  for b in batch if b.get("word")}
+    job_items = []
+    queue_items = []
+    for wid in word_ids:
+        lang, exam, level = batch_meta.get(wid, ("EN", "TOPIK", 1))
+        db_path = render_db_path_for(exam, lang, level)
+        word_text = words_map[wid]["word"] if wid in words_map else ""
+        for fmt in formats:
+            job_items.append((wid, lang, db_path, word_text, fmt))
+            fmt_label = "" if fmt == "youtube" else " [쇼츠]"
+            queue_items.append({"word_id": wid, "word": word_text + fmt_label,
+                                 "lang": lang, "fmt": fmt, "status": "pending"})
+    save_json(BATCH_QUEUE_F, {"status": "running", "total": len(queue_items), "current": 0,
+        "items": queue_items, "target": target, "auto_upload": auto_upload,
+        "started_at": datetime.now().isoformat()})
+    _batch_thread = threading.Thread(
+        target=run_batch_render,
+        kwargs={"word_ids": [], "target": target, "job_items": job_items,
+                "auto_upload": auto_upload, "words_map": words_map},
         daemon=True)
     _batch_thread.start()
-    return jsonify({"status": "started", "count": len(word_ids), "target": target, "auto_upload": auto_upload})
+    return jsonify({"status": "started", "count": len(job_items), "target": target,
+                    "auto_upload": auto_upload})
 
 @app.route("/api/render/upload", methods=["POST"])
 def api_render_upload():
@@ -2267,7 +2290,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
         </button>
         <button class="rc-fmt-btn active" data-fmt="reels" onclick="toggleFmtBtn(this)"
           style="padding:5px 16px;font-size:.72rem;border-radius:6px;border:1px solid var(--amber);background:var(--amber)22;color:var(--amber);cursor:pointer;flex:1;">
-          ⚡ 릴스 (Shorts)
+          ⚡ 쇼츠
         </button>
       </div>
     </div>
@@ -3929,7 +3952,7 @@ async function _doCustomPreview(){
       </div>`;
     }).join('');
     const fmts=getSelectedFmts();
-    const fmtLabel=fmts.length===2?'본편+릴스':fmts[0]==='youtube'?'본편':'릴스';
+    const fmtLabel=fmts.length===2?'본편+쇼츠':fmts[0]==='youtube'?'본편':'쇼츠';
     const totalWords=d.words.length*targets.length;
     const total=totalWords*langs.length*fmts.length;
     document.getElementById('rc-start').textContent=`▶ 렌더링 시작 (${d.words.length}개 × ${targets.length}개 시험 × ${langs.length}개 언어 × ${fmtLabel} = ${total}개 · ${_customTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;
@@ -3975,7 +3998,7 @@ async function startCustomRender(){
     const ids=parseIds(t.ids_str);
     return `${t.exam} ${t.level}급${ids.length?` [ID: ${t.ids_str}]`:''}`;
   }).join(', ');
-  const fmtLabel=fmts.length===2?'본편+릴스':fmts[0]==='youtube'?'본편':'릴스';
+  const fmtLabel=fmts.length===2?'본편+쇼츠':fmts[0]==='youtube'?'본편':'쇼츠';
   const totalWords=targets.reduce((s,t)=>{const ids=parseIds(t.ids_str);return s+(ids.length||30);},0);
   const msg=`[${targetDesc}]\n언어: [${langs.join(', ')}]\n포맷: ${fmtLabel}\n총 약 ${totalWords*langs.length*fmts.length}개 렌더링\n위치: ${renderTarget==='desktop'?'💻 데스크탑 GPU':'🖥 NAS CPU'}\n\n시작할까요?`;
   if(!confirm(msg)) return;

@@ -2,11 +2,11 @@
 """
 STEP 2: 애니메이션 영상 생성
 - 단어 카드 + 예문 10개를 애니메이션 영상으로 제작
-- Google Cloud TTS로 음성 생성
+- ElevenLabs Multilingual v2 TTS로 음성 생성
 - FFmpeg/MoviePy로 영상 합성
 
 필요 패키지:
-pip install moviepy pillow google-cloud-texttospeech numpy
+pip install moviepy pillow elevenlabs numpy
 """
 
 import json
@@ -34,7 +34,8 @@ except ImportError:
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-from google.cloud import texttospeech
+from elevenlabs.client import ElevenLabs
+from elevenlabs import VoiceSettings
 
 # ─── 앱 베이스 경로 (Docker: /app, 로컬: APP_BASE 환경변수) ────
 _APP_BASE = os.environ.get("APP_BASE", "/app")
@@ -142,47 +143,45 @@ def get_font(key: str, size: int) -> ImageFont.FreeTypeFont:
             _font_cache[cache_key] = ImageFont.load_default()
     return _font_cache[cache_key]
 
-# ─── TTS ────────────────────────────────────────────────────
+# ─── TTS (ElevenLabs Multilingual v2) ───────────────────────
+# .env 에서 재정의 가능:
+#   EL_VOICE_KO  = <한국어 목소리 ID>     기본: Callum (나레이터)
+#   EL_VOICE_TL  = <외국어 목소리 ID>     기본: Callum (나레이터)
+_EL_VOICE_KO = os.environ.get("EL_VOICE_KO", "N2lVS1w4EtoT3dr4eOWO")  # Callum
+_EL_VOICE_TL = os.environ.get("EL_VOICE_TL", "N2lVS1w4EtoT3dr4eOWO")  # Callum
+_el_client = None
+
+def _get_el_client():
+    global _el_client
+    if _el_client is None:
+        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(".env 에 ELEVENLABS_API_KEY 가 없습니다")
+        _el_client = ElevenLabs(api_key=api_key)
+    return _el_client
+
 def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False):
-    """Google Cloud TTS로 음성 파일 생성"""
-    # 서비스 계정 키 자동 설정
-    _sa = os.path.join(os.path.dirname(__file__), "secrets", "gcp_service_account.json")
-    if os.path.exists(_sa) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _sa
-    client = texttospeech.TextToSpeechClient()
-    
-    synthesis_input = texttospeech.SynthesisInput(text=text)
-    
-    _TTS_VOICES = {
-        "ko": ("ko-KR",  "ko-KR-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
-        "en": ("en-US",  "en-US-Neural2-F",  texttospeech.SsmlVoiceGender.FEMALE),
-        "jp": ("ja-JP",  "ja-JP-Neural2-B",  texttospeech.SsmlVoiceGender.FEMALE),
-        "ja": ("ja-JP",  "ja-JP-Neural2-B",  texttospeech.SsmlVoiceGender.FEMALE),
-        "es": ("es-US",  "es-US-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
-        "cn": ("cmn-CN", "cmn-CN-Wavenet-A", texttospeech.SsmlVoiceGender.FEMALE),
-        "zh": ("cmn-CN", "cmn-CN-Wavenet-A", texttospeech.SsmlVoiceGender.FEMALE),
-        "vn": ("vi-VN",  "vi-VN-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
-        "vi": ("vi-VN",  "vi-VN-Neural2-A",  texttospeech.SsmlVoiceGender.FEMALE),
-    }
-    lc, vname, gender = _TTS_VOICES.get(lang.lower(), _TTS_VOICES["en"])
-    voice = texttospeech.VoiceSelectionParams(
-        language_code=lc,
-        name=vname,
-        ssml_gender=gender,
+    """ElevenLabs Multilingual v2 로 음성 파일 생성"""
+    voice_id = _EL_VOICE_KO if lang.lower() == "ko" else _EL_VOICE_TL
+    # slow=True: stability 높여서 더 또렷하고 차분한 발음
+    stability = 0.65 if slow else 0.45
+    client = _get_el_client()
+    audio_gen = client.text_to_speech.convert(
+        voice_id=voice_id,
+        text=text,
+        model_id="eleven_multilingual_v2",
+        output_format="mp3_44100_128",
+        voice_settings=VoiceSettings(
+            stability=stability,
+            similarity_boost=0.80,
+            style=0.25,
+            use_speaker_boost=True,
+        ),
     )
-    
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.MP3,
-        speaking_rate=0.85 if slow else 1.0,
-        pitch=0.0,
-    )
-    
-    response = client.synthesize_speech(
-        input=synthesis_input, voice=voice, audio_config=audio_config
-    )
-    
     with open(output_path, "wb") as f:
-        f.write(response.audio_content)
+        for chunk in audio_gen:
+            if chunk:
+                f.write(chunk)
 
 def log_video(word: dict, output_path: str, music_src: str = None, file_size: int = 0):
     """logs/videos_log.json 에 영상 생성 기록 (음악 파일 포함)"""
