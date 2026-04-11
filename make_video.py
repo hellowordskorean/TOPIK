@@ -11,6 +11,7 @@ pip install moviepy pillow elevenlabs numpy
 
 import json
 import os
+import re
 import sys
 import io
 import subprocess
@@ -34,8 +35,8 @@ except ImportError:
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-from elevenlabs.client import ElevenLabs
-from elevenlabs import VoiceSettings
+from google import genai as _genai
+from google.genai import types as _genai_types
 
 # ─── 앱 베이스 경로 (Docker: /app, 로컬: APP_BASE 환경변수) ────
 _APP_BASE = os.environ.get("APP_BASE", "/app")
@@ -143,47 +144,209 @@ def get_font(key: str, size: int) -> ImageFont.FreeTypeFont:
             _font_cache[cache_key] = ImageFont.load_default()
     return _font_cache[cache_key]
 
-# ─── TTS (ElevenLabs Multilingual v2) ───────────────────────
+# ─── TTS (Gemini 2.5 Pro TTS) ────────────────────────────────
 # .env 에서 재정의 가능:
-#   EL_VOICE_KO  = <한국어 목소리 ID>     기본: Callum (나레이터)
-#   EL_VOICE_TL  = <외국어 목소리 ID>     기본: Callum (나레이터)
-_EL_VOICE_KO = os.environ.get("EL_VOICE_KO", "N2lVS1w4EtoT3dr4eOWO")  # Callum
-_EL_VOICE_TL = os.environ.get("EL_VOICE_TL", "N2lVS1w4EtoT3dr4eOWO")  # Callum
-_el_client = None
+#   GEMINI_VOICE_KO           = 래서팬더(주인공) 한국어 목소리
+#   GEMINI_VOICE_ANIMAL_0 ~ 9 = 조연 동물 10종 목소리 (word_id % 10 으로 선택)
+#
+# 조연 동물 순서 (generate_illustrations.py 의 _LOCAL_ANIMALS 와 동일):
+#   0: tabby cat          → Kore          (단호한 여성)
+#   1: beagle dog         → Charon        (친근한 남성)
+#   2: gray cat           → Aoede         (부드러운 여성)
+#   3: golden retriever   → Enceladus     (따뜻한 남성)
+#   4: dalmatian          → Fenrir        (활발한 남성)
+#   5: calico cat (안경)  → Pulcherrima   (지적인 여성)
+#   6: poodle (베레모)    → Vindemiatrix  (우아한 여성)
+#   7: corgi (앞치마)     → Puck          (친근한 남성)
+#   8: gray cat (2nd)     → Sulafat       (차분한 여성)
+#   9: shiba inu (전통)   → Rasalgethi    (단호한 남성)
+_GEMINI_TTS_MODEL  = "gemini-2.5-pro-preview-tts"
+_GEMINI_VOICE_KO   = os.environ.get("GEMINI_VOICE_KO",   "Leda")       # 귀여운 여자아이 — 래서팬더
+_GEMINI_VOICE_ANIMALS = [
+    # ── 기존 10종 ──────────────────────────────────────────────
+    os.environ.get("GEMINI_VOICE_ANIMAL_0",  "Kore"),          # tabby cat
+    os.environ.get("GEMINI_VOICE_ANIMAL_1",  "Charon"),        # beagle dog
+    os.environ.get("GEMINI_VOICE_ANIMAL_2",  "Aoede"),         # gray cat
+    os.environ.get("GEMINI_VOICE_ANIMAL_3",  "Enceladus"),     # golden retriever
+    os.environ.get("GEMINI_VOICE_ANIMAL_4",  "Fenrir"),        # dalmatian
+    os.environ.get("GEMINI_VOICE_ANIMAL_5",  "Pulcherrima"),   # calico cat
+    os.environ.get("GEMINI_VOICE_ANIMAL_6",  "Vindemiatrix"),  # poodle
+    os.environ.get("GEMINI_VOICE_ANIMAL_7",  "Puck"),          # corgi
+    os.environ.get("GEMINI_VOICE_ANIMAL_8",  "Sulafat"),       # gray cat 2
+    os.environ.get("GEMINI_VOICE_ANIMAL_9",  "Rasalgethi"),    # shiba inu
+    # ── 추가 20종 ──────────────────────────────────────────────
+    os.environ.get("GEMINI_VOICE_ANIMAL_10", "Laomedeia"),     # white rabbit
+    os.environ.get("GEMINI_VOICE_ANIMAL_11", "Erinome"),       # hamster
+    os.environ.get("GEMINI_VOICE_ANIMAL_12", "Zephyr"),        # red fox
+    os.environ.get("GEMINI_VOICE_ANIMAL_13", "Schedar"),       # hedgehog
+    os.environ.get("GEMINI_VOICE_ANIMAL_14", "Umbriel"),       # penguin
+    os.environ.get("GEMINI_VOICE_ANIMAL_15", "Gacrux"),        # owl
+    os.environ.get("GEMINI_VOICE_ANIMAL_16", "Alnilam"),       # squirrel
+    os.environ.get("GEMINI_VOICE_ANIMAL_17", "Autonoe"),       # fawn
+    os.environ.get("GEMINI_VOICE_ANIMAL_18", "Callirrhoe"),    # otter
+    os.environ.get("GEMINI_VOICE_ANIMAL_19", "Iapetus"),       # bear cub
+    os.environ.get("GEMINI_VOICE_ANIMAL_20", "Sadaltager"),    # husky dog
+    os.environ.get("GEMINI_VOICE_ANIMAL_21", "Despina"),       # persian cat
+    os.environ.get("GEMINI_VOICE_ANIMAL_22", "Achird"),        # dachshund
+    os.environ.get("GEMINI_VOICE_ANIMAL_23", "Sadachbia"),     # lamb
+    os.environ.get("GEMINI_VOICE_ANIMAL_24", "Orus"),          # capybara
+    os.environ.get("GEMINI_VOICE_ANIMAL_25", "Algieba"),       # siamese cat
+    os.environ.get("GEMINI_VOICE_ANIMAL_26", "Zubenelgenubi"), # raccoon
+    os.environ.get("GEMINI_VOICE_ANIMAL_27", "Achernar"),      # wolf cub
+    os.environ.get("GEMINI_VOICE_ANIMAL_28", "Algenib"),       # tiger cub
+    os.environ.get("GEMINI_VOICE_ANIMAL_29", "Leda"),          # bunny
+]
+_gemini_client = None
 
-def _get_el_client():
-    global _el_client
-    if _el_client is None:
-        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
-            raise RuntimeError(".env 에 ELEVENLABS_API_KEY 가 없습니다")
-        _el_client = ElevenLabs(api_key=api_key)
-    return _el_client
+            raise RuntimeError(".env 에 GEMINI_API_KEY 가 없습니다")
+        _gemini_client = _genai.Client(api_key=api_key)
+    return _gemini_client
 
-def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False):
-    """ElevenLabs Multilingual v2 로 음성 파일 생성"""
-    voice_id = _EL_VOICE_KO if lang.lower() == "ko" else _EL_VOICE_TL
-    # slow=True: stability 높여서 더 또렷하고 차분한 발음
-    stability = 0.65 if slow else 0.45
-    client = _get_el_client()
-    audio_gen = client.text_to_speech.convert(
-        voice_id=voice_id,
-        text=text,
-        model_id="eleven_multilingual_v2",
-        output_format="mp3_44100_128",
-        voice_settings=VoiceSettings(
-            stability=stability,
-            similarity_boost=0.80,
-            style=0.25,
-            use_speaker_boost=True,
-        ),
-    )
-    with open(output_path, "wb") as f:
-        for chunk in audio_gen:
-            if chunk:
-                f.write(chunk)
+def _pcm_to_mp3(pcm_data: bytes, output_path: str, sample_rate: int = 24000):
+    """Raw PCM (16-bit mono) → MP3 변환 (FFmpeg 사용)"""
+    import wave
+    wav_tmp = output_path + ".tmp.wav"
+    try:
+        with wave.open(wav_tmp, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_data)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav_tmp, "-q:a", "4", output_path],
+            capture_output=True, check=True
+        )
+    finally:
+        if os.path.exists(wav_tmp):
+            os.unlink(wav_tmp)
 
-def log_video(word: dict, output_path: str, music_src: str = None, file_size: int = 0):
+def _tts_cache_path(text: str, voice_name: str, slow: bool) -> str:
+    """폴백용 MD5 캐시 경로 (misc/ 폴더) — 명시적 cache_path 없을 때만 사용"""
+    import hashlib
+    key = hashlib.md5(f"{voice_name}:{slow}:{text}".encode()).hexdigest()
+    cache_dir = _app_path("assets/tts_cache/misc")
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, f"{key}.mp3")
+
+def _safe_name(s: str, maxlen: int = 30) -> str:
+    """파일명에 쓸 수 있도록 특수문자 제거 후 단축"""
+    return re.sub(r'[^\w가-힣\-]', '_', s).strip('_')[:maxlen]
+
+def _word_tts_dir(level: int, word_id: int, word: str) -> str:
+    """단어 TTS 캐시 폴더 경로 생성"""
+    folder = _app_path(f"assets/tts_cache/단어/lv{level}/{word_id:04d}_{_safe_name(word)}")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+# GCP TTS 폴백 음성 매핑 (Gemini TTS 실패 시)
+_GCP_TTS_VOICES = {
+    "ko": ("ko-KR", "ko-KR-Neural2-A"),
+    "en": ("en-US", "en-US-Neural2-F"),
+    "jp": ("ja-JP", "ja-JP-Neural2-B"),
+    "cn": ("cmn-CN", "cmn-CN-Wavenet-A"),
+    "vn": ("vi-VN", "vi-VN-Neural2-A"),
+    "es": ("es-US", "es-US-Neural2-A"),
+}
+
+def _gcp_tts_fallback(text: str, lang: str, output_path: str, slow: bool = False):
+    """Google Cloud TTS 폴백 (Gemini TTS 실패 시)"""
+    try:
+        from google.cloud import texttospeech
+        _sa = os.path.join(os.path.dirname(__file__), "secrets", "gcp_service_account.json")
+        if os.path.exists(_sa) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _sa
+        client = texttospeech.TextToSpeechClient()
+        lc, vname = _GCP_TTS_VOICES.get(lang.lower(), _GCP_TTS_VOICES["en"])
+        resp = client.synthesize_speech(
+            input=texttospeech.SynthesisInput(text=text),
+            voice=texttospeech.VoiceSelectionParams(
+                language_code=lc, name=vname,
+                ssml_gender=texttospeech.SsmlVoiceGender.FEMALE),
+            audio_config=texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3,
+                speaking_rate=0.85 if slow else 1.0,
+            )
+        )
+        with open(output_path, "wb") as f:
+            f.write(resp.audio_content)
+        return True
+    except Exception as e:
+        print(f"  GCP TTS 폴백 실패: {e}")
+        return False
+
+
+def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
+                   word_id: int = 0, voice: str = None, cache_path: str = None):
+    """Gemini TTS → GCP TTS 폴백 순으로 음성 파일 생성 (캐시 지원)
+    voice: 명시적 목소리 지정 (None이면 lang/word_id로 자동 선택)
+    cache_path: 명시적 캐시 파일 경로 (None이면 misc/ MD5 해시 경로 사용)
+    """
+    import shutil
+    if voice is None:
+        voice = _GEMINI_VOICE_KO if lang.lower() == "ko" else \
+                _GEMINI_VOICE_ANIMALS[word_id % len(_GEMINI_VOICE_ANIMALS)]
+    voice_name = voice
+
+    # ── 캐시 확인 ──
+    if cache_path is None:
+        cache_path = _tts_cache_path(text, voice_name, slow)
+    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+        shutil.copy2(cache_path, output_path)
+        return
+
+    client = _get_gemini_client()
+    last_err = None
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=_GEMINI_TTS_MODEL,
+                contents=text,
+                config=_genai_types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=_genai_types.SpeechConfig(
+                        voice_config=_genai_types.VoiceConfig(
+                            prebuilt_voice_config=_genai_types.PrebuiltVoiceConfig(
+                                voice_name=voice_name
+                            )
+                        )
+                    )
+                )
+            )
+            cands = getattr(response, "candidates", None) or []
+            if not cands:
+                raise RuntimeError(f"TTS 후보 없음 (attempt {attempt+1})")
+            content = getattr(cands[0], "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if not parts:
+                finish = getattr(cands[0], "finish_reason", "unknown")
+                raise RuntimeError(f"TTS 빈 응답 finish_reason={finish} (attempt {attempt+1}): {text[:40]!r}")
+            pcm_data = parts[0].inline_data.data
+            _pcm_to_mp3(pcm_data, output_path)
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                import time as _time
+                _time.sleep(2)
+    else:
+        print(f"  Gemini TTS 3회 실패, GCP 폴백 시도: {last_err}")
+        if not _gcp_tts_fallback(text, lang, output_path, slow):
+            raise RuntimeError(f"TTS 모두 실패 (Gemini+GCP): {last_err}") from last_err
+        # GCP 결과도 캐시에 저장 — 같은 텍스트는 이후에도 동일 목소리 유지
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            shutil.copy2(output_path, cache_path)
+        return
+
+    # ── 캐시 저장 ──
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        shutil.copy2(output_path, cache_path)
+
+def log_video(word: dict, output_path: str, music_src: str = None, file_size: int = 0, fmt: str = "youtube"):
     """logs/videos_log.json 에 영상 생성 기록 (음악 파일 포함)"""
     log_path = _app_path("logs/videos_log.json")
     try:
@@ -200,16 +363,18 @@ def log_video(word: dict, output_path: str, music_src: str = None, file_size: in
             "meaning":      word["meaning"],
             "exam":         _exam,
             "language":     _lang,
+            "fmt":          fmt,
             "output_path":  output_path,
             "music_file":   os.path.basename(music_src) if music_src else None,
             "file_size":    file_size,
             "generated_at": datetime.now().isoformat(),
         }
-        # 같은 단어+언어+시험 항목만 교체 (다른 언어는 유지)
+        # 같은 단어+언어+시험+포맷 항목만 교체 (youtube/reels 독립 보관)
         log = [x for x in log if not (
             x.get("word_id") == word["id"] and
             x.get("language", "EN") == _lang and
-            x.get("exam", "TOPIK") == _exam
+            x.get("exam", "TOPIK") == _exam and
+            x.get("fmt", "youtube") == fmt
         )]
         log.append(entry)
         log.sort(key=lambda x: x["word_id"])
@@ -795,20 +960,25 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
     comment_text = _COMMENT_CTA.get(lang_code, _COMMENT_CTA["EN"])
     font_comment = _lang_font(lang_code, 36) if lang_code in ("JP", "CN") else get_font("english", 36)
     # 배경 박스
-    cta_y = card_y + card_h + 130
     lines = comment_text.split("\n")
     line_h = 46
-    box_h = line_h * len(lines) + 40
+    box_h = line_h * len(lines) + 40  # 위아래 패딩 합계 40
     box_x1, box_x2 = cx - 400, cx + 400
+    box_top = card_y + card_h + 130
+    box_bot = box_top + box_h
+    box_cy  = (box_top + box_bot) // 2   # 박스 세로 중심
     cta_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(cta_ov).rounded_rectangle(
-        [box_x1, cta_y - 20, box_x2, cta_y + box_h],
+        [box_x1, box_top, box_x2, box_bot],
         radius=20, fill=(*C["accent"], int(220 * p))
     )
     img.paste(cta_ov, mask=cta_ov.split()[3])
     draw = ImageDraw.Draw(img)
+    # 텍스트를 박스 정중앙에 배치
+    text_block_h = (len(lines) - 1) * line_h
+    first_line_y  = box_cy - text_block_h // 2
     for i, line in enumerate(lines):
-        draw.text((cx, cta_y + i * line_h + 10), line,
+        draw.text((cx, first_line_y + i * line_h), line,
                   font=font_comment, fill=(255, 255, 255, int(255 * p)), anchor="mm")
 
 # ─── 배경 이미지 ─────────────────────────────────────────────
@@ -1140,22 +1310,40 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
     print("  1/4 TTS 음성 생성 중...")
     audio_files = []
 
+    # ── 이 영상에서 사용할 목소리 2개 확정 (영상 내내 고정) ──
+    _wid   = word.get("id", 0)
+    _level = word.get("level", 1)
+    _voice_ko      = _GEMINI_VOICE_KO
+    _voice_foreign = _GEMINI_VOICE_ANIMALS[_wid % len(_GEMINI_VOICE_ANIMALS)]
+    print(f"  목소리 — KO: {_voice_ko} / {_tts_lang.upper()}: {_voice_foreign}")
+
+    # ── TTS 캐시 폴더 (단어별) ──
+    _cd = _word_tts_dir(_level, _wid, word["word"])
+    _slow_sfx = lambda s: "_slow" if s else ""
+
+    def _cp(name: str) -> str:  # 캐시 경로 헬퍼
+        return os.path.join(_cd, name)
+
     # 단어 발음 (한국어, 느리게)
     word_audio = os.path.join(tmpdir, "word_ko.mp3")
-    text_to_speech(word["word"], "ko", word_audio, slow=True)
+    text_to_speech(word["word"], "ko", word_audio, slow=True, voice=_voice_ko,
+                   cache_path=_cp(f"단어발음_{_voice_ko}_slow.mp3"))
 
     # 뜻 (대상 언어)
     meaning_audio = os.path.join(tmpdir, "word_tl.mp3")
-    text_to_speech(word["meaning"], _tts_lang, meaning_audio)
+    text_to_speech(word["meaning"], _tts_lang, meaning_audio, voice=_voice_foreign,
+                   cache_path=_cp(f"뜻_{_tts_lang}_{_voice_foreign}.mp3"))
 
     # 예문들
     sentence_audios = []
     for i, sent in enumerate(sentences):
         ko_path = os.path.join(tmpdir, f"sent_{i}_ko.mp3")
         tl_path = os.path.join(tmpdir, f"sent_{i}_tl.mp3")
-        text_to_speech(sent["ko"], "ko", ko_path)
+        text_to_speech(sent["ko"], "ko", ko_path, voice=_voice_ko,
+                       cache_path=_cp(f"s{i+1:02d}_ko_{_voice_ko}.mp3"))
         tl_text = sent.get(_sent_key) or sent.get("en", "")
-        text_to_speech(tl_text, _tts_lang, tl_path)
+        text_to_speech(tl_text, _tts_lang, tl_path, voice=_voice_foreign,
+                       cache_path=_cp(f"s{i+1:02d}_{_tts_lang}_{_voice_foreign}.mp3"))
         sentence_audios.append((ko_path, tl_path))
     
     # 배경 이미지: 세그먼트별 (예문별 일러스트 → 단어 일러스트 → 그라디언트)
@@ -1343,7 +1531,7 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
     
     print(f"  [OK] 영상 저장: {output_path}")
     file_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
-    log_video(word, output_path, music_src=music_src, file_size=file_size)
+    log_video(word, output_path, music_src=music_src, file_size=file_size, fmt=video_format)
     write_progress("완료", pct=100, word=word, status="idle")
     return output_path
 

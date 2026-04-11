@@ -68,6 +68,7 @@ services:
       - ./secrets:/app/secrets:ro
       - ./make_video.py:/app/make_video.py
       - ./make_video_phrases.py:/app/make_video_phrases.py
+      - ./make_conversation.py:/app/make_conversation.py
       - ./generate_illustrations.py:/app/generate_illustrations.py
       - ./generate_phrase_illustrations.py:/app/generate_phrase_illustrations.py
       - ./dashboard.py:/app/dashboard.py
