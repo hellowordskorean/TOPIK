@@ -71,12 +71,45 @@ def get_youtube_client(lang: str = "EN"):
     return build("youtube", "v3", credentials=creds)
 
 # ─── 재생목록 관리 ──────────────────────────────────────────
+# ── 본편: TOPIK 레벨별 ──────────────────────────────────────
 PLAYLIST_TITLES = {
     "EN": "🇰🇷 TOPIK Lv.{level} Korean Word of the Day",
     "JP": "🇰🇷 TOPIK {level}級 韓国語 今日の一語",
     "CN": "🇰🇷 TOPIK {level}级 每日韩语单词",
     "VN": "🇰🇷 TOPIK Cấp {level} - Tiếng Hàn mỗi ngày",
     "ES": "🇰🇷 TOPIK N{level} - Coreano del día",
+}
+
+# ── 릴스(Shorts) ─────────────────────────────────────────────
+PLAYLIST_TITLES_SHORTS = {
+    "EN": "🇰🇷 Korean Shorts — Word of the Day",
+    "JP": "🇰🇷 韓国語 Shorts — 今日の一語",
+    "CN": "🇰🇷 韩语 Shorts — 每日单词",
+    "VN": "🇰🇷 Tiếng Hàn Shorts — Từ mỗi ngày",
+    "ES": "🇰🇷 Coreano Shorts — Palabra del día",
+}
+PLAYLIST_DESCS_SHORTS = {
+    "EN": "Quick 60-second Korean vocabulary shorts! One word a day — perfect for TOPIK prep on the go. 🔔 Subscribe for daily updates!",
+    "JP": "1日1語！60秒で学ぶ韓国語単語ショート動画。TOPIK対策にも最適。🔔 チャンネル登録で毎日更新！",
+    "CN": "每天60秒学一个韩语词汇！TOPIK备考首选短视频。🔔 订阅每日更新！",
+    "VN": "Mỗi ngày 1 từ tiếng Hàn trong 60 giây! Học tiếng Hàn siêu nhanh. 🔔 Đăng ký để nhận video mỗi ngày!",
+    "ES": "¡Un vocabulario coreano nuevo cada día en 60 segundos! Ideal para preparar el TOPIK. 🔔 ¡Suscríbete!",
+}
+
+# ── 회화(Conversation) ───────────────────────────────────────
+PLAYLIST_TITLES_PHRASE = {
+    "EN": "🇰🇷 Korean Conversation — Real Phrases",
+    "JP": "🇰🇷 韓国語会話 — すぐ使えるフレーズ",
+    "CN": "🇰🇷 韩语对话 — 实用短句",
+    "VN": "🇰🇷 Hội thoại tiếng Hàn — Câu thực tế",
+    "ES": "🇰🇷 Conversación en coreano — Frases reales",
+}
+PLAYLIST_DESCS_PHRASE = {
+    "EN": "Real Korean conversations for everyday situations! Each video covers 10 essential phrases for travel, daily life, and work in Korea. 🔔 New episode every week!",
+    "JP": "実際の韓国語会話シーン別必須フレーズ集！旅行・日常生活・仕事で使える10フレーズを毎週更新。🔔 チャンネル登録で最新動画を受け取ろう！",
+    "CN": "真实韩语对话场景！每期10句实用短语，涵盖旅游、生活、工作各种情境。🔔 每周更新，订阅不错过！",
+    "VN": "Hội thoại tiếng Hàn thực tế cho mọi tình huống! Mỗi video 10 câu thiết yếu cho du lịch, cuộc sống, công việc tại Hàn Quốc. 🔔 Cập nhật mỗi tuần!",
+    "ES": "¡Conversaciones reales en coreano para cada situación! 10 frases esenciales por video — viajes, vida cotidiana y trabajo en Corea. 🔔 ¡Nuevo episodio cada semana!",
 }
 
 PLAYLIST_DESCS = {
@@ -179,6 +212,65 @@ def get_or_create_playlist(youtube, lang: str, level: int) -> str:
     playlists[lang] = lang_playlists
     save_playlists(playlists)
     return playlist_id
+
+
+def get_or_create_typed_playlist(youtube, lang: str, ptype: str) -> str:
+    """타입별(shorts|phrase) 재생목록 ID 반환. 없으면 생성.
+    ptype: 'shorts' | 'phrase'
+    캐시 키: 'shorts' / 'phrase'
+    """
+    playlists = load_playlists()
+    lang_playlists = playlists.get(lang, {})
+
+    if ptype in lang_playlists:
+        pid = lang_playlists[ptype]
+        try:
+            youtube.playlists().list(part="id", id=pid).execute()
+            return pid
+        except Exception:
+            pass
+
+    if ptype == "shorts":
+        title = PLAYLIST_TITLES_SHORTS.get(lang, PLAYLIST_TITLES_SHORTS["EN"])
+        desc  = PLAYLIST_DESCS_SHORTS.get(lang, PLAYLIST_DESCS_SHORTS["EN"])
+    elif ptype == "phrase":
+        title = PLAYLIST_TITLES_PHRASE.get(lang, PLAYLIST_TITLES_PHRASE["EN"])
+        desc  = PLAYLIST_DESCS_PHRASE.get(lang, PLAYLIST_DESCS_PHRASE["EN"])
+    else:
+        raise ValueError(f"알 수 없는 playlist type: {ptype}")
+
+    # 기존 재생목록 검색
+    next_page = None
+    while True:
+        resp = youtube.playlists().list(
+            part="snippet", mine=True, maxResults=50, pageToken=next_page
+        ).execute()
+        for item in resp.get("items", []):
+            if item["snippet"]["title"] == title:
+                pid = item["id"]
+                lang_playlists[ptype] = pid
+                playlists[lang] = lang_playlists
+                save_playlists(playlists)
+                print(f"  [재생목록] 기존 발견: {title} ({pid})")
+                return pid
+        next_page = resp.get("nextPageToken")
+        if not next_page:
+            break
+
+    # 새로 생성
+    resp = youtube.playlists().insert(
+        part="snippet,status",
+        body={
+            "snippet": {"title": title, "description": desc},
+            "status":  {"privacyStatus": "public"},
+        }
+    ).execute()
+    pid = resp["id"]
+    print(f"  [재생목록] 새로 생성: {title} ({pid})")
+    lang_playlists[ptype] = pid
+    playlists[lang] = lang_playlists
+    save_playlists(playlists)
+    return pid
 
 
 def add_to_playlist(youtube, playlist_id: str, video_id: str):
@@ -641,6 +733,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="유튜브 업로드")
     parser.add_argument("--auth-only", action="store_true", help="OAuth 인증만 수행 (업로드 없음)")
     parser.add_argument("--type", default="word", choices=["word","phrase"], help="영상 유형 (word|phrase)")
+    parser.add_argument("--shorts", action="store_true", help="릴스(Shorts) 재생목록에 추가")
     parser.add_argument("--video", help="MP4 파일 경로")
     parser.add_argument("--word-id", type=int, help="단어 ID (--type word)")
     parser.add_argument("--sit-id", type=int, help="회화 상황 ID (--type phrase)")
@@ -695,6 +788,13 @@ if __name__ == "__main__":
             thumbnail_path=args.thumbnail
         )
 
+        # 회화 재생목록에 추가
+        try:
+            playlist_id = get_or_create_typed_playlist(youtube, args.lang, "phrase")
+            add_to_playlist(youtube, playlist_id, video_id)
+        except Exception as e:
+            print(f"  [WARN] 회화 재생목록 추가 실패: {e}")
+
         log["last_day"] = num
         log.setdefault("uploaded", []).append({
             "num": num,
@@ -734,9 +834,12 @@ if __name__ == "__main__":
         thumbnail_path=args.thumbnail
     )
 
-    # 레벨별 재생목록에 추가
+    # 재생목록에 추가 — 릴스는 shorts 재생목록, 본편은 레벨별 재생목록
     try:
-        playlist_id = get_or_create_playlist(youtube, args.lang, word["level"])
+        if args.shorts:
+            playlist_id = get_or_create_typed_playlist(youtube, args.lang, "shorts")
+        else:
+            playlist_id = get_or_create_playlist(youtube, args.lang, word["level"])
         add_to_playlist(youtube, playlist_id, video_id)
     except Exception as e:
         print(f"  [WARN] 재생목록 추가 실패: {e}")
