@@ -65,7 +65,6 @@ _LOCAL_ANIMAL_SPECIES = [
     "blue-gray elephant",         # 회청색
     "dark brown bear",            # 짙은 갈색
     "white cat with glasses",     # 흰색
-    "black poodle",               # 검정
     "spotted black-and-white cow",# 흑백 얼룩
     "silver-gray wolf",           # 은회색
     "green frog",                 # 초록
@@ -347,19 +346,19 @@ def _inject_characters(content: str, sit_id: int, situation: dict | None = None,
 
 # ─── 웹툰 스타일 상수 ─────────────────────────────────────────
 _WEBTOON_STYLE_BASE = (
-    # ── 핵심 스타일 ── pastel watercolor 동화책 톤
+    # ── 핵심 스타일 ─────────────────────────────────────────────
     # Imagen은 "NOT X" 부정어가 무효 → 긍정 묘사로만 작성
     "soft pastel watercolor illustration, "
     "Korean and Japanese children's picture book style, kawaii storybook, "
     "thin delicate hand-drawn ink outlines — soft, slightly rounded, gentle even weight, "
     "watercolor washes are airy and translucent — colors bleed softly at edges, "
-    "BACKGROUND ATMOSPHERE: soft pastel gradient — light and airy, gently fading tones, "
+    "BACKGROUND ATMOSPHERE: warm peachy-cream gradient — soft peach at top fading to "
+    "warm cream-white at bottom, like gentle morning sunlight through frosted glass, "
     "background is loose watercolor wash — simplified shapes, soft blurred edges, "
-    "slightly faded and secondary — foreground subjects clearly stand out, "
-    "PALETTE: soft mint, pale lavender, light sky blue, blush pink, soft peach, cream — "
-    "light low-saturation pastel tones like gentle watercolor pigments on paper, "
+    "PALETTE: warm cream, soft peach, dusty sage, muted terracotta, warm tan, soft sky blue — "
+    "warm low-saturation tones like faded watercolor pigments on paper, "
     "paper grain subtly visible in wash areas, "
-    "overall mood: bright, cheerful, gentle — like a beloved picture book, "
+    "overall mood: warm, cozy, heartwarming — like a beloved picture book, "
 
     # ── 주인공 vs 조연 ────────────────────────────────────────────
     "TWO DISTINCT CHARACTERS — they MUST look clearly different: "
@@ -371,14 +370,16 @@ _WEBTOON_STYLE_BASE = (
     "positioned on the RIGHT side of the frame. "
     "DO NOT make both characters the same species or same color. "
 
-    # ── 캐릭터 비율 ──────────────────────────────────────────────
-    "CHARACTER PROPORTIONS: soft chibi plush-toy proportions — "
-    "head is large and round (roughly 40-45% of total body height), "
-    "body is round and compact, arms and legs are short but clearly visible, "
-    "characters fill roughly 65% of the total frame height, "
+    # ── 캐릭터 비율 — 작고 귀엽게 ────────────────────────────────
+    "CHARACTER PROPORTIONS: very small cute chibi plush-toy style — "
+    "head is very large and perfectly round (50% of total body height), "
+    "body is tiny and round, arms and legs are very short stubby stumps, "
+    "characters fill only 45-50% of the total frame height — small figures in ample space, "
+    "WIDE EMPTY SPACE around characters — they appear small and cute in the center, "
     "both characters shown full-body from head to feet, "
-    "NO footwear — bare paws only, "
-    "overall silhouette: soft, round, squeezable like a quality stuffed animal, "
+    "NO footwear — bare round paws only, "
+    "overall silhouette: ultra-soft, round, simple — like a cute rubber stamp or sticker, "
+    "minimal surface detail on body — smooth simple color fills, NOT detailed fur texture, "
 
     # ── 눈/표정 ──────────────────────────────────────────────────
     "EYES: tiny round button eyes — fully dark iris filling the entire eye area, "
@@ -391,9 +392,9 @@ _WEBTOON_STYLE_BASE = (
 
     # ── 구도 ─────────────────────────────────────────────────────
     "square 1:1 composition, "
-    "MEDIUM SHOT: both characters centered, heads in upper half, feet in lower half of frame, "
-    "camera at character eye level, "
-    "background elements visible at top and sides — characters in foreground, "
+    "WIDE SHOT: both small characters centered in lower-center of frame, "
+    "large amount of soft background space above and around characters, "
+    "camera slightly above character eye level looking down gently, "
 
     # ── 탈것 구조 정확도 ──────────────────────────────────────────
     "VEHICLE INTERIOR ACCURACY (when scene is inside a vehicle): "
@@ -571,12 +572,13 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     "RULES:\n"
                     "1. Describe a MODERN everyday Korean location (cafe, subway, office, park, etc.).\n"
                     "   Do NOT use traditional tile-roof hanok or wooden houses.\n"
-                    "2. If including characters: the red panda is on the LEFT and LARGER, "
-                    "   the supporting character is on the RIGHT and clearly SMALLER.\n"
-                    "   They must look visually DIFFERENT — different colors, different sizes.\n"
-                    "3. NO text, signs, labels, speech bubbles anywhere.\n"
-                    "4. Focus on cozy warm atmosphere.\n"
-                    "5. VEHICLE ACCURACY: If inside a vehicle — "
+                    "2. Characters are SMALL cute chibi figures in the lower-center of the frame — "
+                    "   surrounded by ample soft empty background space.\n"
+                    "3. BACKGROUND is minimal abstract color wash only — "
+                    "   suggest location with 1-2 simple shapes, NO detailed props or furniture.\n"
+                    "4. NO text, signs, labels, speech bubbles anywhere.\n"
+                    "5. Focus on warm, gentle, cozy pastel atmosphere with wide open space.\n"
+                    "6. VEHICLE ACCURACY: If inside a vehicle — "
                     "driver on LEFT with steering wheel facing FORWARD, "
                     "passenger on RIGHT facing FORWARD, "
                     "steering wheel always visible, characters never sideways or backward.\n\n"
@@ -828,10 +830,11 @@ def _build_char_instruction(situation: dict, phrase_idx: int = 0,
         "=== STYLE FIRST — MATCH THE REFERENCE IMAGES ===\n"
         "Draw in the EXACT SAME STYLE as the reference character images: "
         "soft pastel watercolor, Korean/Japanese children's picture book (kawaii storybook), "
-        "thin delicate ink outlines, airy translucent watercolor washes, "
-        "soft pastel gradient background — light and airy tones, "
+        "thin delicate ink outlines — soft, slightly rounded, gentle even weight, "
+        "airy translucent watercolor washes, "
+        "warm peachy-cream background gradient — soft peach fading to warm cream-white, "
         "chibi plush-toy proportions — large round head (40-45% of height), round compact body, short visible limbs. "
-        "Tiny button eyes — fully dark, shiny bead-like, single white sparkle dot only, NO white sclera.\n\n"
+        "Tiny button eyes — fully dark bead-like, single white sparkle only, NO white sclera.\n\n"
         "=== FRAMING ===\n"
         "CLOSE MEDIUM SHOT: two characters fill the CENTER of the square frame. "
         "Heads near upper-center, feet near lower-center. "

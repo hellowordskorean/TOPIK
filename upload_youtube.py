@@ -502,6 +502,127 @@ def upload_video(
     return video_id
 
 
+# ─── 회화 영상 메타데이터 ────────────────────────────────────
+PHRASE_LANG_META = {
+    "EN": {
+        "lang_key": "en",
+        "sit_key":  "situation_en",
+        "default_lang": "en",
+        "title":    "🇰🇷 Korean Conversation #{num:03d}: {situation} | Real Korean Phrases",
+        "hook":     "Real Korean conversations you'll actually use! 🔥 Learn 10 essential phrases for {situation}.",
+        "phrase_label": "📖 Phrases in this video",
+        "subscribe": "🔔 New Korean conversation every week — Subscribe so you never miss one!",
+        "study":    "📚 Full phrase list → https://studioroomkr.com/HW/conversation/en/",
+        "hashtags": "#LearnKorean #KoreanConversation #KoreanPhrases #Korean #한국어 #KoreanForTravel #KoreanStudy #KDrama #KPop #한국어회화",
+        "tags": ["learn Korean", "Korean conversation", "Korean phrases", "Korean for travel",
+                 "Korean for beginners", "Korean language", "Korean study", "daily Korean",
+                 "Korean dialogue", "speak Korean", "한국어", "한국어 회화", "Korean tutorial"],
+    },
+    "JP": {
+        "lang_key": "jp",
+        "sit_key":  "situation_jp",
+        "default_lang": "ko",
+        "title":    "🇰🇷 韓国語会話 #{num:03d}：{situation}｜すぐ使える10フレーズ",
+        "hook":     "ネイティブが実際に使う韓国語会話！{situation}で使える必須10フレーズ 🔥",
+        "phrase_label": "📖 今回のフレーズ",
+        "subscribe": "🔔 毎週新しい韓国語会話を投稿！チャンネル登録＆通知ON！",
+        "study":    "📚 フレーズ一覧 → https://studioroomkr.com/HW/conversation/jp/",
+        "hashtags": "#韓国語会話 #韓国語フレーズ #韓国語 #韓国語勉強 #ハングル #韓国旅行 #한국어 #韓国語初心者 #韓流 #韓国語学習",
+        "tags": ["韓国語会話", "韓国語フレーズ", "韓国語", "韓国語勉強", "ハングル",
+                 "韓国旅行", "韓国語初心者", "韓流", "韓国語学習", "한국어", "韓国語日常会話"],
+    },
+    "CN": {
+        "lang_key": "cn",
+        "sit_key":  "situation_cn",
+        "default_lang": "ko",
+        "title":    "🇰🇷 韩语对话 #{num:03d}：{situation} | 实用10句",
+        "hook":     "韩国人真实对话场景！{situation}必用10句，拿来就用 🔥",
+        "phrase_label": "📖 本期短语",
+        "subscribe": "🔔 每周更新韩语对话！订阅频道不错过！",
+        "study":    "📚 短语列表 → https://studioroomkr.com/HW/conversation/cn/",
+        "hashtags": "#韩语对话 #韩语短语 #韩语 #学韩语 #韩国语 #韩国旅游 #한국어 #韩语学习 #韩流 #韩语会话",
+        "tags": ["韩语对话", "韩语短语", "韩语", "学韩语", "韩国语", "韩国旅游",
+                 "韩语学习", "韩流", "韩语会话", "한국어", "TOPIK"],
+    },
+    "VN": {
+        "lang_key": "vn",
+        "sit_key":  "situation_vn",
+        "default_lang": "ko",
+        "title":    "🇰🇷 Hội thoại tiếng Hàn #{num:03d}: {situation} | 10 câu thực tế",
+        "hook":     "Hội thoại tiếng Hàn thực tế nhất! {situation} — 10 câu không thể thiếu 🔥",
+        "phrase_label": "📖 Các câu trong video",
+        "subscribe": "🔔 Video hội thoại mới mỗi tuần — Đăng ký để không bỏ lỡ!",
+        "study":    "📚 Danh sách câu → https://studioroomkr.com/HW/conversation/vn/",
+        "hashtags": "#tiếngHàn #hộithoạitiếngHàn #họctiếngHàn #한국어 #tiếngHànthựctế #HànQuốc #EPS_TOPIK #KPop #KDrama #tiếngHàndulich",
+        "tags": ["tiếng Hàn", "hội thoại tiếng Hàn", "học tiếng Hàn", "tiếng Hàn thực tế",
+                 "Hàn Quốc", "EPS TOPIK", "한국어", "tiếng Hàn du lịch", "câu tiếng Hàn"],
+    },
+    "ES": {
+        "lang_key": "es",
+        "sit_key":  "situation_es",
+        "default_lang": "ko",
+        "title":    "🇰🇷 Conversación en coreano #{num:03d}: {situation} | 10 frases reales",
+        "hook":     "¡Conversaciones reales en coreano! {situation} — las 10 frases que sí necesitas 🔥",
+        "phrase_label": "📖 Frases de este video",
+        "subscribe": "🔔 Nueva conversación en coreano cada semana — ¡Suscríbete!",
+        "study":    "📚 Lista de frases → https://studioroomkr.com/HW/conversation/es/",
+        "hashtags": "#coreano #aprendecoreano #conversaciónEnCoreano #한국어 #coreanoPráctico #KPop #KDrama #coreanoDesdeCero #frasesEnCoreano #viajeCorea",
+        "tags": ["coreano", "aprende coreano", "conversación en coreano", "frases en coreano",
+                 "coreano práctico", "한국어", "KPop", "KDrama", "viaje a Corea", "coreano desde cero"],
+    },
+}
+
+
+def generate_phrase_metadata(situation: dict, num: int, lang: str = "EN") -> dict:
+    """회화 상황 정보로 유튜브 메타데이터 생성 (다국어 지원)"""
+    L = PHRASE_LANG_META.get(lang, PHRASE_LANG_META["EN"])
+    lk = L["lang_key"]
+    sit_key = L["sit_key"]
+
+    situation_name = situation.get(sit_key) or situation.get("situation_en") or situation.get("situation", "")
+
+    title = L["title"].format(num=num, situation=situation_name)
+
+    # 대화 목록 (최대 10개)
+    phrases = situation.get("phrases", [])[:10]
+    phrase_lines = "\n".join(
+        f"  {i+1}. {p['my_line']['ko']}  →  {p['my_line'].get(lk, p['my_line'].get('en',''))}"
+        for i, p in enumerate(phrases)
+        if p.get("my_line")
+    )
+
+    description = (
+        f"{L['hook'].format(situation=situation_name)}\n\n"
+        f"{'─'*36}\n"
+        f"{L['phrase_label']}\n"
+        f"{'─'*36}\n"
+        f"{phrase_lines}\n\n"
+        f"{'─'*36}\n"
+        f"{L['subscribe']}\n"
+        f"{L['study']}\n\n"
+        f"{L['hashtags']}"
+    )
+
+    # 태그 500자 제한
+    sit_tags = [situation_name, situation.get("situation_en", ""), "Korean conversation"]
+    all_tags = L["tags"] + [t for t in sit_tags if t]
+    selected, total = [], 0
+    for t in all_tags:
+        if total + len(t) + 1 <= 498:
+            selected.append(t)
+            total += len(t) + 1
+        if len(selected) >= 30:
+            break
+
+    return {
+        "title":            title[:100],
+        "description":      description[:4900],
+        "tags":             selected,
+        "category_id":      "27",
+        "default_language": L["default_lang"],
+    }
+
+
 # ─── 업로드 로그 관리 ────────────────────────────────────────
 def load_upload_log(log_path: str = "logs/uploads.json") -> dict:
     if os.path.exists(log_path):
@@ -519,9 +640,12 @@ def save_upload_log(log: dict, log_path: str = "logs/uploads.json"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="유튜브 업로드")
     parser.add_argument("--auth-only", action="store_true", help="OAuth 인증만 수행 (업로드 없음)")
+    parser.add_argument("--type", default="word", choices=["word","phrase"], help="영상 유형 (word|phrase)")
     parser.add_argument("--video", help="MP4 파일 경로")
-    parser.add_argument("--word-id", type=int, help="단어 ID")
+    parser.add_argument("--word-id", type=int, help="단어 ID (--type word)")
+    parser.add_argument("--sit-id", type=int, help="회화 상황 ID (--type phrase)")
     parser.add_argument("--db", default="/app/data/LanguageTest/words_db.json")
+    parser.add_argument("--phrases-db", default=str(Path(__file__).parent.parent / "data" / "Conversation" / "phrases_db.json"))
     parser.add_argument("--log", default="logs/uploads.json")
     parser.add_argument("--schedule-hours", type=int, default=0,
                         help="N시간 후 예약 발행 (0=즉시)")
@@ -537,8 +661,56 @@ if __name__ == "__main__":
         print(f"[{args.lang}] 인증 완료! 토큰 저장됨.")
         sys.exit(0)
 
-    if not args.video or not args.word_id:
-        parser.error("--auth-only 없이는 --video 와 --word-id 가 필요합니다")
+    if not args.video:
+        parser.error("--video 가 필요합니다")
+
+    # 예약 시간 계산
+    publish_at = None
+    if args.schedule_hours > 0:
+        publish_at = datetime.now(timezone.utc) + timedelta(hours=args.schedule_hours)
+        print(f"예약 발행: {publish_at.strftime('%Y-%m-%d %H:%M UTC')}")
+
+    # 유튜브 클라이언트
+    youtube = get_youtube_client(lang=args.lang)
+
+    # ── 회화 영상 업로드 ─────────────────────────────────────
+    if args.type == "phrase":
+        if not args.sit_id:
+            parser.error("--type phrase 는 --sit-id 가 필요합니다")
+        with open(args.phrases_db, encoding="utf-8") as f:
+            phrases_db = json.load(f)
+        situation = next((s for s in phrases_db if s["id"] == args.sit_id), None)
+        if not situation:
+            print(f"상황 ID {args.sit_id}를 찾을 수 없습니다")
+            sys.exit(1)
+
+        phrase_log_path = f"logs/uploads_phrase_{args.lang.lower()}.json"
+        log = load_upload_log(phrase_log_path)
+        num = log["last_day"] + 1
+        metadata = generate_phrase_metadata(situation, num, lang=args.lang)
+
+        video_id = upload_video(
+            youtube, args.video, metadata,
+            publish_at=publish_at,
+            thumbnail_path=args.thumbnail
+        )
+
+        log["last_day"] = num
+        log.setdefault("uploaded", []).append({
+            "num": num,
+            "sit_id": args.sit_id,
+            "situation": situation.get("situation", ""),
+            "video_id": video_id,
+            "lang": args.lang,
+            "uploaded_at": datetime.now().isoformat(),
+        })
+        save_upload_log(log, phrase_log_path)
+        print(f"[완료] 회화 #{num:03d} {args.lang} 업로드: https://youtube.com/watch?v={video_id}")
+        sys.exit(0)
+
+    # ── 단어 영상 업로드 ─────────────────────────────────────
+    if not args.word_id:
+        parser.error("--type word 는 --word-id 가 필요합니다")
 
     # 단어 로드
     with open(args.db, encoding="utf-8") as f:
@@ -554,16 +726,7 @@ if __name__ == "__main__":
 
     # 메타데이터 생성
     metadata = generate_metadata(word, day_number, lang=args.lang)
-    
-    # 예약 시간 계산
-    publish_at = None
-    if args.schedule_hours > 0:
-        publish_at = datetime.now(timezone.utc) + timedelta(hours=args.schedule_hours)
-        print(f"예약 발행: {publish_at.strftime('%Y-%m-%d %H:%M UTC')}")
-    
-    # 유튜브 클라이언트
-    youtube = get_youtube_client(lang=args.lang)
-    
+
     # 업로드
     video_id = upload_video(
         youtube, args.video, metadata,
