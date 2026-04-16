@@ -49,56 +49,267 @@ from google.genai import types
 # ─── 경로 설정 ───────────────────────────────────────────────
 _SCRIPT_DIR     = Path(__file__).parent
 OUTPUT_DIR      = _SCRIPT_DIR / "assets" / "phrase_illustrations"
-PHRASES_DB_PATH = Path("Z:/Hellowords/data/Conversation/phrases_db.json")
+_APP_BASE       = os.environ.get("APP_BASE", str(Path(__file__).parent.parent))
+PHRASES_DB_PATH = Path(_APP_BASE) / "data" / "Conversation" / "phrases_db.json"
 PROGRESS_FILE   = _SCRIPT_DIR / "logs" / "phrase_illust_progress.json"
 
 # ─── 캐릭터 풀 ───────────────────────────────────────────────
-# 상황 ID에 따라 다른 동물 조합 사용
-_LOCAL_ANIMALS = [
-    "tabby cat wearing a striped vest",
-    "beagle dog wearing a cozy scarf",
-    "gray cat wearing a polka-dot blouse",
-    "golden retriever dog wearing a button-up shirt",
-    "dalmatian dog wearing a yellow bandana",
-    "calico cat wearing glasses and a blazer",
-    "poodle wearing a beret and stylish sweater",
-    "corgi wearing an apron",
-    "gray cat wearing a plaid shirt",
-    "shiba inu wearing a traditional outfit",
+# 조연 캐릭터: 주인공(래서팬더 — 주황빨간색)과 명확히 다른 색상의 동물만
+# shiba inu / golden retriever 등 주황/황갈색은 래서팬더와 헷갈리므로 제외
+# 의상(outfit)은 _get_supporting_char_outfit()이 상황에 맞게 동적 결정
+_LOCAL_ANIMAL_SPECIES = [
+    # ── 기존 10종 ─────────────────────────────────────────────
+    "gray tabby cat",             # 회색
+    "black-and-white dalmatian dog",  # 흑백
+    "white fluffy rabbit",        # 흰색
+    "blue-gray elephant",         # 회청색
+    "dark brown bear",            # 짙은 갈색
+    "white cat with glasses",     # 흰색
+    "black poodle",               # 검정
+    "spotted black-and-white cow",# 흑백 얼룩
+    "silver-gray wolf",           # 은회색
+    "green frog",                 # 초록
+    # ── 추가 40종 ─────────────────────────────────────────────
+    "cream-colored hamster",              # 크림
+    "black-and-white penguin",            # 흑백
+    "brown-and-white owl",                # 갈색/흰배
+    "brown hedgehog",                     # 갈색/크림
+    "dark brown otter",                   # 진갈색
+    "white fluffy lamb",                  # 흰색
+    "dark brown dachshund",               # 진갈색
+    "gray-striped raccoon",               # 회색/줄무늬
+    "gray-brown capybara",                # 회갈색
+    "cream siamese cat",                  # 크림/갈색포인트
+    "black-and-white husky dog",          # 흑백
+    "gray-brown squirrel",                # 회갈색
+    "white persian cat",                  # 흰색/크림
+    "blue-gray koala",                    # 회청색
+    "black-and-white striped zebra",      # 흑백 줄무늬
+    "white-gray spotted snow leopard cub",# 흰회색+점
+    "pink-tinted axolotl",                # 연분홍
+    "mint-green chameleon",               # 민트초록
+    "white polar bear cub",               # 흰색
+    "gray ring-tailed lemur",             # 회색/흑백꼬리
+    "black-and-white giant panda cub",    # 흑백
+    "pink flamingo",                      # 분홍
+    "dark gray gorilla",                  # 진회색
+    "iridescent peacock",                 # 청록/보라
+    "white arctic fox",                   # 흰색
+    "gray donkey",                        # 회색
+    "spotted yellow-and-brown baby giraffe",  # 황색+점
+    "black-and-white badger",             # 흑백
+    "blue macaw parrot",                  # 파랑
+    "tiny gray mouse",                    # 회색
+    "dark brown beaver",                  # 진갈색
+    "gray meerkat",                       # 회갈색
+    "fluffy white alpaca",                # 흰색
+    "gray chinchilla",                    # 회색/연보라
+    "black-and-white skunk",              # 흑백
+    "lilac-gray sugar glider",            # 연보라/회색
+    "dark indigo tapir",                  # 남색/회색
+    "silver-gray mole",                   # 은회색
+    "teal-blue heron",                    # 청록
+    "cream-colored manatee",              # 크림/회색
 ]
 
-# 주인공(학습자)은 래서 팬더로 고정 — 상황에 따라 옷만 변경
+# 주인공(학습자)은 래서 팬더로 고정 — 상황과 무관한 기본 의상 (가방 없음)
 _LEARNER_OUTFITS = [
     "casual sweater and jeans",
-    "hoodie and backpack",
+    "hoodie",
     "colorful cardigan",
     "striped shirt and cap",
     "cozy knit sweater",
-    "light jacket with tote bag",
+    "light jacket",
     "denim jacket",
     "floral blouse and skirt",
     "sporty tracksuit",
     "trench coat",
 ]
 
-def _pick_characters(sit_id: int) -> tuple[str, str]:
-    """상황 ID 기반으로 동물 캐릭터 쌍 선택 (결정론적)"""
-    local   = _LOCAL_ANIMALS[sit_id % len(_LOCAL_ANIMALS)]
-    outfit  = _LEARNER_OUTFITS[sit_id % len(_LEARNER_OUTFITS)]
-    learner = f"red panda wearing {outfit}"
+def _get_supporting_char_outfit(situation: dict) -> str:
+    """상황에 맞는 조연 캐릭터 의상 반환 (상황별 역할 고려)."""
+    sit_en = situation.get("situation_en", "").lower()
+
+    # 공항 / 이동 — 더 구체적인 상황을 먼저 체크
+    if any(k in sit_en for k in ("transit", "connecting flight")):
+        return "airline gate staff uniform with an airport name badge"
+    if any(k in sit_en for k in ("airport", "immigration", "customs", "boarding",
+                                  "departure", "arrival", "check-in", "security check")):
+        return "airline staff uniform with a name badge and scarf"
+    if any(k in sit_en for k in ("train station", "ktx", "train")):
+        return "train conductor uniform — dark jacket with a small cap"
+    if any(k in sit_en for k in ("bus terminal", "bus station", "bus")):
+        return "bus driver uniform — collared shirt with a driver's cap"
+    if any(k in sit_en for k in ("taxi",)):
+        return "taxi driver uniform — dark collared shirt with a small ID badge"
+    if any(k in sit_en for k in ("subway", "metro", "commut")):
+        return "casual everyday outfit"
+    if any(k in sit_en for k in ("car rental", "rental car", "rent a car")):
+        return "car rental agent uniform — smart polo shirt with a company logo"
+    if any(k in sit_en for k in ("currency exchange", "exchange", "atm", "money")):
+        return "bank teller uniform — neat blazer with a name badge"
+    if any(k in sit_en for k in ("hotel", "accommodation", "hostel", "guesthouse", "check in")):
+        return "hotel front-desk uniform — neat blazer and name badge"
+
+    # 음식 / 카페
+    if any(k in sit_en for k in ("restaurant", "dining", "meal", "eating")):
+        return "restaurant server apron over a neat shirt"
+    if any(k in sit_en for k in ("cafe", "coffee", "bakery")):
+        return "barista apron over a casual shirt"
+    if any(k in sit_en for k in ("dessert", "street food", "food stall")):
+        return "casual clothes"
+    if any(k in sit_en for k in ("bbq", "barbecue", "grilling", "picnic")):
+        return "casual clothes with a light outdoor apron"
+
+    # 쇼핑 / 마트
+    if any(k in sit_en for k in ("shopping", "mart", "supermarket", "grocery",
+                                   "market", "convenience store")):
+        return "store staff vest over a casual shirt"
+    if any(k in sit_en for k in ("pharmacy", "drugstore")):
+        return "pharmacist white coat over casual clothes"
+
+    # 병원 / 의료
+    if any(k in sit_en for k in ("hospital", "clinic", "doctor", "medical", "emergency")):
+        return "doctor white coat or nurse scrubs"
+
+    # 학교 / 교육
+    if any(k in sit_en for k in ("school", "class", "classroom", "university",
+                                   "college", "lecture")):
+        return "smart casual school outfit with a backpack"
+    if any(k in sit_en for k in ("library", "study cafe", "study room")):
+        return "casual studious outfit with a book or notebook"
+
+    # 직장 / 오피스
+    if any(k in sit_en for k in ("office", "workplace", "work", "meeting",
+                                   "conference", "business", "interview", "job")):
+        return "business casual — neat collared shirt and trousers"
+
+    # 운동 / 레저
+    if any(k in sit_en for k in ("gym", "fitness", "workout", "exercise", "sport")):
+        return "sporty activewear with a towel"
+    if any(k in sit_en for k in ("swimming", "pool")):
+        return "swim casual outfit with a towel"
+    if any(k in sit_en for k in ("hiking", "mountain", "camping", "outdoor")):
+        return "outdoor hiking gear with a light backpack"
+    if any(k in sit_en for k in ("beach", "sea", "ocean", "resort")):
+        return "summer casual outfit with a sunhat"
+    if any(k in sit_en for k in ("sightseeing", "tourist", "tour")):
+        return "tourist casual outfit with a camera strap"
+
+    # 뷰티 / 웰빙
+    if any(k in sit_en for k in ("hair salon", "beauty salon", "barbershop", "nail", "spa")):
+        return "salon staff uniform — neat apron over a smart top"
+    if any(k in sit_en for k in ("sauna", "jimjilbang", "bath", "jjimjil")):
+        return "cozy lounge wear or towel wrap"
+
+    # 파티 / 이벤트
+    if any(k in sit_en for k in ("party", "wedding", "ceremony", "celebration", "banquet")):
+        return "smart casual party outfit"
+    if any(k in sit_en for k in ("karaoke", "singing", "norebang")):
+        return "fun casual outfit"
+
+    # 집 / 동네
+    if any(k in sit_en for k in ("home", "house", "apartment", "neighbor", "landlord")):
+        return "cozy home casual wear"
+    if any(k in sit_en for k in ("post office", "government", "service center")):
+        return "office-casual neat outfit with a name badge"
+
+    # 기본값
+    return "casual everyday outfit"
+
+
+def _pick_characters(sit_id: int, situation: dict | None = None,
+                     phrase_idx: int = 0) -> tuple[str, str]:
+    """상황 ID 기반으로 캐릭터 쌍 선택.
+    같은 상황 내 모든 패널은 동일한 캐릭터/의상을 유지 (시각적 일관성).
+    차별화는 동작·표정·구도로만 — phrase_idx는 캐릭터 선택에 사용하지 않음."""
+    # 조연: sit_id만 사용 → 상황 내 전 패널 동일 캐릭터 유지
+    species = _LOCAL_ANIMAL_SPECIES[sit_id % len(_LOCAL_ANIMAL_SPECIES)]
+    if situation:
+        supporting_outfit = _get_supporting_char_outfit(situation)
+        main_outfit = _get_main_char_outfit(situation)
+    else:
+        supporting_outfit = "casual everyday outfit"
+        main_outfit = _LEARNER_OUTFITS[sit_id % len(_LEARNER_OUTFITS)]
+    local   = f"{species} wearing {supporting_outfit}"
+    learner = f"red panda wearing {main_outfit}"
     return local, learner
 
 
-def _inject_characters(content: str, sit_id: int) -> str:
+# ─── 표정 어휘집 ─────────────────────────────────────────────
+# 감정 → Gemini가 이해할 수 있는 구체적 얼굴/몸짓 묘사
+_EXPRESSION_VOCAB = {
+    "surprised":    "eyes stretched wide and round, mouth open in a small O, one paw raised to cheek in shock",
+    "confused":     "head tilted 40° to one side, one eyebrow raised high, finger pressed to cheek in thought",
+    "excited":      "arms thrown up joyfully, eyes squeezed into happy crescents, big open-mouth grin",
+    "nervous":      "tiny sweat drop on forehead, eyes darting sideways, both paws clasped tightly together",
+    "apologetic":   "head bowed low, both paws pressed together in front, round rosy blush circles on cheeks",
+    "curious":      "body leaning eagerly forward, eyes wide and sparkling, one finger raised in the air",
+    "relieved":     "eyes gently closed in a soft smile, one paw resting on chest, shoulders visibly relaxed",
+    "embarrassed":  "one paw scratching the back of the head, gaze turned away, large pink blush circle on cheek",
+    "confident":    "chin tilted up, one paw on hip, one arm extended open-palm forward, bright steady eyes",
+    "thoughtful":   "finger resting on chin, eyes glancing upward to the side, slight frown of concentration",
+    "grateful":     "both paws pressed to chest, eyes closed in a blissful smile, small heart near face",
+    "worried":      "eyebrows pinched inward and down, one paw covering mouth, body hunched slightly",
+    "determined":   "eyes narrowed in firm focus, fists clenched at sides, leaning slightly forward",
+    "playful":      "winking one eye, tongue peeking out, arms spread wide with a cheeky grin",
+    "disappointed": "drooping ears (if applicable), downturned mouth, one paw on forehead in resignation",
+    "proud":        "chest puffed out, arms crossed, wide beaming smile, head held high",
+}
+
+# 대화 키워드 → 감정 매핑
+_KEYWORD_EMOTIONS = [
+    (["sorry", "apolog", "excuse me", "forgive", "my fault"],           "apologetic"),
+    (["emergency", "urgent", "hurt", "sick", "pain", "help me"],        "worried"),
+    (["really?", "seriously?", "what?!", "no way", "impossible"],       "surprised"),
+    (["thank", "grateful", "appreciate", "wonderful", "perfect"],       "grateful"),
+    (["don't understand", "what does", "pardon", "again", "repeat"],    "confused"),
+    (["nervous", "scared", "afraid", "anxious", "worried"],             "nervous"),
+    (["of course", "no problem", "sure", "absolutely", "definitely"],   "confident"),
+    (["wow", "amazing", "incredible", "fantastic", "so good"],          "excited"),
+    (["hmm", "let me think", "i'm not sure", "maybe", "perhaps"],      "thoughtful"),
+    (["congratulations", "well done", "great job", "i did it"],        "proud"),
+    (["haha", "funny", "joke", "play", "fun"],                          "playful"),
+    (["finally", "at last", "phew", "relief"],                          "relieved"),
+]
+
+_FALLBACK_EXPRESSIONS = list(_EXPRESSION_VOCAB.keys())
+
+# ── 패널별 배경 변주 힌트 — 같은 상황 내에서 촬영 각도·서브공간을 바꿔 단조로움 방지 ──
+_PANEL_VARIATION_HINTS = [
+    "front-facing medium shot at the main area of the location",
+    "slightly to the side near a window or corner, different lighting",
+    "over-the-shoulder angle showing the background receding into depth",
+    "three-quarter view revealing a different corner of the space",
+    "wider framing showing more of the surrounding environment context",
+    "close medium shot with background softly blurred behind characters",
+    "camera at a low angle looking slightly upward at the characters",
+    "slight high angle looking down, showing table/floor surface as foreground",
+    "characters near the entrance or exit area, door or threshold visible",
+    "characters positioned beside a distinctive feature: counter, shelf, window display",
+]
+
+
+def _detect_emotion(my_en: str, resp_en: str) -> str:
+    """대화 내용에서 감정 키워드 탐지 → 표정 선택"""
+    text = (my_en + " " + resp_en).lower()
+    for keywords, emotion in _KEYWORD_EMOTIONS:
+        if any(k in text for k in keywords):
+            return emotion
+    return None  # Claude가 자유롭게 선택
+
+
+def _inject_characters(content: str, sit_id: int, situation: dict | None = None,
+                       phrase_idx: int = 0) -> str:
     """'person/people' 등 인물 표현을 해당 상황 ID의 캐릭터 설명으로 교체.
     Imagen이 사람 대신 지정된 동물 캐릭터를 그리도록 유도한다."""
-    local, learner = _pick_characters(sit_id)
-    # 복수 인물 → 두 캐릭터
-    content = re.sub(r'\btwo people\b',      f'{local} and {learner}',  content, flags=re.IGNORECASE)
-    content = re.sub(r'\btwo persons\b',     f'{local} and {learner}',  content, flags=re.IGNORECASE)
-    content = re.sub(r'\btwo figures\b',     f'{local} and {learner}',  content, flags=re.IGNORECASE)
-    content = re.sub(r'\btwo characters\b',  f'{local} and {learner}',  content, flags=re.IGNORECASE)
-    content = re.sub(r'\bpeople\b',          f'{local} and {learner}',  content, flags=re.IGNORECASE)
+    local, learner = _pick_characters(sit_id, situation, phrase_idx)
+    # 복수 인물 → 주인공(learner, LEFT) + 조연(local, RIGHT)
+    content = re.sub(r'\btwo people\b',      f'{learner} on the left and {local} on the right',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo persons\b',     f'{learner} on the left and {local} on the right',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo figures\b',     f'{learner} on the left and {local} on the right',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo characters\b',  f'{learner} on the left and {local} on the right',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\bpeople\b',          f'{learner} on the left and {local} on the right',  content, flags=re.IGNORECASE)
     # 젠더 단수
     content = re.sub(r'\ba young woman\b',   f'a {learner}',            content, flags=re.IGNORECASE)
     content = re.sub(r'\ba young man\b',     f'a {local}',              content, flags=re.IGNORECASE)
@@ -136,45 +347,74 @@ def _inject_characters(content: str, sit_id: int) -> str:
 
 # ─── 웹툰 스타일 상수 ─────────────────────────────────────────
 _WEBTOON_STYLE_BASE = (
-    "warm watercolor and pencil sketch illustration style, "
-    "soft loose brushwork with visible watercolor paper texture, "
-    "gentle pencil outlines (not thick black ink), "
-    "watercolor wash backgrounds that are slightly soft and misty, "
-    "time of day matches the scene naturally — morning, afternoon, evening, or night, "
-    "pastel palette: ivory white, soft sky-blue, dusty rose, sage green, "
-    "light lavender, muted mint — balanced tones, not overly yellow or orange, "
-    "NO neon colors, NO dark or black-dominant areas, "
-    "IF animal characters appear: cute chibi anthropomorphic proportions, "
-    "PROTAGONIST RULE: the main character is ALWAYS a red panda — "
-    "supporting/secondary characters can be any other cute animal, "
-    "head-to-body ratio 1:1.2 — very large round head, body short and chubby, "
-    "legs extremely short and stubby (almost no visible legs), arms short and rounded, "
-    "total character height = 35 to 40 percent of the full frame height, "
-    "characters naturally centered in the composition, fully visible head to feet, "
-    "characters have slightly more detail/contrast than the soft background, "
-    "NO shoes NO boots NO sandals NO footwear — all characters have bare paws, "
-    "background reflects MODERN everyday Korean life — "
-    "STRICTLY AVOID: traditional tile-roof houses (기와집), wooden hanok structures, "
-    "paper screen doors, traditional courtyards — these are tourist sites, not daily life. "
-    "USE INSTEAD: concrete apartment buildings, modern cafes, convenience stores (24h), "
-    "subway stations, school classrooms, offices, city parks, pedestrian streets, "
-    "supermarkets, modern restaurants — whatever the scene naturally calls for. "
-    "Background is soft and slightly faded. "
-    "depth: foreground subjects sharp, background gently blurred/misty, "
+    # ── 핵심 스타일 ── pastel watercolor 동화책 톤
+    # Imagen은 "NOT X" 부정어가 무효 → 긍정 묘사로만 작성
+    "soft pastel watercolor illustration, "
+    "Korean and Japanese children's picture book style, kawaii storybook, "
+    "thin delicate hand-drawn ink outlines — soft, slightly rounded, gentle even weight, "
+    "watercolor washes are airy and translucent — colors bleed softly at edges, "
+    "BACKGROUND ATMOSPHERE: soft pastel gradient — light and airy, gently fading tones, "
+    "background is loose watercolor wash — simplified shapes, soft blurred edges, "
+    "slightly faded and secondary — foreground subjects clearly stand out, "
+    "PALETTE: soft mint, pale lavender, light sky blue, blush pink, soft peach, cream — "
+    "light low-saturation pastel tones like gentle watercolor pigments on paper, "
+    "paper grain subtly visible in wash areas, "
+    "overall mood: bright, cheerful, gentle — like a beloved picture book, "
+
+    # ── 주인공 vs 조연 ────────────────────────────────────────────
+    "TWO DISTINCT CHARACTERS — they MUST look clearly different: "
+    "PROTAGONIST (LEARNER): always a RED PANDA — orange-red fur with dark brown body, "
+    "white facial markings, fluffy striped tail visible — "
+    "positioned on the LEFT side of the frame. "
+    "SUPPORTING CHARACTER: a completely DIFFERENT animal species "
+    "with clearly different fur/body color (never orange, never red, never tan), "
+    "positioned on the RIGHT side of the frame. "
+    "DO NOT make both characters the same species or same color. "
+
+    # ── 캐릭터 비율 ──────────────────────────────────────────────
+    "CHARACTER PROPORTIONS: soft chibi plush-toy proportions — "
+    "head is large and round (roughly 40-45% of total body height), "
+    "body is round and compact, arms and legs are short but clearly visible, "
+    "characters fill roughly 65% of the total frame height, "
+    "both characters shown full-body from head to feet, "
+    "NO footwear — bare paws only, "
+    "overall silhouette: soft, round, squeezable like a quality stuffed animal, "
+
+    # ── 눈/표정 ──────────────────────────────────────────────────
+    "EYES: tiny round button eyes — fully dark iris filling the entire eye area, "
+    "single tiny white sparkle dot only — NO visible white sclera, eyes look like shiny black beads, "
+    "EXPRESSIVE FACES: each character shows a DISTINCT readable emotion — "
+    "eyes and mouth clearly convey feeling (wide eyes for surprise, "
+    "crescent eyes for joy, droopy eyes for worry, raised brow for confusion). "
+    "Body language reinforces emotion (raised arms, bowed head, paw on cheek, pointing, etc.). "
+    "STRICTLY AVOID thumbs-up gesture. "
+
+    # ── 구도 ─────────────────────────────────────────────────────
     "square 1:1 composition, "
-    "vary the shot size to suit the scene — close-up for detail/emotion, "
-    "medium shot for action/interaction, wide shot for location/atmosphere, "
-    "choose whichever framing makes the concept most instantly clear, "
-    "main subject centered naturally — balanced, well-composed scene, "
-    "STRICT NO TEXT RULE: absolutely zero letters, zero words, zero numbers in any language, "
-    "replace ALL signage and labels with visual symbols and icons only: "
-    "pharmacy→red cross symbol, hair salon→scissors icon, restaurant→fork-and-spoon icon, "
-    "cafe→coffee cup icon, hospital→red cross emblem, convenience store→colorful shelf display, "
-    "bus destination→colored stripe pattern, menu board→illustrated food picture display, "
-    "price tags→coin stack icon, receipts→dotted line pattern paper, "
-    "phone screens→simple geometric icon UI, "
-    "EXCEPTION: 'TAXI' yellow rooftop sign is allowed as a recognizable international symbol, "
-    "all other storefronts must use pictogram icons only — NO readable text anywhere"
+    "MEDIUM SHOT: both characters centered, heads in upper half, feet in lower half of frame, "
+    "camera at character eye level, "
+    "background elements visible at top and sides — characters in foreground, "
+
+    # ── 탈것 구조 정확도 ──────────────────────────────────────────
+    "VEHICLE INTERIOR ACCURACY (when scene is inside a vehicle): "
+    "driver ALWAYS sits on the LEFT side behind the steering wheel facing FORWARD toward the windshield, "
+    "passenger ALWAYS sits on the RIGHT side or behind the driver facing FORWARD, "
+    "steering wheel is ALWAYS present in front of the driver and clearly visible, "
+    "seats face the direction of travel — characters sit facing FORWARD, never sideways or backward unless explicitly a rear-facing seat, "
+    "bus interior: driver on LEFT with steering wheel, fare machine/card reader on driver's right side near entrance, "
+    "taxi interior: driver on LEFT front seat, passenger on RIGHT rear seat or front passenger seat, "
+    "train/subway: bench seats face inward toward the aisle, doors on side walls, "
+    "ALL spatial relationships in vehicles must be structurally correct and physically plausible. "
+
+    # ── 텍스트 금지 ───────────────────────────────────────────────
+    "ABSOLUTE NO TEXT: zero letters, zero words, zero numbers in any language anywhere — "
+    "ALL signs, labels, screens must use visual symbols and pictograms only: "
+    "pharmacy→red cross symbol, salon→scissors icon, restaurant→fork icon, "
+    "cafe→coffee cup icon, hospital→red cross, store→colorful shelf display, "
+    "phone screens→simple icon UI only, price tags→coin icon. "
+    "EXCEPTION: 'TAXI' rooftop sign is allowed. "
+    "All other text must be replaced with pictogram icons. "
+    "NO readable text anywhere in the image"
 )
 
 def _webtoon_style(sit_id: int) -> str:
@@ -243,9 +483,10 @@ def _lint_prompt(prompt: str) -> str:
     return prompt
 
 
-def _apply_style(content: str, sit_id: int = 0) -> str:
+def _apply_style(content: str, sit_id: int = 0, situation: dict | None = None,
+                 phrase_idx: int = 0) -> str:
     """장면 설명 + lint + 캐릭터 교체 + 웹툰 스타일"""
-    return f"{_inject_characters(_lint_prompt(content), sit_id)}. {_webtoon_style(sit_id)}"
+    return f"{_inject_characters(_lint_prompt(content), sit_id, situation, phrase_idx)}. {_webtoon_style(sit_id)}"
 
 
 # ─── 진행 상황 추적 ──────────────────────────────────────────
@@ -275,6 +516,7 @@ def _mark_done(progress: dict, sit_id: int, key: str):
         progress["completed"][sit_key] = []
     if key not in progress["completed"][sit_key]:
         progress["completed"][sit_key].append(key)
+    progress["current"] = None
     _save_progress(progress)
 
 
@@ -283,6 +525,13 @@ def _mark_failed(progress: dict, sit_id: int, key: str, reason: str):
     if sit_key not in progress["failed"]:
         progress["failed"][sit_key] = {}
     progress["failed"][sit_key][key] = reason
+    progress["current"] = None
+    _save_progress(progress)
+
+
+def _mark_current(progress: dict, sit_id: int, key: str):
+    """현재 생성 중인 패널을 progress 파일에 기록 (대시보드 실시간 표시용)"""
+    progress["current"] = {"sit_id": sit_id, "key": key}
     _save_progress(progress)
 
 
@@ -293,7 +542,7 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
     sit_ko  = situation.get("situation", "")
     sit_en  = situation.get("situation_en", "")
     cat     = situation.get("category", "")
-    local_char, learner_char = _pick_characters(sit_id)
+    local_char, learner_char = _pick_characters(sit_id, situation)
 
     # DB에 미리 생성된 scene_prompt 우선 사용
     if situation.get("scene_prompt"):
@@ -317,19 +566,21 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     "Write a 2-sentence establishing shot description for a cute animal character panel.\n\n"
                     f"Situation: {sit_ko} ({sit_en})\n"
                     f"Category: {cat}\n"
-                    f"Learner character (PROTAGONIST — always a red panda): {learner_char}\n"
-                    f"Korean local character (supporting): {local_char}\n\n"
+                    f"PROTAGONIST (red panda, LARGER, LEFT side): {learner_char}\n"
+                    f"SUPPORTING character (different animal, SMALLER, RIGHT side): {local_char}\n\n"
                     "RULES:\n"
-                    "1. Describe the PHYSICAL SETTING — a modern everyday Korean location matching the situation.\n"
-                    "   Use modern environments: apartment, cafe, subway, convenience store, office, park, etc.\n"
+                    "1. Describe a MODERN everyday Korean location (cafe, subway, office, park, etc.).\n"
                     "   Do NOT use traditional tile-roof hanok or wooden houses.\n"
-                    "2. Characters are optional for this establishing shot. If the scene is primarily\n"
-                    "   about the location/atmosphere, describe just the environment. If characters\n"
-                    "   add natural context, include them — the protagonist is always the red panda.\n"
-                    "3. NO text, signs, labels, speech bubbles anywhere\n"
-                    "4. Focus on cozy warm atmosphere\n"
-                    "5. Composition: main elements centered naturally, not pushed to the bottom\n\n"
-                    "Output: 2 sentences ONLY. No preamble, no explanation."
+                    "2. If including characters: the red panda is on the LEFT and LARGER, "
+                    "   the supporting character is on the RIGHT and clearly SMALLER.\n"
+                    "   They must look visually DIFFERENT — different colors, different sizes.\n"
+                    "3. NO text, signs, labels, speech bubbles anywhere.\n"
+                    "4. Focus on cozy warm atmosphere.\n"
+                    "5. VEHICLE ACCURACY: If inside a vehicle — "
+                    "driver on LEFT with steering wheel facing FORWARD, "
+                    "passenger on RIGHT facing FORWARD, "
+                    "steering wheel always visible, characters never sideways or backward.\n\n"
+                    "Output: 2 sentences ONLY. No preamble."
                 ),
             }],
         )
@@ -337,23 +588,28 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
     except Exception as e:
         print(f"  [Claude 인트로 장면 실패: {e}] fallback 사용")
         return (
-            f"A cozy modern Korean {sit_en.lower()} background. "
-            f"A cute {local_char} and a cute {learner_char} "
-            f"with round chibi faces, button eyes, tiny noses, ready to interact."
+            f"A cozy modern Korean {sit_en.lower()} location. "
+            f"On the left, a larger red panda ({learner_char}) faces right; "
+            f"on the right, a smaller {local_char} faces left, ready to interact."
         )
 
 
-def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client) -> str:
+def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
+                        phrase_idx: int = 0,
+                        prior_poses: list | None = None) -> str:
     """대화 쌍별 패널 장면 설명 생성"""
     sit_id      = situation.get("id", 0)
     sit_ko      = situation.get("situation", "")
     sit_en      = situation.get("situation_en", "")
-    my_ko       = phrase["my_line"]["ko"]
-    my_en       = phrase["my_line"]["en"]
-    resp_ko     = phrase["response"]["ko"]
-    resp_en     = phrase["response"]["en"]
+    my_ko       = phrase.get("my_line", {}).get("ko", "")
+    my_en       = phrase.get("my_line", {}).get("en", "")
+    resp_ko     = phrase.get("response", {}).get("ko", "")
+    resp_en     = phrase.get("response", {}).get("en", "")
     tip         = phrase.get("tip", "")
-    local_char, learner_char = _pick_characters(sit_id)
+    local_char, learner_char = _pick_characters(sit_id, situation, phrase_idx)
+
+    # 패널 인덱스로 촬영 각도/서브공간 변주 힌트 선택
+    view_hint = _PANEL_VARIATION_HINTS[phrase_idx % len(_PANEL_VARIATION_HINTS)]
 
     # DB에 미리 생성된 scene_prompt가 있으면 배경으로 사용 + 동작 설명 추가
     base_scene = situation.get("scene_prompt", "")
@@ -363,11 +619,18 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client) -> str:
             f"The {learner_char} gestures expressively while saying '{my_en}', "
             f"and the {local_char} responds warmly."
         )
-        return f"{base_scene} {action}".strip() if base_scene else (
-            f"Inside a modern Korean {sit_en.lower()}, a cute {learner_char} "
-            f"gestures expressively matching '{my_en}'. "
-            f"A {local_char} responds warmly, both cute chibi animal characters."
-        )
+        location = base_scene if base_scene else f"Inside a modern Korean {sit_en.lower()}"
+        return f"{location}, {view_hint}. {action}"
+
+    # 키워드 기반 감정 힌트 사전 계산
+    detected_emotion = _detect_emotion(my_en, resp_en)
+    emotion_hint = ""
+    if detected_emotion and detected_emotion in _EXPRESSION_VOCAB:
+        hint_cue = _EXPRESSION_VOCAB[detected_emotion]
+        emotion_hint = f"Suggested emotion for protagonist: {detected_emotion} — {hint_cue}\n"
+
+    # 표정 어휘집 (Claude 선택용)
+    vocab_str = "\n".join(f"• {k}: {v}" for k, v in _EXPRESSION_VOCAB.items())
 
     try:
         setting_hint = (
@@ -376,31 +639,66 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client) -> str:
         )
         message = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=150,
+            max_tokens=220,
             messages=[{
                 "role": "user",
                 "content": (
                     "You are an illustration director for a Korean language learning app.\n"
-                    "Write ONE sentence describing the characters' actions/emotions for this dialogue panel.\n\n"
+                    "Write 1-2 sentences describing the scene for this dialogue panel.\n\n"
                     f"{setting_hint}"
-                    f"PROTAGONIST (red panda, learner): {learner_char} — says: '{my_en}'\n"
-                    f"Supporting character (Korean local): {local_char} — responds: '{resp_en}'\n"
-                    + (f"Tip: {tip}\n" if tip else "") +
-                    "\nDescribe ONLY the characters' cute gesture/expression — not the setting.\n"
-                    "Output: 1 sentence ONLY. No preamble."
+                    f"PANEL CAMERA/AREA: {view_hint}\n"
+                    f"LEFT character — PROTAGONIST (red panda, LARGER): {learner_char} — says: '{my_en}'\n"
+                    f"RIGHT character — SUPPORTING (different animal, SMALLER, clearly different color): {local_char} — responds: '{resp_en}'\n"
+                    + (f"Tip: {tip}\n" if tip else "")
+                    + (emotion_hint if emotion_hint else "")
+                    + "\nEXPRESSION VOCABULARY — pick the most fitting emotion for each character:\n"
+                    + vocab_str + "\n\n"
+                    + (
+                        "POSE VARIETY RULE — these poses were already used in previous panels, "
+                        "choose COMPLETELY DIFFERENT body positions and gestures:\n"
+                        + "\n".join(f"  - {p}" for p in prior_poses[-6:]) + "\n\n"
+                        if prior_poses else ""
+                    )
+                    + "RULES:\n"
+                    "1. CONSISTENCY: The SAME two characters appear throughout this entire scene — "
+                    "same species, same fur/body color, same outfit as the intro panel. "
+                    "DO NOT change species, color, or clothing between panels.\n"
+                    "2. LOCATION: Keep the same background setting as the intro panel. "
+                    "Vary only the camera angle/sub-area (use PANEL CAMERA/AREA hint).\n"
+                    "3. DIFFERENTIATION via ACTION+EXPRESSION only: "
+                    "Each panel must show a DIFFERENT body pose, gesture, and facial expression. "
+                    "Describe SPECIFIC concrete visuals: eye shape, mouth, paw position, "
+                    "lean direction, blush, sweat drop, item being held/handed, etc.\n"
+                    "4. First sentence: camera angle + location sub-area for this panel.\n"
+                    "5. Second sentence: specific actions and expressions matching the dialogue.\n"
+                    "6. AVOID: repeating poses from previous panels, generic 'warm smile', "
+                    "thumbs-up gesture. USE: pointing, handing item, bowing, gesturing direction, "
+                    "covering mouth in shock, leaning forward, reaching out, patting shoulder.\n"
+                    "7. Protagonist is LEFT and LARGER; supporting is RIGHT and SMALLER.\n"
+                    "8. VEHICLE ACCURACY: If the scene is inside a vehicle — "
+                    "driver ALWAYS sits on the LEFT behind the steering wheel facing FORWARD; "
+                    "passenger sits on RIGHT or behind, also facing FORWARD; "
+                    "steering wheel MUST be visible in front of driver; "
+                    "characters NEVER sit sideways or backward; "
+                    "bus fare card reader is near the entrance on driver's right; "
+                    "ALL seating and spatial positions must be physically correct.\n"
+                    "Output: 1-2 sentences ONLY, no preamble."
                 ),
             }],
         )
         action = message.content[0].text.strip()
-        return f"{base_scene} {action}".strip() if base_scene else action
+        return action
     except Exception as e:
         print(f"  [Claude 대화 장면 실패: {e}] fallback 사용")
+        fallback_emotion = _FALLBACK_EXPRESSIONS[phrase_idx % len(_FALLBACK_EXPRESSIONS)]
+        fallback_cue = _EXPRESSION_VOCAB[fallback_emotion]
         action = (
-            f"The {learner_char} makes an expressive cute gesture, "
-            f"and the {local_char} responds with a warm friendly smile."
+            f"The {learner_char} shows a {fallback_emotion} expression ({fallback_cue}), "
+            f"while the {local_char} reacts with a complementary gesture."
         )
-        return f"{base_scene} {action}".strip() if base_scene else (
-            f"Inside a modern Korean {sit_en.lower()}, cute animal characters interact. "
+        location = base_scene if base_scene else f"Inside a modern Korean {sit_en.lower()}"
+        return (
+            f"{location}, {view_hint}. "
             + action
         )
 
@@ -431,50 +729,123 @@ def _load_char_refs() -> list:
 
 # ─── 상황 카테고리별 주인공 의상 ─────────────────────────────
 _CATEGORY_OUTFITS = {
-    "여행":       "travel outfit: light jacket, crossbody bag",
-    "식사":       "casual everyday clothes, slightly hungry expression",
-    "쇼핑":       "casual outfit with a tote shopping bag over shoulder",
-    "의료":       "casual clothes, small bandage or looking slightly unwell",
-    "인사":       "neat smart-casual outfit, warm friendly smile",
-    "일상":       "everyday casual wear, relaxed posture",
-    "주거":       "home casual wear, cozy sweater",
-    "여가":       "relaxed leisure outfit matching the activity",
-    "비즈니스":   "business casual — collared shirt, neat trousers",
-    "K-Culture":  "trendy Korean street fashion, stylish casual",
+    # 가방 있음 — 이동/외출이 주목적인 카테고리
+    "여행":       "travel outfit: light jacket with a crossbody bag",
+    "쇼핑":       "casual outfit, holding a shopping bag in hand",
+    "비즈니스":   "business casual — collared shirt and neat trousers, carrying a slim work bag",
+    # 가방 없음 — 목적지 도착 후 활동이 주인 카테고리
+    "식사":       "casual everyday clothes, no bag",
+    "의료":       "casual comfortable clothes, no bag",
+    "인사":       "neat smart-casual outfit, no bag",
+    "일상":       "everyday casual wear, no bag",
+    "주거":       "home casual wear, cozy sweater, no bag",
+    "여가":       "relaxed leisure outfit matching the activity, no bag",
+    "K-Culture":  "trendy Korean street fashion, stylish casual, no bag",
 }
-_DEFAULT_OUTFIT = "casual everyday outfit appropriate to the situation"
+_DEFAULT_OUTFIT = "casual everyday outfit, no bag"
 
 
 def _get_main_char_outfit(situation: dict) -> str:
-    cat = situation.get("category", "")
+    cat    = situation.get("category", "")
     sit_en = situation.get("situation_en", "").lower()
-    # 세부 상황별 오버라이드
-    overrides = {
-        "hospital": "patient-casual clothes, slightly worried expression",
-        "emergency": "casual clothes, clearly in distress",
-        "gym":       "sporty tracksuit",
-        "beach":     "summer casual, sunhat",
-        "ktx":       "travel outfit with luggage",
-        "airport":   "travel outfit with carry-on bag and passport in hand",
-        "interview": "neat business formal suit",
-        "karaoke":   "fun casual outfit, holding a mic",
-        "bbq":       "casual clothes, bib or apron",
-        "sauna":     "light towel wrap or casual lounge wear",
-    }
-    for keyword, outfit in overrides.items():
-        if keyword in sit_en:
-            return outfit
+    sit_ko = situation.get("situation", "").lower()
+
+    # ── 가방이 자연스러운 상황 ──────────────────────────────────
+    # 이동/여행
+    if any(k in sit_en for k in ("airport", "customs", "departure", "arrival", "boarding", "check-in")):
+        return "travel outfit with a carry-on bag and passport in hand"
+    if any(k in sit_en for k in ("ktx", "train station", "bus terminal", "bus station")):
+        return "travel outfit with a rolling suitcase or backpack"
+    if any(k in sit_en for k in ("taxi", "subway", "commut", "transfer")):
+        return "casual outfit with a small crossbody bag"
+    if any(k in sit_en for k in ("sightseeing", "tourist", "tour", "hiking", "mountain", "camping", "outdoor")):
+        return "outdoor casual outfit with a light backpack"
+    if any(k in sit_en for k in ("library", "study cafe", "study room")):
+        return "casual outfit with a backpack"
+    if any(k in sit_en for k in ("school", "class", "classroom", "university", "college", "lecture")):
+        return "school casual outfit with a backpack"
+    if any(k in sit_en for k in ("office", "workplace", "work", "meeting", "conference", "business")):
+        return "business casual — collared shirt and neat trousers, carrying a slim work bag"
+    if any(k in sit_en for k in ("shopping", "mart", "supermarket", "grocery", "market", "convenience store")):
+        return "casual outfit, holding a shopping basket or bag"
+    if any(k in sit_en for k in ("picnic", "park", "festival", "street food", "outdoor event")):
+        return "casual outfit with a small crossbody bag"
+
+    # ── 가방이 불필요한 상황 ────────────────────────────────────
+    if any(k in sit_en for k in ("restaurant", "dining", "eating", "food", "meal", "cafe", "coffee", "bakery", "dessert")):
+        return "casual everyday clothes, no bag"
+    if any(k in sit_en for k in ("hospital", "clinic", "emergency", "pharmacy", "doctor", "medical")):
+        return "casual comfortable clothes, no bag"
+    if any(k in sit_en for k in ("hair salon", "beauty salon", "barbershop", "nail", "spa")):
+        return "casual clothes, no bag"
+    if any(k in sit_en for k in ("karaoke", "singing", "norebang")):
+        return "fun casual outfit, no bag"
+    if any(k in sit_en for k in ("sauna", "jimjilbang", "bath", "hot spring", "jjimjil")):
+        return "light lounge wear, no bag"
+    if any(k in sit_en for k in ("gym", "fitness", "workout", "exercise", "sport", "swimming", "pool")):
+        return "sporty activewear, no bag"
+    if any(k in sit_en for k in ("beach", "sea", "ocean", "resort")):
+        return "summer casual with a sunhat, no bag"
+    if any(k in sit_en for k in ("home", "house", "apartment", "moving", "neighbor", "landlord")):
+        return "home casual wear, cozy sweater, no bag"
+    if any(k in sit_en for k in ("hotel", "accommodation", "check in", "hostel", "guesthouse")):
+        return "travel casual outfit, no bag (already checked in)"
+    if any(k in sit_en for k in ("interview", "job", "recruit", "hiring")):
+        return "neat business formal suit, no bag"
+    if any(k in sit_en for k in ("party", "wedding", "ceremony", "celebration", "banquet")):
+        return "smart casual party outfit, no bag"
+    if any(k in sit_en for k in ("bbq", "barbecue", "grilling")):
+        return "casual clothes with a light apron, no bag"
+    if any(k in sit_en for k in ("post office", "bank", "government", "office visit", "service center")):
+        return "casual neat outfit, no bag"
+
     return _CATEGORY_OUTFITS.get(cat, _DEFAULT_OUTFIT)
 
 
-def _build_char_instruction(situation: dict) -> str:
+def _build_char_instruction(situation: dict, phrase_idx: int = 0,
+                            is_first_panel: bool = False) -> str:
     outfit = _get_main_char_outfit(situation)
+    sit_id = situation.get("id", 0)
+    local_char, _ = _pick_characters(sit_id, situation, phrase_idx)
+
+    # 첫 패널(intro/phrase_0)은 캐릭터 확립, 이후 패널은 "동일 캐릭터 유지" 강조
+    if is_first_panel:
+        consistency_note = (
+            "ESTABLISH THESE TWO CHARACTERS — they will appear in ALL panels of this scene "
+            "with the EXACT SAME species, fur color, and outfit throughout.\n"
+        )
+    else:
+        consistency_note = (
+            "⚠️ VISUAL CONSISTENCY REQUIRED: Use the EXACT SAME characters as the intro panel.\n"
+            f"  LEFT: red panda — orange-red fur, white markings, {outfit}\n"
+            f"  RIGHT: {local_char}\n"
+            "Same species, same fur color, same outfit in EVERY panel. "
+            "DIFFERENTIATE only via: expression, body pose, gesture, camera angle.\n"
+        )
+
     return (
-        "CHARACTER REFERENCE IMAGES ARE PROVIDED ABOVE.\n"
-        f"PROTAGONIST: the RED PANDA from the first reference image — "
-        f"use its exact design (orange-red fur, dark brown body, striped tail, white facial markings). "
-        f"Outfit for this scene: {outfit}.\n"
-        "Supporting characters (if any): design new cute chibi animals in the same illustration style.\n\n"
+        "CHARACTER REFERENCE IMAGES ARE PROVIDED ABOVE.\n\n"
+        "=== STYLE FIRST — MATCH THE REFERENCE IMAGES ===\n"
+        "Draw in the EXACT SAME STYLE as the reference character images: "
+        "soft pastel watercolor, Korean/Japanese children's picture book (kawaii storybook), "
+        "thin delicate ink outlines, airy translucent watercolor washes, "
+        "soft pastel gradient background — light and airy tones, "
+        "chibi plush-toy proportions — large round head (40-45% of height), round compact body, short visible limbs. "
+        "Tiny button eyes — fully dark, shiny bead-like, single white sparkle dot only, NO white sclera.\n\n"
+        "=== FRAMING ===\n"
+        "CLOSE MEDIUM SHOT: two characters fill the CENTER of the square frame. "
+        "Heads near upper-center, feet near lower-center. "
+        "Background at top and sides only — NOT dominating the lower half. "
+        "Camera at character eye level. Do NOT push characters to the bottom.\n\n"
+        "=== TWO CHARACTERS ===\n"
+        f"LEFT — PROTAGONIST (RED PANDA): match the reference image exactly. "
+        f"Orange-red fur, dark brown body, white facial markings, fluffy striped tail. "
+        f"Outfit: {outfit}.\n"
+        f"RIGHT — SUPPORTING CHARACTER: a {local_char}. "
+        f"Must be clearly DIFFERENT color from the red panda (NOT orange/red/tan). "
+        f"Same watercolor storybook style as the protagonist.\n"
+        "The two characters must look CLEARLY DIFFERENT — different species, different colors, different sizes.\n"
+        f"{consistency_note}\n"
     )
 
 
@@ -502,15 +873,16 @@ def _save_generated_image(response, output_path: Path) -> bool:
 
 # ─── Gemini Flash Image 생성 ─────────────────────────────────
 def _generate_image(prompt: str, output_path: Path, genai_client,
-                    sit_id: int = 0, situation: dict | None = None) -> bool:
+                    sit_id: int = 0, situation: dict | None = None,
+                    phrase_idx: int = 0, is_first_panel: bool = False) -> bool:
     """Gemini Flash Image로 단일 이미지 생성 (캐릭터 레퍼런스 포함)"""
     if output_path.exists() and output_path.stat().st_size > 0:
         return True
     elif output_path.exists():
         output_path.unlink()
 
-    char_instruction = _build_char_instruction(situation or {})
-    full_prompt = char_instruction + _apply_style(_lint_prompt(prompt), sit_id)
+    char_instruction = _build_char_instruction(situation or {}, phrase_idx, is_first_panel)
+    full_prompt = char_instruction + _apply_style(_lint_prompt(prompt), sit_id, situation, phrase_idx)
 
     # 캐릭터 레퍼런스 이미지 로드
     char_refs = _load_char_refs()
@@ -552,14 +924,25 @@ def generate_situation(situation: dict, genai_client, anthropic_client,
 
     done, fail = 0, 0
 
-    # 1. 인트로 (설정 샷)
+    # ── 상황 전체에서 쓸 캐릭터/의상/배경 한 번만 결정 ──────────
+    local_char, learner_char = _pick_characters(sit_id, situation)
+    main_outfit   = _get_main_char_outfit(situation)
+    supp_outfit   = _get_supporting_char_outfit(situation)
+    base_scene_bg = situation.get("scene_prompt", f"Modern Korean {sit_en.lower()} location")
+    print(f"  [캐릭터] 주인공: red panda ({main_outfit})")
+    print(f"  [캐릭터] 조연:   {local_char}")
+    print(f"  [배경]   {base_scene_bg[:60]}...")
+
+    # 1. 인트로 (설정 샷) — is_first_panel=True 로 캐릭터 확립
     intro_path = sit_dir / "intro.png"
     intro_key  = "intro"
     if not (intro_path.exists() and intro_path.stat().st_size > 0):
         print(f"  [인트로] {sit_ko} ({sit_en})")
+        _mark_current(progress, sit_id, intro_key)
         scene = _build_intro_scene(situation, anthropic_client)
         print(f"    장면: {scene[:80]}...")
-        if _generate_image(scene, intro_path, genai_client, sit_id, situation):
+        if _generate_image(scene, intro_path, genai_client, sit_id, situation,
+                           phrase_idx=0, is_first_panel=True):
             done += 1
             _mark_done(progress, sit_id, intro_key)
             print(f"    [OK] intro.png")
@@ -575,8 +958,9 @@ def generate_situation(situation: dict, genai_client, anthropic_client,
     if intro_only:
         return done, fail
 
-    # 2. 대화 쌍별 패널
-    for phrase in phrases:
+    # 2. 대화 쌍별 패널 — 동일 캐릭터/배경, 동작·표정·구도로만 차별화
+    used_poses: list[str] = []  # 이 상황 내 이미 쓴 포즈/표정 요약
+    for phrase_loop_idx, phrase in enumerate(phrases):
         ph_id   = phrase["id"]
         ph_key  = f"phrase_{ph_id}"
         ph_path = sit_dir / f"phrase_{ph_id}.png"
@@ -586,11 +970,19 @@ def generate_situation(situation: dict, genai_client, anthropic_client,
             done += 1
             continue
 
-        my_en = phrase["my_line"]["en"]
+        my_en = phrase.get("my_line", {}).get("en", "")
         print(f"  [phrase_{ph_id}] '{my_en[:50]}'")
-        scene = _build_phrase_scene(situation, phrase, anthropic_client)
+        _mark_current(progress, sit_id, ph_key)
+        scene = _build_phrase_scene(
+            situation, phrase, anthropic_client,
+            phrase_idx=phrase_loop_idx,
+            prior_poses=used_poses if used_poses else None,
+        )
+        used_poses.append(scene[:80])  # 포즈 힌트로 앞 80자 기록
         print(f"    장면: {scene[:80]}...")
-        if _generate_image(scene, ph_path, genai_client, sit_id, situation):
+        # phrase_0 이후는 모두 is_first_panel=False → 일관성 강조 프롬프트 사용
+        if _generate_image(scene, ph_path, genai_client, sit_id, situation,
+                           phrase_idx=phrase_loop_idx, is_first_panel=False):
             done += 1
             _mark_done(progress, sit_id, ph_key)
             print(f"    [OK] phrase_{ph_id}.png")

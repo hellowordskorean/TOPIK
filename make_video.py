@@ -39,7 +39,7 @@ from google import genai as _genai
 from google.genai import types as _genai_types
 
 # ─── 앱 베이스 경로 (Docker: /app, 로컬: APP_BASE 환경변수) ────
-_APP_BASE = os.environ.get("APP_BASE", "/app")
+_APP_BASE = os.environ.get("APP_BASE", str(Path(__file__).parent))
 
 def _app_path(rel: str) -> str:
     """'/app/...' Docker 경로를 현재 환경에 맞게 변환"""
@@ -453,6 +453,36 @@ def draw_gradient_bg(img: Image.Image):
     """크림색 단색 배경"""
     ImageDraw.Draw(img).rectangle([0, 0, W, H], fill=C["bg"])
 
+
+def _paste_logo(img: Image.Image, bg_rgb: tuple,
+                target_w: int, center_x: int, center_y: int,
+                alpha: float = 1.0, tint_rgb: tuple = None) -> None:
+    """배경 밝기에 따라 흰/검정 로고를 img에 합성.
+    bg_rgb(R,G,B) 밝기 < 128 → 흰 로고(HOW), >= 128 → 검정 로고(HOB).
+    tint_rgb 지정 시 해당 색상으로 로고 픽셀을 단색으로 칠함.
+    """
+    lum = 0.299 * bg_rgb[0] + 0.587 * bg_rgb[1] + 0.114 * bg_rgb[2]
+    logo_file = "hellowords_how_logo.png" if lum < 128 else "hellowords_hob_logo.png"
+    logo_path = _app_path(f"assets/logos/{logo_file}")
+    if not os.path.exists(logo_path):
+        return
+    logo = Image.open(logo_path).convert("RGBA")
+    lw, lh = logo.size
+    new_h = int(lh * target_w / lw)
+    logo = logo.resize((target_w, new_h), Image.LANCZOS)
+    if tint_rgb is not None:
+        _, _, _, a_ch = logo.split()
+        tinted = Image.new("RGBA", logo.size, (*tint_rgb, 255))
+        tinted.putalpha(a_ch)
+        logo = tinted
+    if alpha < 1.0:
+        r, g, b, a = logo.split()
+        a = a.point(lambda x: int(x * alpha))
+        logo = Image.merge("RGBA", (r, g, b, a))
+    paste_x = center_x - target_w // 2
+    paste_y = center_y - new_h // 2
+    img.paste(logo, (paste_x, paste_y), mask=logo.split()[3])
+
 _COMMENT_CTA = {
     "EN": "Write a sentence using today's word\nin the comments below!",
     "JP": "今日の単語を使った例文を\nコメントに書いてみよう！",
@@ -561,17 +591,18 @@ def draw_word_card(img: Image.Image, word: dict, bg_path: str = None, progress: 
     draw.text((cx, card_y + 194), pos_text,
               font=font_pos, fill=(*C["text_muted"], int(220 * p)), anchor="mm")
 
-    # 한국어 단어 (파란색, 굵게, 대형)
+    # 한국어 단어 (언어별 강조색, 굵게, 대형)
+    _accent_intro = _LANG_ACCENT.get(lang_code.upper(), C["accent"])
     font_word = get_font("korean_bold", 190)
     draw.text((cx, card_y + 390), word["word"],
-              font=font_word, fill=(*C["accent"], int(255 * p)), anchor="mm")
+              font=font_word, fill=(*_accent_intro, int(255 * p)), anchor="mm")
 
-    # 로마자 [ gage ] (파란색) — per-language DB에는 없을 수 있음
+    # 로마자 [ gage ] (언어별 강조색) — per-language DB에는 없을 수 있음
     roman = word.get("romanization", "")
     if roman:
         font_roman = get_font("english", 38)
         draw.text((cx, card_y + 524), f"[ {roman} ]",
-                  font=font_roman, fill=(*C["accent"], int(220 * p)), anchor="mm")
+                  font=font_roman, fill=(*_accent_intro, int(220 * p)), anchor="mm")
 
     # 얇은 구분선
     div2_y = card_y + 566
@@ -603,10 +634,12 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     ph = pb[3] - pb[1] + pad_y * 2
     px, py = 50, 90
 
+    _pill_lang  = word.get("language", "EN").upper()
+    _pill_color = _THUMB_LANG_COLORS.get(_pill_lang, C["accent"])
     pill_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(pill_ov).rounded_rectangle(
         [px, py, px + pw, py + ph], radius=ph // 2,
-        fill=(*C["accent"], 230)
+        fill=(*_pill_color, 230)
     )
     img.paste(pill_ov, mask=pill_ov.split()[3])
     draw = ImageDraw.Draw(img)
@@ -622,9 +655,10 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     dot_cy = py + ph // 2
     last_cx = W - 50 - dot_r
     first_cx = last_cx - (total - 1) * dot_step
+    _dot_act_color = _LANG_ACCENT.get(word.get("language", "EN").upper(), C["accent"])
     for i in range(total):
         dcx = first_cx + i * dot_step
-        fill = C["accent"] if i < sentence_num else C["accent_pink"]
+        fill = _dot_act_color if i < sentence_num else C["accent_pink"]
         draw.ellipse([dcx-dot_r, dot_cy-dot_r, dcx+dot_r, dot_cy+dot_r], fill=fill)
 
     # ── 이미지 영역 계산 (하단 1:1 고정) ────────────────────
@@ -641,20 +675,33 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     # 언어별 상황 설명 우선 (situation_jp, situation_cn 등 → 없으면 기본 situation)
     situation = sentence.get(f"situation_{_sk_sit}") or sentence.get("situation", "")
     if situation:
-        font_sit = _lang_font(_lc_sit, 38)
-        # 상황 텍스트 너비 확인 → 두 줄 처리
+        font_sit = _lang_font(_lc_sit, 34)
+        _sit_color = _THUMB_LANG_COLORS.get(_lc_sit, C["accent"])
         _sit_max_w = W - 120
-        sit_text = f"#{situation}"
+        sit_text = situation
         if draw.textbbox((0, 0), sit_text, font=font_sit)[2] > _sit_max_w:
             mid_s = len(sit_text) // 2
             split_at = sit_text.rfind(' ', 0, mid_s) if ' ' in sit_text[:mid_s+5] else mid_s
             if split_at > 0:
                 sit_text = sit_text[:split_at] + '\n' + sit_text[split_at+1:]
-        sit_lines = sit_text.count('\n') + 1
+        # 각 줄을 개별 칩으로 렌더링
         for _sl, _sline in enumerate(sit_text.split('\n')):
-            draw.text((cx, text_y + _sl * 46), _sline,
-                      font=font_sit, fill=C["text_muted"], anchor="mm")
-        text_y += sit_lines * 46 + 29
+            _sb = draw.textbbox((0, 0), _sline, font=font_sit)
+            _sw, _sh = _sb[2] - _sb[0] + 28, _sb[3] - _sb[1] + 14
+            _sx = cx - _sw // 2
+            _sy = text_y + _sl * (_sh + 8)
+            _sit_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            ImageDraw.Draw(_sit_ov).rounded_rectangle(
+                [_sx, _sy, _sx + _sw, _sy + _sh], radius=_sh // 2,
+                fill=(*_sit_color, int(40 * progress))
+            )
+            img.paste(_sit_ov, mask=_sit_ov.split()[3])
+            draw = ImageDraw.Draw(img)
+            draw.text((cx, _sy + _sh // 2), _sline,
+                      font=font_sit, fill=(*_sit_color, int(200 * progress)), anchor="mm")
+        sit_lines = sit_text.count('\n') + 1
+        _sh_ref = draw.textbbox((0, 0), "A", font=font_sit)[3] + 14
+        text_y += sit_lines * (_sh_ref + 8) + 20
 
     # 한국어 예문 — 폰트·줄바꿈 자동 조절
     MAX_KO_W = W - 80   # 1000px
@@ -683,10 +730,11 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
 
     lines_ko = len(ko_text.split('\n'))
     lh_ko    = int(ko_size * 1.22)   # 90px → 110, 비례 유지
+    _hi_color = _LANG_ACCENT.get(word.get("language", "EN"), C["accent"])
     draw_multiline_highlighted(
         img, cx, text_y + (lines_ko * lh_ko) // 2,
         ko_text, word["word"],
-        font_ko, C["text_primary"], C["accent"]
+        font_ko, C["text_primary"], _hi_color
     )
     text_y += lines_ko * lh_ko + 12
 
@@ -728,18 +776,19 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
         ph_lines = ph_text.count('\n') + 1
         lh_ph = 40
         for _pl, _pline in enumerate(ph_text.split('\n')):
-            draw.text((cx, text_y + 10 + _pl * lh_ph), _pline,
+            draw.text((cx, text_y + 18 + _pl * lh_ph), _pline,
                       font=font_ph, fill=C["text_muted"], anchor="mm")
-        text_y += 10 + ph_lines * lh_ph + 4
+        text_y += 18 + ph_lines * lh_ph + 4
 
-    text_y += 36
+    text_y += 44
 
     # 번역 텍스트 (48px) — 긴 문장 두 줄 허용
     _lc = word.get("language", "EN").upper()
     font_en = _lang_font(_lc, 48)
     _sk = {"EN": "en", "JP": "jp", "CN": "cn", "VN": "vn", "ES": "es"}.get(_lc, "en")
     en_text = sentence.get(_sk) or sentence.get("en", "")
-    en_hi = find_en_highlight(en_text, word["meaning"])
+    # 사전 저장된 하이라이트 우선, 없으면 동적 검색
+    en_hi = sentence.get(f"highlight_{_sk}") or find_translation_highlight(en_text, _lc, word)
 
     _max_en_w = W - 120
     _tmp_draw = ImageDraw.Draw(img)
@@ -766,7 +815,7 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
     lh_en = _tmp_draw.textbbox((0, 0), "Ag", font=font_en)[3] + 14
     draw_multiline_highlighted(
         img, cx, text_y + (en_lines * lh_en) // 2, en_text, en_hi,
-        font_en, C["text_secondary"], C["accent"]
+        font_en, C["text_secondary"], _hi_color
     )
 
     # ── 일러스트 카드 (하단 1:1, 드롭섀도우) ────────────────
@@ -788,6 +837,15 @@ _THUMB_LANG_COLORS = {
     "CN": (200, 50,  50),
     "VN": (218, 165, 32),
     "ES": (230, 126, 34),
+}
+
+# 언어별 강조색 (국가 배지와 동일 색상, 단어/문장 하이라이트에 사용)
+_LANG_ACCENT = {
+    "EN": (50,  92, 200),   # 파랑
+    "JP": (219, 68,  85),   # 빨강/핑크
+    "CN": (200, 50,  50),   # 빨강
+    "VN": (218, 165, 32),   # 골드
+    "ES": (230, 126, 34),   # 오렌지
 }
 
 # pill 배너 텍스트: 각 언어로 "한국어 → 대상언어"
@@ -821,9 +879,13 @@ def render_thumbnail(src_frame: str, dest_path: str, word: dict):
     img = Image.alpha_composite(img, card_ov)
     draw = ImageDraw.Draw(img)
 
+    # ── 채널 로고 ─────────────────────────────────────────────
+    _paste_logo(img, C["card_bg"], target_w=360, center_x=cx, center_y=cy1 + 72, alpha=0.85)
+    draw = ImageDraw.Draw(img)
+
     # ── TOPIK LV.X ───────────────────────────────────────────
     font_topik = get_font("english_bold", 54)
-    topik_cy   = cy1 + 110
+    topik_cy   = cy1 + 155
     draw.text((cx, topik_cy), f"TOPIK  LV.{word['level']}",
               font=font_topik, fill=C["accent_warm"], anchor="mm")
 
@@ -929,22 +991,23 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
     draw = ImageDraw.Draw(img)
 
     # TOPIK LV.X / 00Y
-    font_h = get_font("english_bold", 30)
-    draw.text((cx, card_y + 80), f"TOPIK  LV.{word['level']}  ·  {word['id']:03d}",
+    font_h = get_font("english_bold", 45)
+    draw.text((cx, card_y + 85), f"TOPIK  LV.{word['level']}  ·  {word['id']:03d}",
               font=font_h, fill=(*C["accent_warm"], int(230 * p)), anchor="mm")
 
-    div_y = card_y + 112
+    div_y = card_y + 125
     draw.rectangle([cx - 100, div_y, cx + 100, div_y + 1],
                    fill=(*C["divider"], int(255 * p)))
 
-    # 한국어 단어 (파란색)
+    # 한국어 단어 (언어별 강조색)
+    lang_code = word.get("language", "EN").upper()
+    _accent = _LANG_ACCENT.get(lang_code, C["accent"])
     font_big = get_font("korean_bold", 180)
     draw.text((cx, card_y + 330), word["word"],
-              font=font_big, fill=(*C["accent"], int(255 * p)), anchor="mm")
+              font=font_big, fill=(*_accent, int(255 * p)), anchor="mm")
 
     # = meaning
-    _outro_lc = word.get("language", "EN").upper()
-    font_sub = _lang_font(_outro_lc, 50)
+    font_sub = _lang_font(lang_code, 50)
     draw.text((cx, card_y + 480), f"= {word['meaning']}",
               font=font_sub, fill=(*C["text_secondary"], int(210 * p)), anchor="mm")
 
@@ -956,7 +1019,6 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
               font=font_cta, fill=(*C["text_muted"], int(160 * p)), anchor="mm")
 
     # 댓글 유도 CTA
-    lang_code = word.get("language", "EN").upper()
     comment_text = _COMMENT_CTA.get(lang_code, _COMMENT_CTA["EN"])
     font_comment = _lang_font(lang_code, 36) if lang_code in ("JP", "CN") else get_font("english", 36)
     # 배경 박스
@@ -970,7 +1032,7 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
     cta_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(cta_ov).rounded_rectangle(
         [box_x1, box_top, box_x2, box_bot],
-        radius=20, fill=(*C["accent"], int(220 * p))
+        radius=20, fill=(*_accent, int(220 * p))
     )
     img.paste(cta_ov, mask=cta_ov.split()[3])
     draw = ImageDraw.Draw(img)
@@ -980,6 +1042,12 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
     for i, line in enumerate(lines):
         draw.text((cx, first_line_y + i * line_h), line,
                   font=font_comment, fill=(255, 255, 255, int(255 * p)), anchor="mm")
+
+    # 채널 로고 (아웃트로 하단, 언어별 색상, 10% 축소)
+    logo_y = box_bot + 70
+    if logo_y < H - 40:
+        _paste_logo(img, C["bg"], target_w=360, center_x=cx, center_y=logo_y,
+                    alpha=0.85 * p, tint_rgb=_accent)
 
 # ─── 배경 이미지 ─────────────────────────────────────────────
 def _find_illust_base(korean_word: str, level: int) -> str:
@@ -1147,8 +1215,8 @@ def _find_ko_match(line: str, word: str):
     if stem and stem in line:
         idx = line.index(stem)
         return idx, _ko_extend_to_boundary(line, idx, len(stem))
-    # 3. 어간 앞부분 점진 축소 (불규칙 활용 대응, 최소 1음절)
-    for plen in range(len(stem) - 1, 0, -1):
+    # 3. 어간 앞부분 점진 축소 (불규칙 활용 대응, 최소 2음절 — 1음절 접두사는 오탐 방지)
+    for plen in range(len(stem) - 1, 1, -1):
         prefix = stem[:plen]
         for i in range(len(line)):
             if line[i:i + plen] == prefix:
@@ -1199,6 +1267,28 @@ def find_en_highlight(en_text: str, meaning: str) -> str:
         idx = lo.find(m.lower())
         if idx != -1:
             return en_text[idx: idx + len(m)]
+    return ""
+
+
+def find_translation_highlight(trans_text: str, lang_code: str, word: dict) -> str:
+    """번역 문장에서 단어의 현지어 표현 찾기.
+    EN은 기존 find_en_highlight, 다른 언어는 multilang.meaning을 기준으로 매칭."""
+    if lang_code == "EN":
+        return find_en_highlight(trans_text, word["meaning"])
+
+    ml_key = {"JP": "jp", "CN": "cn", "VN": "vn", "ES": "es"}.get(lang_code, "")
+    ml_meaning = word.get("multilang", {}).get(ml_key, {}).get("meaning", "") if ml_key else ""
+    if not ml_meaning:
+        return find_en_highlight(trans_text, word["meaning"])
+
+    # 쉼표·슬래시·괄호 등으로 분리된 여러 표현 순서대로 매칭 시도
+    for candidate in re.split(r"[,/;、，；・]", ml_meaning):
+        candidate = re.sub(r"\(.*?\)|\[.*?\]", "", candidate).strip()
+        if not candidate:
+            continue
+        idx = trans_text.lower().find(candidate.lower())
+        if idx != -1:
+            return trans_text[idx: idx + len(candidate)]
     return ""
 
 
@@ -1415,56 +1505,76 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
     print(f"  총 길이: {total_duration:.1f}초 ({total_frames}프레임)")
     
     write_progress("3/4 프레임 렌더링 중...", pct=30, word=word)
-    # 3. 프레임 렌더링 → 임시 비디오
-    print("  3/4 프레임 렌더링 중...")
-    frames_dir = os.path.join(tmpdir, "frames")
-    os.makedirs(frames_dir, exist_ok=True)
-    
+    # 3. 프레임 렌더링 → FFmpeg rawvideo pipe (PNG 파일 저장 없음 → GPU 직접 스트리밍)
+    print("  3/4 프레임 렌더링 중... (rawvideo pipe → GPU 인코딩)")
+    raw_video_path = os.path.join(tmpdir, "raw_video.mp4")
+    thumb_frame_img = None  # 썸네일용 첫 프레임
+
+    pipe_cmd = [
+        "ffmpeg",
+        "-f", "rawvideo", "-vcodec", "rawvideo",
+        "-s", f"{W}x{H}", "-pix_fmt", "rgb24",
+        "-r", str(FPS),
+        "-i", "pipe:0",
+        *get_video_encoder(),
+        "-an",           # 오디오 없음 (2패스에서 합성)
+        "-pix_fmt", "yuv420p",
+        raw_video_path, "-y"
+    ]
+    pipe_proc = subprocess.Popen(pipe_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+
     seg_idx = 0
-    for frame_n in range(total_frames):
-        t_current = frame_n / FPS
-        
-        # 현재 세그먼트 찾기
-        while seg_idx < len(segments) - 1 and t_current >= segments[seg_idx + 1][2]:
-            seg_idx += 1
-        
-        seg = segments[seg_idx]
-        t_local = t_current - seg[2]
+    try:
+        for frame_n in range(total_frames):
+            t_current = frame_n / FPS
 
-        # 세그먼트 타입에 따라 배경 선택
-        s_idx = seg[1]
-        if s_idx >= 0 and s_idx < len(sent_bgs):
-            cur_bg = sent_bgs[s_idx]
-        else:
-            cur_bg = word_bg
+            # 현재 세그먼트 찾기
+            while seg_idx < len(segments) - 1 and t_current >= segments[seg_idx + 1][2]:
+                seg_idx += 1
 
-        frame = render_frame(word, seg[1], t_local, seg[3], bg_path=cur_bg)
-        
-        # PNG 저장
-        frame_path = os.path.join(frames_dir, f"frame_{frame_n:06d}.png")
-        Image.fromarray(frame).save(frame_path)
-        
-        if frame_n % (FPS * 5) == 0:
-            print(f"    {frame_n}/{total_frames} 프레임 완료 ({t_current:.1f}s)")
-            pct = 30 + int((frame_n / total_frames) * 55)  # 30~85%
-            write_progress(f"3/4 프레임 렌더링 중... ({frame_n}/{total_frames})", pct=pct, word=word)
-    
-    # 썸네일 저장 (인트로 첫 프레임) — thumbnail/ 폴더에 별도 저장
+            seg = segments[seg_idx]
+            t_local = t_current - seg[2]
+
+            # 세그먼트 타입에 따라 배경 선택
+            s_idx = seg[1]
+            cur_bg = sent_bgs[s_idx] if 0 <= s_idx < len(sent_bgs) else word_bg
+
+            frame = render_frame(word, seg[1], t_local, seg[3], bg_path=cur_bg)
+
+            if frame_n == 0:
+                thumb_frame_img = Image.fromarray(frame)  # 첫 프레임만 썸네일용으로 보관
+
+            pipe_proc.stdin.write(frame.tobytes())
+
+            if frame_n % (FPS * 5) == 0:
+                print(f"    {frame_n}/{total_frames} 프레임 완료 ({t_current:.1f}s)")
+                pct = 30 + int((frame_n / total_frames) * 55)  # 30~85%
+                write_progress(f"3/4 프레임 렌더링 중... ({frame_n}/{total_frames})", pct=pct, word=word)
+    finally:
+        pipe_proc.stdin.close()
+
+    _, pipe_stderr = pipe_proc.communicate()
+    if pipe_proc.returncode != 0:
+        print(f"  FFmpeg pipe 오류: {pipe_stderr.decode('utf-8', errors='replace')[-500:]}")
+        raise RuntimeError("FFmpeg rawvideo pipe 실패")
+
+    # 썸네일 저장 (첫 프레임, 파일 I/O 없이 메모리에서 직접)
     video_dir_for_thumb = os.path.dirname(output_path)
     thumb_dir = os.path.join(os.path.dirname(video_dir_for_thumb), "thumbnail")
     os.makedirs(thumb_dir, exist_ok=True)
     thumb_name = os.path.splitext(os.path.basename(output_path))[0] + "_thumb.png"
     thumb_path = os.path.join(thumb_dir, thumb_name)
-    intro_frame = os.path.join(frames_dir, "frame_000000.png")
-    if os.path.exists(intro_frame):
-        render_thumbnail(intro_frame, thumb_path, word)
+    if thumb_frame_img is not None:
+        thumb_frame_path = os.path.join(tmpdir, "thumb_frame.png")
+        thumb_frame_img.save(thumb_frame_path)
+        render_thumbnail(thumb_frame_path, thumb_path, word)
         print(f"  [OK] 썸네일 저장: {thumb_path}")
 
     write_progress("4/4 FFmpeg 합성 중...", pct=88, word=word)
     print("  4/4 FFmpeg 합성 중...")
 
-    # FFmpeg 오디오 합성
-    # 입력 순서: 0=비디오프레임, 1=silence, 2~=나레이션, 마지막=배경음악(옵션)
+    # FFmpeg 오디오 합성 (2패스: raw_video.mp4 + 오디오 → 최종)
+    # 입력 순서: 0=무음영상, 1=silence, 2~=나레이션, 마지막=배경음악(옵션)
     silence_path = os.path.join(tmpdir, "silence.mp3")
     subprocess.run([
         "ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
@@ -1495,7 +1605,6 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
     if delay_filters:
         mix_input = "".join(f"[a{i}]" for i in range(len(delay_filters)))
         if music_input_idx is not None:
-            # 나레이션 믹스 → [narr], 배경음악 볼륨 12% → [bgm], 최종 합성
             filter_complex = (
                 ";".join(delay_filters) +
                 f";[1:a]{mix_input}amix=inputs={len(delay_filters)+1}:normalize=0[narr]"
@@ -1508,22 +1617,20 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
         audio_map = ["-filter_complex", filter_complex, "-map", "[aout]"]
     else:
         audio_map = ["-map", "0:a"]
-    
+
     cmd = [
         "ffmpeg",
-        "-framerate", str(FPS),
-        "-i", os.path.join(frames_dir, "frame_%06d.png"),
+        "-i", raw_video_path,   # 이미 GPU 인코딩된 영상 (스트림 복사)
     ] + input_args + audio_map + [
         "-map", "0:v",
-        *get_video_encoder(),
+        "-c:v", "copy",         # 재인코딩 없이 스트림 복사
         "-c:a", "aac",
         "-b:a", "192k",
-        "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         output_path,
         "-y"
     ]
-    
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  FFmpeg 오류: {result.stderr[-500:]}")
