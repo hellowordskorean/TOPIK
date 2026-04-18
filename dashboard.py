@@ -3738,22 +3738,16 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     </div>
   </div>
 
-  <!-- 렌더링 -->
-  <div class="s-group tog" onclick="toggleSGroup('rend')">
-    <span>⚙️ 렌더링</span><span id="sb-render-badge" style="font-size:.6rem;margin-left:6px;"></span><span class="s-arr" id="s-arr-rend">▾</span>
+  <!-- 영상 작업 -->
+  <div class="s-group tog" onclick="toggleSGroup('work')">
+    <span>🎬 영상 작업</span><span id="sb-render-badge" style="font-size:.6rem;margin-left:6px;"></span><span class="s-arr" id="s-arr-work">▾</span>
   </div>
-  <div class="s-ch open" id="s-ch-rend">
-    <div class="s-item l2" data-view="render-live" onclick="navRenderTab(this,'live')" style="--c:#3fb950;">
-      <span>📊</span><span>렌더 진행사항</span>
+  <div class="s-ch open" id="s-ch-work">
+    <div class="s-item l2" data-view="work" onclick="nav(this,'work')" style="--c:#3b82f6;">
+      <span>📋</span><span>작업 센터</span>
     </div>
-    <div class="s-item l2" data-view="render-batch" onclick="navRenderTab(this,'batch')" style="--c:#3fb950;">
-      <span>📅</span><span>오늘의 배치</span>
-    </div>
-    <div class="s-item l2" data-view="render-history" onclick="navRenderTab(this,'history')" style="--c:#3fb950;">
-      <span>🗓</span><span>날짜별</span>
-    </div>
-    <div class="s-item l2" data-view="render-custom" onclick="navRenderTab(this,'custom')" style="--c:#3fb950;">
-      <span>🎬</span><span>영상 커스텀</span>
+    <div class="s-item l2" data-view="render-history" onclick="navRenderTab(this,'history')" style="--c:#6366f1;">
+      <span>📅</span><span>날짜별 이력</span>
     </div>
   </div>
 
@@ -3766,7 +3760,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <span>📊</span><span>채널 통계</span>
     </div>
     <div class="s-item l2" data-view="yt-upload" onclick="nav(this,'yt-upload')" style="--c:#f87171;">
-      <span>📤</span><span>업로드 관리</span>
+      <span>📤</span><span>업로드 현황</span>
     </div>
   </div>
 
@@ -3876,8 +3870,296 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
 <!-- ══ 언어 상세 뷰 (EN 기본 + 나머지 JS 동적) ════════ -->
 <div id="view-lang:TOPIK:EN" class="view"></div>
 
-<!-- ══ 렌더링 (통합 페이지) ═════════════════════════════ -->
-<div id="view-render" class="view">
+<!-- ══ 영상 작업 센터 (새 통합 페이지) ════════════════════ -->
+<div id="view-work" class="view">
+  <div class="bc"><span class="cur">🎬 영상 작업 센터</span></div>
+  <!-- 탭 버튼 -->
+  <div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px;">
+    <button id="wt-tab-today" class="btn btn-g on" onclick="workTab('today')" style="font-size:.74rem;">📋 오늘 작업</button>
+    <button id="wt-tab-custom" class="btn btn-m" onclick="workTab('custom')" style="font-size:.74rem;">⚙️ 커스텀</button>
+    <button id="wt-tab-queue" class="btn btn-m" onclick="workTab('queue')" style="font-size:.74rem;">⏳ 큐</button>
+  </div>
+
+  <!-- ═══ [오늘 작업] 탭 ════════════════════════════════ -->
+  <div id="wt-panel-today">
+
+    <!-- 4개 콘텐츠 상태 카드 (2×2 그리드) -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+
+      <!-- 단어 본편 카드 -->
+      <div class="card" style="padding:12px 14px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <span style="font-size:.9rem;">📹</span>
+          <span style="font-weight:700;font-size:.82rem;">단어 본편</span>
+        </div>
+        <div id="wc-word-yt-langs" style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px;font-size:.7rem;"></div>
+        <div style="display:flex;gap:5px;">
+          <button onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">▶ 렌더링</button>
+          <button onclick="dailyUploadAll()" class="btn btn-m" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">⬆ 업로드</button>
+        </div>
+      </div>
+
+      <!-- 단어 쇼츠 카드 -->
+      <div class="card" style="padding:12px 14px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <span style="font-size:.9rem;">📱</span>
+          <span style="font-weight:700;font-size:.82rem;">단어 쇼츠</span>
+        </div>
+        <div id="wc-word-reels-langs" style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px;font-size:.7rem;"></div>
+        <div style="display:flex;gap:5px;">
+          <button onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">▶ 렌더링</button>
+          <button onclick="dailyUploadAll()" class="btn btn-m" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">⬆ 업로드</button>
+        </div>
+      </div>
+
+      <!-- 회화 본편 카드 -->
+      <div class="card" style="padding:12px 14px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <span style="font-size:.9rem;">💬</span>
+          <span style="font-weight:700;font-size:.82rem;">회화 본편</span>
+        </div>
+        <div id="wc-conv-yt-langs" style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px;font-size:.7rem;"></div>
+        <div style="display:flex;gap:5px;">
+          <button onclick="renderConvOnly()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">▶ 렌더링</button>
+          <button onclick="uploadPhraseToday()" class="btn btn-m" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">⬆ 업로드</button>
+        </div>
+      </div>
+
+      <!-- 회화 쇼츠 카드 -->
+      <div class="card" style="padding:12px 14px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <span style="font-size:.9rem;">📱</span>
+          <span style="font-weight:700;font-size:.82rem;">회화 쇼츠</span>
+        </div>
+        <div id="wc-conv-reels-langs" style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px;font-size:.7rem;"></div>
+        <div style="display:flex;gap:5px;">
+          <button onclick="renderConvOnly()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">▶ 렌더링</button>
+          <button onclick="uploadPhraseToday()" class="btn btn-m" style="flex:1;justify-content:center;font-size:.68rem;padding:4px 6px;">⬆ 업로드</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 통합 실행 버튼 -->
+    <div style="display:flex;gap:7px;margin-bottom:14px;">
+      <button onclick="renderBatchBoth()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.75rem;">▶ 단어+회화 렌더링 (YT+릴스)</button>
+      <button onclick="dailyTrigger()" class="btn btn-m" style="font-size:.75rem;padding:0 14px;">▶ 오늘</button>
+    </div>
+
+    <!-- 자동화 설정 통합 섹션 -->
+    <div class="card" style="padding:14px 16px;">
+      <div style="font-size:.78rem;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+        <span>⚙️</span><span>자동화 설정</span>
+      </div>
+
+      <!-- 자동 배치 스케줄 -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;margin-bottom:10px;">
+        <div style="font-size:.72rem;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+          <span>📅</span><span>자동 배치 스케줄</span>
+          <span id="wc-schedule-status" style="margin-left:auto;font-size:.65rem;color:var(--muted2);"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <span style="font-size:.68rem;color:var(--muted);">기준일:</span>
+          <input type="date" id="wc-start-date" class="inp"
+            style="font-size:.72rem;padding:3px 8px;width:130px;"
+            onchange="saveBatchConfig({auto_start_date:this.value});_updateScheduleStatus()">
+          <span style="font-size:.65rem;color:var(--muted2);">이 날짜부터 자동으로 렌더링·업로드 시작</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <span style="font-size:.68rem;color:var(--muted);">단어 주기:</span>
+          <div class="pill-group" id="wc-word-freq-group">
+            <button class="pill" data-v="daily"      onclick="setBatchPill('wc-word-freq-group',this,'word_freq')">매일</button>
+            <button class="pill" data-v="every2days" onclick="setBatchPill('wc-word-freq-group',this,'word_freq')">이틀에 1개</button>
+            <button class="pill" data-v="every3days" onclick="setBatchPill('wc-word-freq-group',this,'word_freq')">삼일에 1개</button>
+            <button class="pill" data-v="2perday"    onclick="setBatchPill('wc-word-freq-group',this,'word_freq')">하루 2개</button>
+            <button class="pill" data-v="3perday"    onclick="setBatchPill('wc-word-freq-group',this,'word_freq')">하루 3개</button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:.68rem;color:var(--muted);">회화 주기:</span>
+          <div class="pill-group" id="wc-phrase-freq-group">
+            <button class="pill" data-v="daily"      onclick="setBatchPill('wc-phrase-freq-group',this,'phrase_freq')">매일</button>
+            <button class="pill" data-v="every2days" onclick="setBatchPill('wc-phrase-freq-group',this,'phrase_freq')">이틀에 1개</button>
+            <button class="pill" data-v="every3days" onclick="setBatchPill('wc-phrase-freq-group',this,'phrase_freq')">삼일에 1개</button>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:.64rem;color:var(--muted);line-height:1.5;" id="wc-schedule-desc">
+          기준일을 설정하면 단어·회화 각각의 빈도 설정에 따라 자동 스케줄이 계산됩니다.
+        </div>
+      </div>
+
+      <!-- 자동 실행 ON/OFF 토글 -->
+      <div class="batch-auto-row" style="margin-bottom:10px;">
+        <div>
+          <div class="batch-auto-title">자동 실행 ON/OFF</div>
+          <div class="batch-auto-sub" id="wc-auto-desc">설정 로딩 중…</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:52px;height:28px;cursor:pointer;flex-shrink:0;">
+          <input type="checkbox" id="wc-auto-toggle" onchange="setDailyAuto(this.checked)" style="opacity:0;width:0;height:0;">
+          <span id="wc-toggle-slider" style="position:absolute;inset:0;background:#444;border-radius:28px;transition:.3s;">
+            <span id="wc-toggle-knob" style="position:absolute;left:3px;top:3px;width:22px;height:22px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </span>
+        </label>
+      </div>
+
+      <!-- 업로드 스케줄 설정 (ytu-sched-panel에서 이동) -->
+      <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;">
+        <div style="font-size:.72rem;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+          <span>⏱</span><span>업로드 스케줄</span>
+          <!-- ON/OFF 토글 -->
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:auto;">
+            <div id="wc-sched-toggle-wrap" onclick="ytSchedToggle()" style="width:44px;height:22px;border-radius:11px;background:#333;position:relative;cursor:pointer;transition:background .2s;">
+              <div id="wc-sched-knob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+            </div>
+            <span id="wc-sched-status" style="font-size:.72rem;color:var(--muted);">OFF</span>
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <!-- 간격 -->
+          <select id="wc-sched-interval" class="inp" style="width:110px;">
+            <option value="1">매일</option>
+            <option value="2">격일</option>
+            <option value="3">3일마다</option>
+          </select>
+          <!-- 개수 -->
+          <label style="font-size:.75rem;color:var(--muted);">회당</label>
+          <input id="wc-sched-count" type="number" min="1" max="10" value="2" class="inp" style="width:60px;">
+          <label style="font-size:.75rem;color:var(--muted);">개</label>
+          <!-- 언어 -->
+          <select id="wc-sched-lang" class="inp" style="width:90px;">
+            <option value="">전체 언어</option>
+            <option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option>
+            <option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option>
+          </select>
+          <!-- 포맷 -->
+          <select id="wc-sched-fmt" class="inp" style="width:100px;">
+            <option value="">전체 포맷</option>
+            <option value="youtube">▶ YouTube</option>
+            <option value="reels">📱 쇼츠</option>
+          </select>
+          <!-- 탭 -->
+          <select id="wc-sched-tab" class="inp" style="width:80px;">
+            <option value="word">단어</option>
+            <option value="conv">회화</option>
+          </select>
+          <!-- 버튼 -->
+          <button onclick="wcSchedSave()" class="btn btn-m" style="font-size:.72rem;">저장</button>
+          <button id="wc-sched-run-btn" onclick="wcSchedRun()" class="btn btn-g" style="font-size:.72rem;">▶ 지금 실행</button>
+          <span id="wc-sched-last" style="font-size:.66rem;color:var(--muted);margin-left:auto;"></span>
+        </div>
+      </div>
+
+      <div style="margin-top:8px;font-size:.62rem;color:var(--muted2);text-align:center;">자동 OFF 상태에서도 수동으로 실행 가능</div>
+    </div>
+
+  </div>
+
+  <!-- ═══ [커스텀] 탭 ════════════════════════════════════ -->
+  <div id="wt-panel-custom" style="display:none;">
+    <div class="sec">렌더링 대상</div>
+    <div style="margin-bottom:10px;">
+      <div id="wc-rc-targets">
+        <div class="rc-target-row" style="display:flex;gap:6px;align-items:flex-end;margin-bottom:6px;">
+          <div style="flex:2.5;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">시험</div>
+            <select class="rc-exam inp" onchange="onExamChange(this.closest('.rc-target-row'))" style="width:100%;"><option value="TOPIK">🇰🇷 TOPIK</option><option value="TOEIC">📝 TOEIC</option><option value="JLPT">🌸 JLPT</option><option value="IELTS">🎓 IELTS</option><option value="HSK">🐉 HSK</option><option value="회화">💬 회화</option></select></div>
+          <div class="rc-level-wrap" style="flex:1.5;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">등급</div>
+            <select class="rc-level inp" onchange="updateCustomPreview()" style="width:100%;"><option value="1">1급</option><option value="2">2급</option><option value="3">3급</option><option value="4">4급</option><option value="5">5급</option><option value="6">6급</option></select></div>
+          <div class="rc-conv-wrap" style="flex:1.5;display:none;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">화수</div>
+            <input class="rc-conv-range inp" placeholder="예: 3~10, 15" oninput="updateCustomPreview()" style="width:100%;"></div>
+          <div class="rc-ids-wrap" style="flex:2;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">ID <span style="font-weight:400;opacity:.7;">(숫자·범위)</span></div>
+            <input class="rc-ids inp" placeholder="예: 1, 3~10, 15" oninput="updateCustomPreview()" style="width:100%;"></div>
+          <div style="flex:0 0 auto;"><div style="font-size:.62rem;color:var(--muted2);margin-bottom:3px;">포맷</div>
+            <div style="display:flex;gap:2px;">
+              <button class="rc-row-fmt active" data-fmt="youtube" onclick="toggleRowFmt(this)" style="padding:4px 7px;font-size:.62rem;border-radius:5px;border:1px solid var(--green);background:var(--green)22;color:var(--green);cursor:pointer;white-space:nowrap;">▶본편</button>
+              <button class="rc-row-fmt active" data-fmt="reels" onclick="toggleRowFmt(this)" style="padding:4px 7px;font-size:.62rem;border-radius:5px;border:1px solid var(--amber);background:var(--amber)22;color:var(--amber);cursor:pointer;white-space:nowrap;">⚡쇼츠</button>
+            </div></div>
+          <div style="width:28px;flex-shrink:0;"></div>
+        </div>
+      </div>
+      <button onclick="addTargetRow()" class="btn btn-m" style="font-size:.68rem;padding:5px 12px;margin-top:4px;">＋ 추가</button>
+    </div>
+    <div style="margin-bottom:12px;">
+      <div style="font-size:.62rem;color:var(--muted2);margin-bottom:6px;">단어 언어 <span style="color:var(--muted2);font-weight:400;">(복수 선택 가능)</span></div>
+      <div id="wc-rc-lang-btns" style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="rc-lang-btn active" data-lang="EN" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--blue);background:var(--blue)22;color:var(--blue);cursor:pointer;">🇺🇸 EN</button>
+        <button class="rc-lang-btn" data-lang="JP" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇯🇵 JP</button>
+        <button class="rc-lang-btn" data-lang="CN" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇨🇳 CN</button>
+        <button class="rc-lang-btn" data-lang="VN" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇻🇳 VN</button>
+        <button class="rc-lang-btn" data-lang="ES" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇪🇸 ES</button>
+        <button class="rc-lang-btn" data-lang="KO" onclick="toggleLangBtn(this)" style="padding:5px 12px;font-size:.72rem;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;">🇰🇷 KO</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:6px;">
+      <button id="wc-rc-target-desktop" onclick="setCustomTarget('desktop')" class="btn btn-p" style="flex:1;justify-content:center;font-size:.72rem;">💻 GPU</button>
+      <button id="wc-rc-target-nas" onclick="setCustomTarget('nas')" class="btn btn-m" style="flex:1;justify-content:center;font-size:.72rem;">🖥 NAS CPU</button>
+    </div>
+    <div id="wc-rc-time-est" style="font-size:.64rem;color:var(--muted2);margin-bottom:12px;"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span class="sec" style="margin:0;">미리보기</span>
+      <span id="wc-rc-remaining" style="font-size:.62rem;color:var(--muted2);"></span>
+    </div>
+    <div id="wc-rc-preview" style="margin-bottom:12px;max-height:300px;overflow-y:auto;"></div>
+    <div style="display:flex;gap:8px;">
+      <button id="wc-rc-start" onclick="startCustomRender()" class="btn btn-g" style="flex:1;justify-content:center;">▶ 렌더링 시작</button>
+      <button id="wc-rc-cancel" onclick="cancelRender()" class="btn btn-d" style="display:none;padding:0 16px;">✕ 취소</button>
+    </div>
+  </div>
+
+  <!-- ═══ [큐] 탭 ══════════════════════════════════════ -->
+  <div id="wt-panel-queue" style="display:none;">
+    <!-- 작업 큐 -->
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:.8rem;font-weight:700;">작업 큐</span>
+          <span id="wc-gq-count-badge" style="font-size:.65rem;color:var(--muted2);background:var(--bg3);padding:1px 8px;border-radius:10px;"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="wc-ql-desktop-status" style="font-size:.65rem;color:var(--muted2);"></span>
+          <button id="wc-ql-btn-desktop" onclick="setGlobalTarget('desktop')" class="btn btn-p" style="font-size:.68rem;padding:3px 10px;">💻 GPU</button>
+          <button id="wc-ql-btn-nas" onclick="setGlobalTarget('nas')" class="btn btn-m" style="font-size:.68rem;padding:3px 10px;">🖥 NAS</button>
+          <button onclick="cleanupQueue()" class="btn btn-m" style="font-size:.68rem;padding:3px 10px;" title="완료/실패 작업 정리">🗑 정리</button>
+        </div>
+      </div>
+      <div id="wc-global-queue-list">
+        <div style="font-size:.72rem;color:var(--muted2);text-align:center;padding:10px 0;">대기 중인 작업이 없습니다</div>
+      </div>
+    </div>
+    <!-- 렌더링 진행 -->
+    <div id="wc-live-summary" style="display:none;margin-bottom:12px;padding:12px;background:var(--bg3);border-radius:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span id="wc-live-status-label" style="font-size:.8rem;font-weight:700;color:var(--green);">대기 중</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="wc-live-timing" style="font-size:.62rem;color:var(--muted2);"></span>
+          <button id="wc-live-cancel-btn" onclick="cancelBatchRender()" style="display:none;font-size:.68rem;padding:3px 10px;border-radius:5px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-weight:600;">⏹ 취소</button>
+          <button onclick="clearBatchQueue()" style="font-size:.6rem;padding:2px 8px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;" title="진행 기록 지우기">✕ 지우기</button>
+        </div>
+      </div>
+      <div style="background:rgba(255,255,255,.08);border-radius:4px;height:8px;overflow:hidden;margin-bottom:6px;">
+        <div id="wc-live-pbar" style="height:100%;background:linear-gradient(90deg,#6366f1,#3fb950);border-radius:4px;width:0%;transition:width .4s;"></div>
+      </div>
+      <div style="display:flex;gap:16px;font-size:.66rem;color:var(--muted2);">
+        <span>✅ 완료: <b id="wc-live-done" style="color:var(--green);">0</b></span>
+        <span>⏳ 대기: <b id="wc-live-pending" style="color:var(--amber);">0</b></span>
+        <span>⟳ 진행: <b id="wc-live-running" style="color:#58a6ff;">0</b></span>
+        <span>✕ 실패: <b id="wc-live-failed" style="color:var(--red);">0</b></span>
+        <span>↷ 건너뜀: <b id="wc-live-skipped" style="color:var(--muted);">0</b></span>
+        <span style="margin-left:auto;">합계: <b id="wc-live-total">0</b></span>
+      </div>
+    </div>
+    <div id="wc-live-list" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;"></div>
+  </div>
+
+  <!-- ═══ [날짜별 이력] 패널 (사이드바에서 직접 접근) ══════════ -->
+  <div id="wt-panel-history" style="display:none;">
+    <input type="date" id="wc-date-pick" onchange="loadWcHistoryDate()" class="inp" style="width:100%;margin-bottom:12px;">
+    <div id="wc-history-list"></div>
+  </div>
+
+</div>
+
+<!-- ══ 렌더링 (통합 페이지 - 호환성 유지, 숨김) ═══════════ -->
+<div id="view-render" class="view" style="display:none!important;">
   <!-- 탭 내용: 배치 (일별 자동 시스템) -->
   <div id="rp-batch">
 
@@ -4312,53 +4594,9 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   <div id="yt-content"></div>
 </div>
 
-<!-- ══ YouTube 업로드 관리 ════════════════════════════════ -->
+<!-- ══ YouTube 업로드 현황 ════════════════════════════════ -->
 <div id="view-yt-upload" class="view">
-  <div class="bc"><span class="cur">📤 YouTube 업로드 관리</span></div>
-  <!-- 업로드 스케줄 설정 패널 -->
-  <div id="ytu-sched-panel" class="card" style="margin-bottom:12px;padding:14px 16px;">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span style="font-weight:700;font-size:.82rem;">⏱ 업로드 스케줄</span>
-      <!-- ON/OFF 토글 -->
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-        <div id="ytu-sched-toggle-wrap" onclick="ytSchedToggle()" style="width:44px;height:22px;border-radius:11px;background:#333;position:relative;cursor:pointer;transition:background .2s;">
-          <div id="ytu-sched-knob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
-        </div>
-        <span id="ytu-sched-status" style="font-size:.72rem;color:var(--muted);">OFF</span>
-      </label>
-      <!-- 간격 -->
-      <select id="ytu-sched-interval" class="inp" style="width:110px;">
-        <option value="1">매일</option>
-        <option value="2">격일</option>
-        <option value="3">3일마다</option>
-      </select>
-      <!-- 개수 -->
-      <label style="font-size:.75rem;color:var(--muted);">회당</label>
-      <input id="ytu-sched-count" type="number" min="1" max="10" value="2" class="inp" style="width:60px;">
-      <label style="font-size:.75rem;color:var(--muted);">개</label>
-      <!-- 언어 -->
-      <select id="ytu-sched-lang" class="inp" style="width:90px;">
-        <option value="">전체 언어</option>
-        <option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option>
-        <option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option>
-      </select>
-      <!-- 포맷 -->
-      <select id="ytu-sched-fmt" class="inp" style="width:100px;">
-        <option value="">전체 포맷</option>
-        <option value="youtube">▶ YouTube</option>
-        <option value="reels">📱 쇼츠</option>
-      </select>
-      <!-- 탭 -->
-      <select id="ytu-sched-tab" class="inp" style="width:80px;">
-        <option value="word">단어</option>
-        <option value="conv">회화</option>
-      </select>
-      <!-- 버튼 -->
-      <button onclick="ytSchedSave()" class="btn btn-m" style="font-size:.72rem;">저장</button>
-      <button id="ytu-sched-run-btn" onclick="ytSchedRun()" class="btn btn-g" style="font-size:.72rem;">▶ 지금 실행</button>
-      <span id="ytu-sched-last" style="font-size:.66rem;color:var(--muted);margin-left:auto;"></span>
-    </div>
-  </div>
+  <div class="bc"><span class="cur">📤 YouTube 업로드 현황</span></div>
   <!-- 필터 & 액션 바 -->
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
     <select id="ytu-lang" onchange="ytUploadFilter()" class="inp">
@@ -4672,6 +4910,7 @@ function nav(el,view){
   if(view.startsWith('exam:')) renderExamView(view.split(':')[1], {});
   if(view.startsWith('lang:') || view.startsWith('exam:')) loadNodeData(view);
   if(view==='render'){loadJobQueue();loadBatchData();loadLiveStatus();loadPhraseSituations();rpTab('batch');}
+  if(view==='work') loadWorkCenter();
   if(view==='conv'){loadConvThemes();loadPhraseSituations();cvTab('basic');}
   if(view==='videos') loadAllVideos();
   if(view==='youtube') loadYoutubeChannels();
@@ -4688,6 +4927,15 @@ function navRenderTab(el,tab){
   document.querySelectorAll('.s-item').forEach(i=>i.classList.remove('active'));
   if(el) el.classList.add('active');
   document.querySelectorAll('.view').forEach(v=>v.style.display='none');
+  // history 탭은 view-work의 날짜별 이력으로 연결
+  if(tab==='history'){
+    const target=document.getElementById('view-work');
+    if(target) target.style.display='block';
+    _currentView='work';
+    loadWorkCenter();
+    workTab('history');
+    return;
+  }
   const target=document.getElementById('view-render');
   if(target) target.style.display='block';
   _currentView='render';
@@ -4711,6 +4959,114 @@ function toggleSGroup(name){
   ch.classList.toggle('open');
   if(arr) arr.style.transform=ch.classList.contains('open')?'':'rotate(-90deg)';
 }
+
+// ── 영상 작업 센터 로드 ────────────────────────────────────
+function loadWorkCenter(){
+  loadBatchData();
+  loadJobQueue();
+  loadLiveStatus();
+  loadPhraseSituations();
+  loadYtSched();
+  workTab('today');
+  _syncWorkCenterFromBatch();
+}
+
+// ── 영상 작업 센터 탭 전환 ─────────────────────────────────
+let _wcLivePollTimer=null;
+function workTab(tab){
+  ['today','custom','queue','history'].forEach(t=>{
+    const btn=document.getElementById('wt-tab-'+t);
+    const pan=document.getElementById('wt-panel-'+t);
+    if(btn){btn.classList.toggle('on',t===tab);btn.classList.toggle('btn-g',t===tab);btn.classList.toggle('btn-m',t!==tab);}
+    if(pan) pan.style.display=(t===tab?'block':'none');
+  });
+  if(_wcLivePollTimer){clearInterval(_wcLivePollTimer);_wcLivePollTimer=null;}
+  if(tab==='queue'){
+    _wcSyncLiveStatus();
+    _wcLivePollTimer=setInterval(_wcSyncLiveStatus,2000);
+  }
+  if(tab==='history'){
+    const wcd=document.getElementById('wc-date-pick');
+    if(wcd){wcd.value=new Date().toISOString().slice(0,10);loadWcHistoryDate();}
+  }
+  if(tab==='today') _syncWorkCenterFromBatch();
+}
+
+// ── 날짜별 이력 (work 뷰용) ──────────────────────────────
+async function loadWcHistoryDate(){
+  const dp=document.getElementById('wc-date-pick');
+  if(!dp) return;
+  const date=dp.value;
+  const el=document.getElementById('wc-history-list');
+  if(!el) return;
+  el.innerHTML='<div style="font-size:.72rem;color:var(--muted2);">로딩 중…</div>';
+  try{
+    const r=await fetch('/api/batch/history?date='+date);
+    const d=await r.json();
+    const items=d.items||[];
+    if(!items.length){el.innerHTML='<div style="font-size:.72rem;color:var(--muted2);text-align:center;padding:16px;">해당 날짜에 기록이 없습니다</div>';return;}
+    el.innerHTML=items.map(it=>`<div class="card" style="margin-bottom:8px;padding:10px 14px;font-size:.74rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:600;">${it.word||it.phrase||it.id||''}</span>
+        <span style="font-size:.65rem;color:var(--muted2);">${it.lang||''} ${it.format||''}</span>
+      </div>
+      <div style="color:var(--muted);margin-top:3px;">${it.status||''} ${it.rendered_at||it.created_at||''}</div>
+    </div>`).join('');
+  }catch(e){el.innerHTML='<div style="font-size:.72rem;color:var(--red);">오류: '+e.message+'</div>';}
+}
+
+// ── 작업 센터 큐/라이브 상태 동기화 (wc- 엘리먼트 업데이트) ─
+async function _wcSyncLiveStatus(){
+  try{
+    const r=await fetch('/api/batch/today');
+    if(!r.ok) return;
+    const d=await r.json();
+    const bq=d.queue||{};
+    const items=bq.items||[];
+    const status=bq.status||'idle';
+    const summaryEl=document.getElementById('wc-live-summary');
+    if(status!=='running'&&bq.completed_at){
+      const age=Date.now()-new Date(bq.completed_at).getTime();
+      if(age>10*60*1000){if(summaryEl)summaryEl.style.display='none';return;}
+    }
+    if(items.length>0||status==='running'){
+      if(summaryEl) summaryEl.style.display='block';
+    }
+    const done=items.filter(i=>i.status==='done').length;
+    const pending=items.filter(i=>i.status==='pending').length;
+    const running=items.filter(i=>i.status==='running').length;
+    const failed=items.filter(i=>i.status==='failed').length;
+    const skipped=items.filter(i=>i.status==='skipped').length;
+    const total=items.length;
+    const setT=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+    setT('wc-live-done',done);setT('wc-live-pending',pending);setT('wc-live-running',running);
+    setT('wc-live-failed',failed);setT('wc-live-skipped',skipped);setT('wc-live-total',total);
+    const pbar=document.getElementById('wc-live-pbar');
+    if(pbar&&total>0) pbar.style.width=Math.round((done+skipped)/total*100)+'%';
+    const lbl=document.getElementById('wc-live-status-label');
+    if(lbl) lbl.textContent=status==='running'?'렌더링 중':status==='done'?'완료':'대기 중';
+    const cancelBtn=document.getElementById('wc-live-cancel-btn');
+    if(cancelBtn) cancelBtn.style.display=status==='running'?'inline-block':'none';
+  }catch(e){}
+}
+
+// ── 배치 데이터에서 작업 센터 카드 동기화 ────────────────────
+function _syncWorkCenterFromBatch(){
+  const langs=['EN','JP','CN','VN','ES'];
+  const flags={EN:'🇺🇸',JP:'🇯🇵',CN:'🇨🇳',VN:'🇻🇳',ES:'🇪🇸'};
+  ['wc-word-yt-langs','wc-word-reels-langs','wc-conv-yt-langs','wc-conv-reels-langs'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.innerHTML=langs.map(l=>`<div style="display:flex;align-items:center;justify-content:space-between;">
+      <span>${flags[l]||''} ${l}</span>
+      <span style="color:var(--muted2);">○ ○</span>
+    </div>`).join('');
+  });
+}
+
+// ── 업로드 스케줄 저장/실행 (work 센터용 — _getSchedEl이 wc-sched-* 우선 처리) ──
+function wcSchedSave(){ ytSchedSave(); }
+function wcSchedRun(){ ytSchedRun(); }
 
 // ── 회화 탭 전환 ─────────────────────────────────────────
 function cvTab(t){
@@ -5462,31 +5818,38 @@ let _ytuTab = 'word';
 
 let _ytSchedEnabled = false;
 
+// ── ytu-sched-* → wc-sched-* 엘리먼트 호환 헬퍼 ─────────────
+// ytu-sched-panel 제거 후 wc-sched-* 엘리먼트를 우선 사용
+function _getSchedEl(suffix){
+  return document.getElementById('wc-sched-'+suffix)||document.getElementById('ytu-sched-'+suffix);
+}
+
 async function loadYtSched(){
   try{
     const r=await fetch('/api/youtube/upload-schedule');
     const s=await r.json();
     _ytSchedEnabled=!!s.enabled;
-    document.getElementById('ytu-sched-interval').value=String(s.interval_days||1);
-    document.getElementById('ytu-sched-count').value=String(s.count||2);
-    document.getElementById('ytu-sched-lang').value=s.lang||'';
-    document.getElementById('ytu-sched-fmt').value=s.fmt||'';
-    document.getElementById('ytu-sched-tab').value=s.tab||'word';
+    const setVal=(suffix,v)=>{const e=_getSchedEl(suffix);if(e)e.value=String(v);};
+    setVal('interval',s.interval_days||1);
+    setVal('count',s.count||2);
+    setVal('lang',s.lang||'');
+    setVal('fmt',s.fmt||'');
+    setVal('tab',s.tab||'word');
     const last=s.last_run?`마지막 실행: ${s.last_run}`:'';
-    document.getElementById('ytu-sched-last').textContent=last;
+    const lastEl=_getSchedEl('last');
+    if(lastEl) lastEl.textContent=last;
     _ytSchedRenderToggle();
   }catch(e){}
 }
 
 function _ytSchedRenderToggle(){
-  const wrap=document.getElementById('ytu-sched-toggle-wrap');
-  const knob=document.getElementById('ytu-sched-knob');
-  const status=document.getElementById('ytu-sched-status');
+  const wrap=_getSchedEl('toggle-wrap');
+  const knob=_getSchedEl('knob');
+  const status=_getSchedEl('status');
   if(!wrap) return;
   wrap.style.background=_ytSchedEnabled?'var(--green)':'#333';
-  knob.style.left=_ytSchedEnabled?'24px':'2px';
-  status.textContent=_ytSchedEnabled?'ON':'OFF';
-  status.style.color=_ytSchedEnabled?'var(--green)':'var(--muted)';
+  if(knob) knob.style.left=_ytSchedEnabled?'24px':'2px';
+  if(status){status.textContent=_ytSchedEnabled?'ON':'OFF';status.style.color=_ytSchedEnabled?'var(--green)':'var(--muted)';}
 }
 
 function ytSchedToggle(){
@@ -5495,13 +5858,14 @@ function ytSchedToggle(){
 }
 
 async function ytSchedSave(){
+  const getVal=(suffix)=>{const e=_getSchedEl(suffix);return e?e.value:'';};
   const body={
     enabled:_ytSchedEnabled,
-    interval_days:parseInt(document.getElementById('ytu-sched-interval').value)||1,
-    count:parseInt(document.getElementById('ytu-sched-count').value)||2,
-    lang:document.getElementById('ytu-sched-lang').value,
-    fmt:document.getElementById('ytu-sched-fmt').value,
-    tab:document.getElementById('ytu-sched-tab').value,
+    interval_days:parseInt(getVal('interval'))||1,
+    count:parseInt(getVal('count'))||2,
+    lang:getVal('lang'),
+    fmt:getVal('fmt'),
+    tab:getVal('tab'),
   };
   try{
     await fetch('/api/youtube/upload-schedule',{method:'POST',
@@ -5511,13 +5875,14 @@ async function ytSchedSave(){
 }
 
 async function ytSchedRun(){
-  const btn=document.getElementById('ytu-sched-run-btn');
-  const count=parseInt(document.getElementById('ytu-sched-count').value)||2;
-  const lang=document.getElementById('ytu-sched-lang').value;
-  const fmt=document.getElementById('ytu-sched-fmt').value;
-  const tab=document.getElementById('ytu-sched-tab').value;
+  const btn=_getSchedEl('run-btn');
+  const getVal=(suffix)=>{const e=_getSchedEl(suffix);return e?e.value:'';};
+  const count=parseInt(getVal('count'))||2;
+  const lang=getVal('lang');
+  const fmt=getVal('fmt');
+  const tab=getVal('tab');
   if(!confirm(`지금 ${count}개 업로드 실행할까요?`)) return;
-  btn.disabled=true; btn.textContent='업로드 중...';
+  if(btn){btn.disabled=true; btn.textContent='업로드 중...';}
   try{
     const r=await fetch('/api/youtube/upload-run',{method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -5525,10 +5890,11 @@ async function ytSchedRun(){
     const d=await r.json();
     if(!r.ok){alert('오류: '+(d.error||''));return;}
     alert(`완료: ${d.done}개 업로드됨${d.errors?.length?' / 오류: '+d.errors.length+'건':''}`);
-    document.getElementById('ytu-sched-last').textContent=`마지막 실행: ${new Date().toISOString().slice(0,10)}`;
+    const lastEl=_getSchedEl('last');
+    if(lastEl) lastEl.textContent=`마지막 실행: ${new Date().toISOString().slice(0,10)}`;
     loadYtUpload();
   }catch(e){alert('실패: '+e);}
-  finally{btn.disabled=false; btn.textContent='▶ 지금 실행';}
+  finally{if(btn){btn.disabled=false; btn.textContent='▶ 지금 실행';}}
 }
 
 async function loadYtUpload(){
