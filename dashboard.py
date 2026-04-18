@@ -2728,6 +2728,26 @@ def api_render_upload():
     threading.Thread(target=_do_upload, daemon=True).start()
     return jsonify({"ok": True, "video_path": vpath})
 
+@app.route("/api/daily/upload-lang", methods=["POST"])
+def api_daily_upload_lang():
+    """오늘의 배치 — 언어별 수동 업로드"""
+    data  = request.get_json(silent=True) or {}
+    lang  = data.get("lang", "EN")
+    fmts  = data.get("fmts", ["youtube", "reels"])  # 업로드할 포맷 목록
+    s     = load_json(DAILY_AUTO_F, {})
+    wid   = s.get("current_word_id")
+    if not wid:
+        return jsonify({"error": "current_word_id 없음"}), 400
+    db   = get_words_db()
+    word = next((w for w in db if w["id"] == wid), None)
+    if not word:
+        return jsonify({"error": f"단어 {wid} 없음"}), 404
+    def _run():
+        for fmt in fmts:
+            _daily_upload_job(word, lang, fmt)
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "word_id": wid, "lang": lang, "fmts": fmts})
+
 @app.route("/api/video/delete", methods=["POST"])
 def api_video_delete():
     """단어 영상 삭제 — 파일 + videos_log 항목 제거"""
@@ -3922,7 +3942,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
         <thead><tr>
           <th>언어</th><th style="text-align:center;">본편</th>
           <th style="text-align:center;">쇼츠</th>
-          <th style="text-align:center;">업로드됨</th><th>예약 시간</th>
+          <th style="text-align:center;">업로드됨</th><th>예약 시간</th><th>액션</th>
         </tr></thead>
         <tbody id="daily-lang-tbody"></tbody>
       </table>
@@ -3944,6 +3964,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       </div>
       <div class="batch-action-row">
         <button id="rp-render-all" onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.74rem;">▶ 단어 렌더링</button>
+        <button id="rp-upload-all-btn" onclick="dailyUploadAll()" class="btn btn-m" style="flex:1;justify-content:center;font-size:.74rem;">⬆ 전체 업로드</button>
         <button id="rp-cancel-btn" onclick="cancelRender()" class="btn btn-d" style="display:none;font-size:.74rem;padding:0 12px;">✕ 취소</button>
       </div>
     </div>
@@ -6204,12 +6225,21 @@ async function loadDailyStatus(){
       ?`<span style="color:var(--green);font-weight:700;">✓</span> ${vidLink}${rlLink}`
       :`<span style="color:var(--muted2);">○</span>`;
     const schedCell=`<span style="font-size:.62rem;color:var(--muted2);">${ls.publish_local||ls.publish_at||'—'}</span>`;
+    // 업로드 버튼: 렌더링됐지만 아직 미업로드 시
+    const canUpload=(ytOk||rlOk)&&!ytUp;
+    const fmts=[];
+    if(ytOk&&!ls.youtube_uploaded) fmts.push('youtube');
+    if(rlOk&&!ls.reels_uploaded) fmts.push('reels');
+    const uploadBtn=canUpload
+      ?`<button onclick="dailyUploadLang('${lg}',${JSON.stringify(fmts)},this)" class="btn btn-g" style="font-size:.6rem;padding:2px 7px;">업로드</button>`
+      :(ytUp?`<span style="font-size:.6rem;color:var(--muted);">완료</span>`:'');
     return `<tr>
       <td>${_DAILY_FLAG[lg]||''} ${_DAILY_NAME[lg]||lg}</td>
       <td style="text-align:center;">${stCell(ytOk,isRend)}</td>
       <td style="text-align:center;">${stCell(rlOk,isRend)}</td>
       <td style="text-align:center;">${uplCell}</td>
       <td>${schedCell}</td>
+      <td style="text-align:center;">${uploadBtn}</td>
     </tr>`;
   }).join('');
   tbody.innerHTML=rows;
@@ -6251,6 +6281,44 @@ async function loadDailyStatus(){
 }
 
 const _DAILY_LANGS=['EN','CN','JP','VN','ES'];
+
+async function dailyUploadLang(lang, fmts, btnEl){
+  if(!confirm(`[${lang}] ${fmts.join('+')} 업로드할까요?`)) return;
+  if(btnEl){btnEl.disabled=true; btnEl.textContent='업로드 중...';}
+  try{
+    const r=await fetch('/api/daily/upload-lang',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lang, fmts: fmts||['youtube','reels']})});
+    const d=await r.json();
+    if(!r.ok){alert('오류: '+(d.error||''));if(btnEl){btnEl.disabled=false;btnEl.textContent='업로드';}return;}
+    if(btnEl){btnEl.textContent='완료';btnEl.style.color='var(--green)';}
+    setTimeout(()=>loadDailyStatus(),3000);
+  }catch(e){alert('실패: '+e);if(btnEl){btnEl.disabled=false;btnEl.textContent='업로드';}}
+}
+
+async function dailyUploadAll(){
+  const s=(_batchData||{}).status||{};
+  const langs=_DAILY_LANGS.filter(lg=>{
+    const ls=(s.langs||{})[lg]||{};
+    return (ls.youtube_rendered||ls.reels_rendered)&&!ls.youtube_uploaded;
+  });
+  if(!langs.length){alert('업로드할 영상이 없습니다.');return;}
+  if(!confirm(`${langs.join(', ')} (${langs.length}개 언어) 전체 업로드할까요?`)) return;
+  const btn=document.getElementById('rp-upload-all-btn');
+  if(btn){btn.disabled=true;btn.textContent='업로드 중...';}
+  for(const lang of langs){
+    const ls=(s.langs||{})[lang]||{};
+    const fmts=[];
+    if(ls.youtube_rendered&&!ls.youtube_uploaded) fmts.push('youtube');
+    if(ls.reels_rendered&&!ls.reels_uploaded) fmts.push('reels');
+    if(!fmts.length) continue;
+    await fetch('/api/daily/upload-lang',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lang,fmts})});
+  }
+  if(btn){btn.disabled=false;btn.textContent='⬆ 전체 업로드';}
+  setTimeout(()=>loadDailyStatus(),3000);
+}
 
 async function setDailyAuto(on){
   const slider=document.getElementById('daily-toggle-slider');
