@@ -2198,18 +2198,22 @@ def api_youtube_debug(lang):
 
 @app.route("/api/youtube/upload-status")
 def api_yt_upload_status():
-    """렌더링된 영상의 업로드 상태 조회 (단어 + 회화)"""
+    """렌더링된 영상의 업로드 상태 + YouTube 통계 조회"""
     def _norm(p):
         p = str(p).replace("\\", "/")
         if "/output/" in p:
             return OUTPUT_DIR + "/" + p.split("/output/", 1)[1]
         return p
 
-    # 업로드 완료 set 구성
+    # 업로드 완료 set + video_id 맵 구성
     uploads = load_json(UPLOADS_LOG, {"uploaded": []})
+    vid_map = {}       # (word_id, lang, fmt) -> video_id
     uploaded_pairs = set()
     for u in uploads.get("uploaded", []):
-        uploaded_pairs.add((u["word_id"], u.get("lang", "EN"), u.get("fmt", "youtube")))
+        k = (u["word_id"], u.get("lang", "EN"), u.get("fmt", "youtube"))
+        uploaded_pairs.add(k)
+        if u.get("video_id"):
+            vid_map[k] = u["video_id"]
 
     upload_all = load_json(f"{BASE}/logs/upload_all_done.json", {"uploaded_keys": []})
     for key in upload_all.get("uploaded_keys", []):
@@ -2223,12 +2227,50 @@ def api_yt_upload_status():
             except (ValueError, IndexError):
                 pass
 
+    # conv_log video_id 수집
+    conv_log = load_json(CONV_LOG_F, [])
+    conv_vid_map = {}  # (theme_id, lang, fmt) -> video_id
+    for c in conv_log:
+        if c.get("video_id"):
+            conv_vid_map[(str(c.get("theme_id")), c.get("lang","EN"), c.get("fmt","youtube"))] = c["video_id"]
+
+    # YouTube 통계 배치 조회
+    yt_stats = {}  # video_id -> {views, likes, comments}
+    all_vids = list(set(list(vid_map.values()) + list(conv_vid_map.values())))
+    yt_api_key = os.environ.get("YOUTUBE_API_KEY", "")
+    if all_vids and yt_api_key:
+        try:
+            from googleapiclient.discovery import build
+            yt_svc = build("youtube", "v3", developerKey=yt_api_key)
+            for i in range(0, len(all_vids), 50):
+                batch = [v for v in all_vids[i:i+50] if v]
+                if not batch:
+                    continue
+                resp = yt_svc.videos().list(part="statistics", id=",".join(batch)).execute()
+                for item in resp.get("items", []):
+                    s = item["statistics"]
+                    yt_stats[item["id"]] = {
+                        "views":    int(s.get("viewCount", 0)),
+                        "likes":    int(s.get("likeCount", 0)),
+                        "comments": int(s.get("commentCount", 0)),
+                    }
+        except Exception as e:
+            print(f"  [upload-status] YouTube stats 오류: {e}")
+
+    def _stats(video_id):
+        if not video_id:
+            return {}
+        return yt_stats.get(video_id, {})
+
     # 단어 영상
     word_videos = []
     for v in load_json(VIDEOS_LOG, []):
         wid = v["word_id"]
         lang = v.get("language", "EN")
         fmt = v.get("fmt", "youtube")
+        vid_key = (wid, lang, fmt)
+        video_id = vid_map.get(vid_key)
+        st = _stats(video_id)
         word_videos.append({
             "word_id": wid,
             "word": v.get("word", ""),
@@ -2238,13 +2280,20 @@ def api_yt_upload_status():
             "exam": v.get("exam", "TOPIK"),
             "fmt": fmt,
             "file_exists": os.path.exists(_norm(v.get("output_path", ""))),
-            "uploaded": (wid, lang, fmt) in uploaded_pairs,
+            "uploaded": vid_key in uploaded_pairs,
             "generated_at": v.get("generated_at", ""),
+            "video_id": video_id,
+            "views":    st.get("views"),
+            "likes":    st.get("likes"),
+            "comments": st.get("comments"),
         })
 
     # 회화 영상
     conv_videos = []
-    for c in load_json(CONV_LOG_F, []):
+    for c in conv_log:
+        video_id = c.get("video_id") or conv_vid_map.get(
+            (str(c.get("theme_id")), c.get("lang","EN"), c.get("fmt","youtube")))
+        st = _stats(video_id)
         conv_videos.append({
             "theme_id": c.get("theme_id"),
             "lang": c.get("lang", "EN"),
@@ -2252,6 +2301,10 @@ def api_yt_upload_status():
             "uploaded": c.get("uploaded", False),
             "file_exists": os.path.exists(_norm(c.get("video_path", ""))),
             "rendered_at": c.get("rendered_at", ""),
+            "video_id": video_id,
+            "views":    st.get("views"),
+            "likes":    st.get("likes"),
+            "comments": st.get("comments"),
         })
 
     return jsonify({"word_videos": word_videos, "conv_videos": conv_videos})
@@ -4162,7 +4215,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <div class="card" style="overflow-x:auto;padding:0;">
       <table>
         <thead><tr>
-          <th>언어</th><th>ID</th><th>단어</th><th>뜻</th><th>등급</th><th>포맷</th><th>파일</th><th>상태</th><th>액션</th>
+          <th>언어</th><th>ID</th><th>단어</th><th>뜻</th><th>등급</th><th>포맷</th><th>파일</th><th>상태</th><th style="text-align:right;">👁 조회</th><th style="text-align:right;">👍 좋아요</th><th style="text-align:right;">💬 댓글</th><th>액션</th>
         </tr></thead>
         <tbody id="ytu-word-tbody"></tbody>
       </table>
@@ -4173,7 +4226,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <div class="card" style="overflow-x:auto;padding:0;">
       <table>
         <thead><tr>
-          <th>언어</th><th>테마 ID</th><th>포맷</th><th>파일</th><th>상태</th><th>렌더링일</th><th>액션</th>
+          <th>언어</th><th>테마 ID</th><th>포맷</th><th>파일</th><th>상태</th><th>렌더링일</th><th style="text-align:right;">👁 조회</th><th style="text-align:right;">👍 좋아요</th><th style="text-align:right;">💬 댓글</th><th>액션</th>
         </tr></thead>
         <tbody id="ytu-conv-tbody"></tbody>
       </table>
@@ -5262,6 +5315,8 @@ function ytUploadFilter(){
   const fmt=document.getElementById('ytu-fmt')?.value||'';
   const status=document.getElementById('ytu-status')?.value||'pending';
   const ld=document.getElementById('ytu-loading');
+  const _LANG_FLAGS={'EN':'🇺🇸','JP':'🇯🇵','CN':'🇨🇳','VN':'🇻🇳','ES':'🇪🇸'};
+  const _fmtN=n=>(n==null?'<span style="color:#484f58;">—</span>':`<span style="color:var(--fg);">${n.toLocaleString()}</span>`);
 
   if(_ytuTab==='word'){
     let rows=(_ytuData.word_videos||[]);
@@ -5271,12 +5326,12 @@ function ytUploadFilter(){
     if(status==='uploaded') rows=rows.filter(v=>v.uploaded);
     document.getElementById('ytu-count').textContent=rows.length+'개';
     const tbody=document.getElementById('ytu-word-tbody');
-    const _LANG_FLAGS={'EN':'🇺🇸','JP':'🇯🇵','CN':'🇨🇳','VN':'🇻🇳','ES':'🇪🇸'};
     tbody.innerHTML=rows.map(v=>{
       const flag=_LANG_FLAGS[v.lang]||'';
       const fmtLabel=v.fmt==='reels'?'<span style="color:var(--purple,#a78bfa)">📱 쇼츠</span>':'<span style="color:var(--red)">▶ YouTube</span>';
       const fileIcon=v.file_exists?'<span style="color:var(--green)">●</span>':'<span style="color:var(--red)">✗</span>';
       const statusBadge=v.uploaded?'<span class="badge badge-g" style="font-size:.65rem;">완료</span>':'<span class="badge badge-m" style="font-size:.65rem;">대기</span>';
+      const vidLink=v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:var(--muted);font-size:.6rem;margin-left:3px;">↗</a>`:'';
       const btn=v.uploaded
         ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
         :v.file_exists
@@ -5285,12 +5340,15 @@ function ytUploadFilter(){
       return `<tr>
         <td>${flag} ${v.lang}</td>
         <td style="color:var(--muted);">${v.word_id}</td>
-        <td style="font-weight:700;">${v.word}</td>
+        <td style="font-weight:700;">${v.word}${vidLink}</td>
         <td style="color:var(--muted);font-size:.72rem;">${v.meaning||''}</td>
         <td>Lv.${v.level}</td>
         <td>${fmtLabel}</td>
         <td>${fileIcon}</td>
         <td>${statusBadge}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.views)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.likes)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.comments)}</td>
         <td>${btn}</td>
       </tr>`;
     }).join('');
@@ -5302,13 +5360,13 @@ function ytUploadFilter(){
     if(status==='uploaded') rows=rows.filter(v=>v.uploaded);
     document.getElementById('ytu-count').textContent=rows.length+'개';
     const tbody=document.getElementById('ytu-conv-tbody');
-    const _LANG_FLAGS={'EN':'🇺🇸','JP':'🇯🇵','CN':'🇨🇳','VN':'🇻🇳','ES':'🇪🇸'};
     tbody.innerHTML=rows.map(v=>{
       const flag=_LANG_FLAGS[v.lang]||'';
       const fmtLabel=v.fmt==='reels'?'<span style="color:var(--purple,#a78bfa)">📱 쇼츠</span>':'<span style="color:var(--red)">▶ YouTube</span>';
       const fileIcon=v.file_exists?'<span style="color:var(--green)">●</span>':'<span style="color:var(--red)">✗</span>';
       const statusBadge=v.uploaded?'<span class="badge badge-g" style="font-size:.65rem;">완료</span>':'<span class="badge badge-m" style="font-size:.65rem;">대기</span>';
       const dt=v.rendered_at?v.rendered_at.substring(0,10):'';
+      const vidLink=v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:var(--muted);font-size:.6rem;margin-left:3px;">↗</a>`:'';
       const btn=v.uploaded
         ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
         :v.file_exists
@@ -5316,11 +5374,14 @@ function ytUploadFilter(){
           :`<span style="font-size:.65rem;color:var(--red);">파일없음</span>`;
       return `<tr>
         <td>${flag} ${v.lang}</td>
-        <td style="font-weight:700;">${v.theme_id}</td>
+        <td style="font-weight:700;">${v.theme_id}${vidLink}</td>
         <td>${fmtLabel}</td>
         <td>${fileIcon}</td>
         <td>${statusBadge}</td>
         <td style="color:var(--muted);font-size:.72rem;">${dt}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.views)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.likes)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.comments)}</td>
         <td>${btn}</td>
       </tr>`;
     }).join('');
