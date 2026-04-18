@@ -264,7 +264,7 @@ def get_node_stats(category, exam=None, lang=None):
         return True
 
     gen = [v for v in videos if match(v)]
-    upl = [u for u in uploaded if match({"exam":u.get("exam","TOPIK"),"language":u.get("language","EN")})]
+    upl = [u for u in uploaded if match({"exam":u.get("exam","TOPIK"),"language":u.get("lang") or u.get("language","EN")})]
 
     db = get_db(category, exam or "TOPIK", lang or "EN")
     by_level = defaultdict(lambda:{"total":0,"generated":0,"uploaded":0,"min_id":None,"max_id":None})
@@ -376,6 +376,33 @@ def get_youtube_stats(video_ids):
 
 _LANG_FLAGS_YT = {"EN":"🇺🇸","JP":"🇯🇵","CN":"🇨🇳","VN":"🇻🇳","ES":"🇲🇽"}
 
+def _get_playlist_item_count(yt, playlist_id: str) -> int:
+    """플레이리스트의 영상 수 조회"""
+    try:
+        resp = yt.playlists().list(part="contentDetails", id=playlist_id).execute()
+        items = resp.get("items", [])
+        if items:
+            return int(items[0]["contentDetails"].get("itemCount", 0))
+    except Exception:
+        pass
+    return 0
+
+def _get_playlist_type_counts(yt, lang_playlists: dict) -> dict:
+    """본편/릴스/회화 플레이리스트 영상 수 집계"""
+    bonpyeon = 0
+    reels    = 0
+    phrase   = 0
+    for key, pid in lang_playlists.items():
+        if not pid:
+            continue
+        if key in ("shorts",):
+            reels += _get_playlist_item_count(yt, pid)
+        elif key in ("phrase",):
+            phrase += _get_playlist_item_count(yt, pid)
+        elif key.startswith("lv"):
+            bonpyeon += _get_playlist_item_count(yt, pid)
+    return {"bonpyeon": bonpyeon, "reels": reels, "phrase": phrase}
+
 def get_all_channel_stats():
     """언어별 OAuth 토큰으로 각 채널 통계 조회"""
     try:
@@ -387,25 +414,95 @@ def get_all_channel_stats():
     except Exception as e:
         return {"channels": [], "error": str(e)}
 
+    # 로컬 플레이리스트 캐시 로드
+    playlists_file = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "secrets", "youtube_playlists.json")
+    all_playlists = {}
+    if os.path.exists(playlists_file):
+        try:
+            with open(playlists_file, encoding="utf-8") as f:
+                all_playlists = json.load(f)
+        except Exception:
+            pass
+
+    def _get_yt_client_readonly(lang):
+        """토큰 저장 없이 YouTube 클라이언트 반환 (read-only FS 환경 대응)"""
+        import pickle as _pickle
+        from google.oauth2.credentials import Credentials as _Creds
+        from google.auth.transport.requests import Request as _Req
+        from googleapiclient.discovery import build as _build
+        token_path = uy._token_path_for_lang(lang)
+        with open(token_path, "rb") as f:
+            creds = _pickle.load(f)
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(_Req())
+            except Exception:
+                pass
+        return _build("youtube", "v3", credentials=creds)
+
     results = []
     for lang in ["EN", "JP", "CN", "VN", "ES"]:
         token_path = uy._token_path_for_lang(lang)
         if not os.path.exists(token_path):
             continue
         try:
-            yt = uy.get_youtube_client(lang)
-            ch = yt.channels().list(part="statistics,snippet", mine=True).execute()
+            yt = _get_yt_client_readonly(lang)
+            ch = yt.channels().list(
+                part="statistics,snippet,contentDetails", mine=True
+            ).execute()
             if ch.get("items"):
                 s    = ch["items"][0]["statistics"]
                 snip = ch["items"][0]["snippet"]
+                lang_playlists = all_playlists.get(lang, {})
+                type_counts = _get_playlist_type_counts(yt, lang_playlists) if lang_playlists else {}
+
+                # 채널 업로드 플레이리스트에서 실제 video_id 수집
+                uploads_pl = (ch["items"][0]
+                              .get("contentDetails", {})
+                              .get("relatedPlaylists", {})
+                              .get("uploads", ""))
+                video_ids = []
+                if uploads_pl:
+                    next_token = None
+                    while True:
+                        kwargs = dict(part="contentDetails", playlistId=uploads_pl, maxResults=50)
+                        if next_token:
+                            kwargs["pageToken"] = next_token
+                        pl_res = yt.playlistItems().list(**kwargs).execute()
+                        for item in pl_res.get("items", []):
+                            vid = item["contentDetails"].get("videoId")
+                            if vid:
+                                video_ids.append(vid)
+                        next_token = pl_res.get("nextPageToken")
+                        if not next_token:
+                            break
+
+                # 조회수는 채널 통계 사용 (Shorts 포함 정확)
+                # 좋아요/댓글은 개별 영상 합산
+                total_views    = int(s.get("viewCount", 0))
+                total_likes, total_comments = 0, 0
+                for i in range(0, len(video_ids), 50):
+                    batch = video_ids[i:i+50]
+                    vres = yt.videos().list(part="statistics", id=",".join(batch)).execute()
+                    for vitem in vres.get("items", []):
+                        vs = vitem.get("statistics", {})
+                        total_likes    += int(vs.get("likeCount", 0))
+                        total_comments += int(vs.get("commentCount", 0))
+
                 results.append({
                     "lang":        lang,
                     "flag":        _LANG_FLAGS_YT.get(lang, ""),
                     "name":        snip.get("title", lang),
                     "channel_id":  ch["items"][0]["id"],
                     "subscribers": int(s.get("subscriberCount", 0)),
-                    "views":       int(s.get("viewCount", 0)),
+                    "views":       total_views,
+                    "likes":       total_likes,
+                    "comments":    total_comments,
                     "video_count": int(s.get("videoCount", 0)),
+                    "bonpyeon":    type_counts.get("bonpyeon", 0),
+                    "reels":       type_counts.get("reels", 0),
+                    "phrase":      type_counts.get("phrase", 0),
                 })
         except Exception as e:
             results.append({"lang": lang, "flag": _LANG_FLAGS_YT.get(lang,""),
@@ -444,7 +541,7 @@ def get_batch_today():
         slot_vid_ids = {v["word_id"] for v in videos
                         if v.get("exam", "TOPIK") == exam and v.get("language", "EN") == lang}
         slot_upl_ids = {u["word_id"] for u in uploaded
-                        if u.get("exam", "TOPIK") == exam and u.get("language", "EN") == lang}
+                        if u.get("exam", "TOPIK") == exam and (u.get("lang") or u.get("language", "EN")) == lang}
         word  = get_next_word_for_slot(exam, lang, level)
         # 같은 슬롯 조합에서 이미 선택된 단어면 다음으로
         if word and (exam, lang, level, word["id"]) in seen_keys:
@@ -694,10 +791,12 @@ def _run_gq_job(job):
                     if j_check and j_check["status"] == "done":
                         tid  = str(params.get("theme_id"))
                         lang = params.get("lang", "EN")
-                        vp   = f"{OUTPUT_DIR}/conversation/{lang}/conv_{tid}_{lang}.mp4"
+                        fmt  = params.get("fmt", "youtube")
+                        fmt_suffix = "_reels" if fmt == "reels" else ""
+                        vp   = f"{OUTPUT_DIR}/conversation/{lang}/conv_{tid}_{lang}{fmt_suffix}.mp4"
                         clog = load_conv_log()
-                        clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang)]
-                        clog.append({"theme_id": tid, "lang": lang, "video_path": vp,
+                        clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
+                        clog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
                                      "rendered_at": datetime.now().isoformat(), "uploaded": False})
                         save_conv_log(clog)
                 return
@@ -708,6 +807,8 @@ def _run_gq_job(job):
                        "--theme", str(params.get("theme_id")),
                        "--lang", params.get("lang", "EN"),
                        "--output", OUTPUT_DIR]
+                if params.get("fmt") == "reels":
+                    cmd += ["--format", "reels"]
             elif jtype == "phrase_video":
                 cmd = [sys.executable, "/app/make_video_phrases.py",
                        "--db", PHRASE_DB_F, "--output", PHRASE_VIDEO_DIR]
@@ -753,10 +854,12 @@ def _run_gq_job(job):
                 if jtype == "conv_video":
                     tid  = str(params.get("theme_id"))
                     lang = params.get("lang", "EN")
-                    vp   = f"{OUTPUT_DIR}/conversation/{lang}/conv_{tid}_{lang}.mp4"
+                    fmt  = params.get("fmt", "youtube")
+                    fmt_suffix = "_reels" if fmt == "reels" else ""
+                    vp   = f"{OUTPUT_DIR}/conversation/{lang}/conv_{tid}_{lang}{fmt_suffix}.mp4"
                     clog = load_conv_log()
-                    clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang)]
-                    clog.append({"theme_id": tid, "lang": lang, "video_path": vp,
+                    clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
+                    clog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
                                  "rendered_at": datetime.now().isoformat(), "uploaded": False})
                     save_conv_log(clog)
             else:
@@ -983,7 +1086,7 @@ def run_render_nas(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube"
         print(f"  [NAS render ERROR] {e}")
         return False
 
-def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None):
+def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None, fmt="youtube"):
     """렌더링 완료된 영상을 YouTube에 업로드"""
     try:
         sys.path.insert(0, os.path.dirname(__file__) or "/app")
@@ -1035,6 +1138,7 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None):
             "word": word["word"],
             "meaning": word.get("meaning", ""),
             "lang": lang,
+            "fmt": fmt,
             "video_id": video_id,
             "youtube_url": f"https://youtube.com/watch?v={video_id}",
             "scheduled_at": publish_at.isoformat() if publish_at else None,
@@ -1186,10 +1290,11 @@ def run_phrase_video_bg(sit_id: int | None, start: int | None, end: int | None):
     _phrase_video_thread.start()
     return True, "영상 생성 시작"
 
-def run_conv_upload(theme_id: str, lang: str):
+def run_conv_upload(theme_id: str, lang: str, fmt: str = "youtube"):
     """회화 영상 YouTube 업로드"""
     try:
-        video_path = f"{OUTPUT_DIR}/conversation/{lang}/conv_{theme_id}_{lang}.mp4"
+        suffix = "_reels" if fmt == "reels" else ""
+        video_path = f"{OUTPUT_DIR}/conversation/{lang}/conv_{theme_id}_{lang}{suffix}.mp4"
         if not os.path.exists(video_path):
             return None, "영상 파일이 없습니다 — 먼저 렌더링하세요"
 
@@ -1226,10 +1331,12 @@ def run_conv_upload(theme_id: str, lang: str):
         tags = _CONV_TAGS.get(lang, _CONV_TAGS["EN"])
         tags_str = ",".join(t for t in tags if t)[:490]
 
+        shorts_suffix = " #Shorts" if fmt == "reels" else ""
+        shorts_tags = (tags_str + ",Shorts,Korean Shorts")[:490] if fmt == "reels" else tags_str
         metadata = {
-            "title": f"{emoji} {search_title}",
+            "title": f"{emoji} {search_title}{shorts_suffix}",
             "description": f"{hook}\n\n{ko_title} | Korean Conversation Series\n\n#한국어 #Korean #{lang}",
-            "tags": tags_str,
+            "tags": shorts_tags,
             "categoryId": "27",
             "privacyStatus": "public",
         }
@@ -1243,6 +1350,7 @@ def run_conv_upload(theme_id: str, lang: str):
             "type": "conversation",
             "theme_id": theme_id,
             "lang": lang,
+            "fmt": fmt,
             "video_id": video_id,
             "youtube_url": f"https://youtube.com/watch?v={video_id}",
             "uploaded_at": datetime.now().isoformat(),
@@ -1252,7 +1360,7 @@ def run_conv_upload(theme_id: str, lang: str):
         # conv_log 업데이트
         clog = load_conv_log()
         for e in clog:
-            if e.get("theme_id") == theme_id and e.get("lang") == lang:
+            if e.get("theme_id") == theme_id and e.get("lang") == lang and e.get("fmt", "youtube") == fmt:
                 e["uploaded"] = True
                 e["video_id"] = video_id
         save_conv_log(clog)
@@ -1445,99 +1553,233 @@ def _daily_upload_job(word: dict, lang: str, fmt: str):
         if vid: s["langs"][lang][kv] = vid
         save_json(DAILY_AUTO_F, s)
 
+def _is_schedule_day(today: str, start_date: str, interval: int) -> bool:
+    """기준일로부터 interval일 주기에 해당하는 날인지 확인"""
+    try:
+        d0 = datetime.strptime(start_date, "%Y-%m-%d")
+        dt = datetime.strptime(today, "%Y-%m-%d")
+        return dt >= d0 and (dt - d0).days % interval == 0
+    except Exception:
+        return True
+
+def _next_lv1_word_ids(current_id: int, count: int) -> list:
+    """오늘 처리할 단어 ID 목록 (count개)"""
+    ids, last = [], current_id
+    for _ in range(count):
+        last = _next_lv1_word_id(last)
+        ids.append(last)
+    return ids
+
 def _daily_auto_tick():
     global _daily_rendering, _phrase_rendering
     try:
         s = load_json(DAILY_AUTO_F, {})
         today = datetime.now().strftime("%Y-%m-%d")
-        if s.get("today") != today:
-            next_id = _next_lv1_word_id(s.get("current_word_id", 0))
 
-            # 회화 이틀 주기 확인
+        # ── 설정값 읽기 ───────────────────────────────────────
+        word_freq      = s.get("word_freq",          "daily")
+        word_render    = s.get("word_render",         "auto")
+        word_illust    = s.get("word_illust",         "auto")
+        word_prebuf    = int(s.get("word_prebuffer_h", 2))
+        phrase_freq    = s.get("phrase_freq",         "every2days")
+        phrase_render  = s.get("phrase_render",       "auto")
+        phrase_illust  = s.get("phrase_illust",       "auto")
+        phrase_prebuf  = int(s.get("phrase_prebuffer_h", 2))
+        auto_start     = s.get("auto_start_date",     "")
+
+        # ── 기준일 체크: 시작일 이전이면 자동 실행 안 함 ─────
+        if auto_start:
+            try:
+                if datetime.strptime(today, "%Y-%m-%d") < datetime.strptime(auto_start, "%Y-%m-%d"):
+                    return
+            except Exception:
+                pass
+
+        # ── 단어 주기/개수 계산 ──────────────────────────────
+        _wint = {"daily":1,"every2days":2,"every3days":3,"2perday":1,"3perday":1}
+        _wcnt = {"daily":1,"every2days":1,"every3days":1,"2perday":2,"3perday":3}
+        word_interval  = _wint.get(word_freq, 1)
+        word_count     = _wcnt.get(word_freq, 1)
+        word_day       = _is_schedule_day(today, auto_start or today, word_interval)
+
+        # ── 날짜 전환 처리 ────────────────────────────────────
+        if s.get("today") != today:
+            # 단어 오늘의 ID 목록
+            last_id = s.get("current_word_id", 0)
+            if word_day:
+                word_ids = _next_lv1_word_ids(last_id, word_count)
+            else:
+                word_ids = s.get("current_word_ids", [last_id] if last_id else [])
+            next_id  = word_ids[0] if word_ids else last_id
+
+            # 회화 주기 확인
+            _freq_map = {"daily":1,"every2days":2,"every3days":3}
+            phrase_interval = _freq_map.get(phrase_freq, 2)
             last_phrase_date = s.get("phrase_last_date", "")
             phrase_due = False
             if last_phrase_date:
                 try:
-                    delta = (datetime.strptime(today, "%Y-%m-%d") -
-                             datetime.strptime(last_phrase_date, "%Y-%m-%d")).days
-                    phrase_due = delta >= 2
+                    delta = (datetime.strptime(today,"%Y-%m-%d") -
+                             datetime.strptime(last_phrase_date,"%Y-%m-%d")).days
+                    phrase_due = (delta >= phrase_interval and
+                                  _is_schedule_day(today, auto_start or today, phrase_interval))
                 except Exception:
                     phrase_due = True
             else:
-                phrase_due = True  # 최초 실행
+                phrase_due = True
 
-            # 회화 due면 다음 상황 ID 설정
             if phrase_due:
                 next_sit = _next_sit_id(s.get("current_sit_id", 0))
             else:
                 next_sit = s.get("current_sit_id", 1)
 
-            s = {"auto_upload":       s.get("auto_upload", False),
-                 "current_word_id":   next_id,
-                 "today":             today,
-                 "illust_done":       False,
-                 "langs":             _daily_init_langs(),
+            s = {"auto_upload":        s.get("auto_upload", False),
+                 "current_word_id":    next_id,
+                 "current_word_ids":   word_ids,
+                 "today":              today,
+                 "word_day":           word_day,
+                 "illust_done":        False,
+                 "langs":              _daily_init_langs(),
+                 # 설정값 유지
+                 "word_freq":          word_freq,
+                 "word_render":        word_render,
+                 "word_illust":        word_illust,
+                 "word_prebuffer_h":   word_prebuf,
+                 "phrase_freq":        phrase_freq,
+                 "phrase_render":      phrase_render,
+                 "phrase_illust":      phrase_illust,
+                 "phrase_prebuffer_h": phrase_prebuf,
+                 "auto_start_date":    auto_start,
                  # 회화 관련 유지
-                 "current_sit_id":    next_sit,
-                 "phrase_last_date":  s.get("phrase_last_date", ""),
-                 "phrase_due":        phrase_due,
-                 "phrase_rendered":   False,
-                 "phrase_langs":      {lg: {"uploaded": False} for lg in DAILY_LANGS}
-                                      if phrase_due else s.get("phrase_langs", {}),
+                 "current_sit_id":     next_sit,
+                 "phrase_last_date":   s.get("phrase_last_date", ""),
+                 "phrase_due":         phrase_due,
+                 "phrase_rendered":    False,
+                 "phrase_langs":       {lg: {"uploaded": False} for lg in DAILY_LANGS}
+                                       if phrase_due else s.get("phrase_langs", {}),
                  }
             save_json(DAILY_AUTO_F, s)
-        if not s.get("auto_upload"): return
-        word_id = s.get("current_word_id")
-        if not word_id: return
-        # 일러스트 확인
-        if not s.get("illust_done"):
-            if _illust_exists_for(word_id):
-                s["illust_done"] = True; save_json(DAILY_AUTO_F, s)
-            # 없으면 이미 실행 중이 아닐 때만 생성 요청
-            elif _illust_proc is None:
-                threading.Thread(target=run_illustration_generation,
-                    args=(word_id, word_id), kwargs={"mode":"both"}, daemon=True).start()
-            return
-        if _daily_rendering: return
-        db = get_words_db()
-        word = next((w for w in db if w["id"] == word_id), None)
-        if not word: return
-        # 렌더링 (언어별 youtube → reels 순)
-        for lg in DAILY_LANGS:
-            ls = s["langs"].get(lg, {})
-            for fmt in ("youtube", "reels"):
-                key = f"{fmt}_rendered"
-                if not ls.get(key):
-                    with _daily_render_lock:
-                        if _daily_rendering: return
-                        _daily_rendering = True
-                    threading.Thread(target=_daily_render_job,
-                        args=(word_id, lg, fmt), daemon=True).start()
-                    return
-        # 업로드
-        for lg in DAILY_LANGS:
-            ls = s["langs"].get(lg, {})
-            for fmt in ("youtube", "reels"):
-                if ls.get(f"{fmt}_rendered") and not ls.get(f"{fmt}_uploaded"):
-                    threading.Thread(target=_daily_upload_job,
-                        args=(word, lg, fmt), daemon=True).start()
-                    time.sleep(1)
 
-        # ── 회화 이틀 주기 처리 ──────────────────────────────
+        if not s.get("auto_upload"): return
+
+        # ── 단어: 오늘이 배치 실행일인지 확인 ────────────────
+        if not s.get("word_day", True): goto_phrase = True
+        else:
+            goto_phrase = False
+            word_ids = s.get("current_word_ids") or [s.get("current_word_id")]
+            word_ids = [wid for wid in word_ids if wid]
+            if not word_ids: goto_phrase = True
+
+        if not goto_phrase:
+            # ── 단어 사전 제작 시간 체크 ──────────────────────
+            now_utc = datetime.now(timezone.utc)
+            earliest_pub = None
+            for lg in DAILY_LANGS:
+                raw = s.get("langs", {}).get(lg, {}).get("publish_at", "")
+                if raw:
+                    try:
+                        p = datetime.fromisoformat(raw.replace("Z","+00:00"))
+                        if earliest_pub is None or p < earliest_pub:
+                            earliest_pub = p
+                    except Exception: pass
+            if earliest_pub and now_utc < earliest_pub - timedelta(hours=word_prebuf):
+                goto_phrase = True  # 아직 사전 제작 시간 아님 → 회화 처리로 넘어감
+
+        if not goto_phrase:
+            # ── 단어 일러스트 확인 ────────────────────────────
+            word_id = word_ids[0]
+            illust_mode = word_illust
+            if not s.get("illust_done"):
+                if _illust_exists_for(word_id):
+                    s["illust_done"] = True; save_json(DAILY_AUTO_F, s)
+                elif illust_mode in ("auto", "auto_if_missing"):
+                    if _illust_proc is None:
+                        threading.Thread(target=run_illustration_generation,
+                            args=(word_id, word_id), kwargs={"mode":"both"}, daemon=True).start()
+                    return
+                # manual: 일러스트 없어도 진행 가능
+
+            if _daily_rendering: return
+            db = get_words_db()
+
+            # ── 각 단어 ID에 대해 렌더링 ─────────────────────
+            for wid in word_ids:
+                word = next((w for w in db if w["id"] == wid), None)
+                if not word: continue
+                lv = word.get("level", 1)
+                sub = "video"
+                vpath = f"/app/output/TOPIK/EN/lv{lv}/{sub}/topik_{wid:04d}_{word['word']}_EN.mp4"
+                for lg in DAILY_LANGS:
+                    lang_key = f"word_{wid}_{lg}"
+                    ls = s["langs"].get(lg, {})
+                    for fmt in ("youtube", "reels"):
+                        rkey = f"{fmt}_rendered"
+                        # auto_if_missing: 이미 파일이 있으면 렌더링 스킵
+                        if word_render == "auto_if_missing":
+                            sub2 = "reels" if fmt == "reels" else "video"
+                            suf2 = "_reels" if fmt == "reels" else ""
+                            ep = f"/app/output/TOPIK/{lg}/lv{lv}/{sub2}/topik_{wid:04d}_{word['word']}_{lg}{suf2}.mp4"
+                            if os.path.exists(ep):
+                                if not ls.get(rkey):
+                                    s["langs"][lg][rkey] = True
+                                    save_json(DAILY_AUTO_F, s)
+                                continue
+                        if not ls.get(rkey) and word_render != "manual":
+                            with _daily_render_lock:
+                                if _daily_rendering: return
+                                _daily_rendering = True
+                            threading.Thread(target=_daily_render_job,
+                                args=(wid, lg, fmt), daemon=True).start()
+                            return
+
+            # ── 단어 업로드 ───────────────────────────────────
+            for wid in word_ids:
+                word = next((w for w in db if w["id"] == wid), None)
+                if not word: continue
+                for lg in DAILY_LANGS:
+                    ls = s["langs"].get(lg, {})
+                    for fmt in ("youtube", "reels"):
+                        if ls.get(f"{fmt}_rendered") and not ls.get(f"{fmt}_uploaded"):
+                            threading.Thread(target=_daily_upload_job,
+                                args=(word, lg, fmt), daemon=True).start()
+                            time.sleep(1)
+
+        # ── 회화 주기 처리 ───────────────────────────────────
         if s.get("phrase_due") and s.get("auto_upload"):
             sit_id = s.get("current_sit_id")
             if sit_id:
+                p_render = s.get("phrase_render", "auto")
+                # 회화 사전 제작 시간 체크
+                now_utc = datetime.now(timezone.utc)
+                phrase_prebuf_val = int(s.get("phrase_prebuffer_h", 2))
+                earliest_ppub = None
+                for lg in DAILY_LANGS:
+                    raw = s.get("langs", {}).get(lg, {}).get("publish_at","")
+                    if raw:
+                        try:
+                            p = datetime.fromisoformat(raw.replace("Z","+00:00"))
+                            if earliest_ppub is None or p < earliest_ppub:
+                                earliest_ppub = p
+                        except Exception: pass
+                if earliest_ppub and now_utc < earliest_ppub - timedelta(hours=phrase_prebuf_val):
+                    return  # 회화 사전 제작 시간 아직 안 됨
+
                 # 렌더링 확인
                 if not s.get("phrase_rendered"):
-                    if _phrase_video_exists(sit_id):
+                    video_exists = _phrase_video_exists(sit_id)
+                    if video_exists or p_render == "auto_if_missing" and video_exists:
                         s["phrase_rendered"] = True
                         save_json(DAILY_AUTO_F, s)
-                    elif not _phrase_rendering:
+                    elif video_exists:
+                        s["phrase_rendered"] = True
+                        save_json(DAILY_AUTO_F, s)
+                    elif p_render in ("auto", "auto_if_missing") and not _phrase_rendering:
                         with _phrase_render_lock:
                             if not _phrase_rendering:
                                 _phrase_rendering = True
                         threading.Thread(target=_phrase_render_job,
                             args=(sit_id,), daemon=True).start()
+                    # manual이면 렌더링 기다리지 않음
                 # 업로드 (렌더링 완료 후, 아직 안 한 언어 있으면)
                 elif not all(s.get("phrase_langs", {}).get(lg, {}).get("uploaded")
                              for lg in DAILY_LANGS):
@@ -1555,7 +1797,7 @@ def _daily_auto_tick():
 
 def _daily_scheduler_loop():
     while True:
-        time.sleep(60)
+        time.sleep(300)
         _daily_auto_tick()
 
 threading.Thread(target=_daily_scheduler_loop, daemon=True).start()
@@ -1625,14 +1867,14 @@ def api_videos_all():
     """영상 목록 탭 전용 — 모든 언어/시험 통합"""
     videos = get_videos_log()
     uploaded, _ = get_uploads()
-    upl_map = {(u.get("word_id"), u.get("language","EN"), u.get("exam","TOPIK")): u for u in uploaded}
+    upl_map = {(u.get("word_id"), u.get("lang") or u.get("language","EN"), u.get("exam","TOPIK"), u.get("fmt","youtube")): u for u in uploaded}
     result = []
     for v in sorted(videos, key=lambda x: (x.get("exam",""), x.get("language",""), x.get("word_id",0))):
-        key = (v["word_id"], v.get("language","EN"), v.get("exam","TOPIK"))
-        ul = upl_map.get(key)
         # fmt 필드: 신규 로그는 직접, 구형 로그는 output_path로 추론
         _path = v.get("output_path", "")
         _fmt = v.get("fmt") or ("reels" if "/reels/" in _path or "_reels" in _path else "youtube")
+        key = (v["word_id"], v.get("language","EN"), v.get("exam","TOPIK"), _fmt)
+        ul = upl_map.get(key)
         result.append({
             "word_id":      v["word_id"],
             "word":         v.get("word",""),
@@ -1662,7 +1904,7 @@ def api_node():
     videos = get_videos_log()
     uploaded, _ = get_uploads()
     upl_map = {u["word_id"]:u for u in uploaded
-               if (not exam or u.get("exam","TOPIK") == exam) and (not lang or u.get("language","EN") == lang)}
+               if (not exam or u.get("exam","TOPIK") == exam) and (not lang or (u.get("lang") or u.get("language","EN")) == lang)}
     vid_map = {v["word_id"]:v for v in videos
                if (not exam or v.get("exam","TOPIK") == exam) and (not lang or v.get("language","EN") == lang)}
     db = get_db(cat, exam or "TOPIK", lang or "EN")
@@ -1712,8 +1954,12 @@ def api_global_queue():
                 bq = load_json(BATCH_QUEUE_F, {})
                 total = bq.get("total", 1) or 1
                 current = bq.get("current", 0)
-                job["pct"] = int(current / total * 100)
-                job["step"] = f"{current}/{total}"
+                # progress.json 에서 현재 항목 내부 진행률 반영
+                p = load_json(PROGRESS_F, {})
+                sub_pct = p.get("pct", 0) if p.get("status") == "running" else 0
+                job["pct"] = min(int((current + sub_pct / 100) / total * 100), 99)
+                sub_step = p.get("step", "") if sub_pct > 0 else ""
+                job["step"] = f"{current}/{total}" + (f" — {sub_step}" if sub_step else "")
                 job["batch_items"] = bq.get("items", [])
             elif job["type"] == "illust":
                 if job.get("target") == "desktop":
@@ -1782,7 +2028,14 @@ def api_global_queue():
                 p = load_json(PROGRESS_F, {})
                 if p.get("status") == "running":
                     job["pct"] = p.get("pct", 0)
-                    job["step"] = p.get("step", "")
+                    step = p.get("step", "")
+                    frame = p.get("frame")
+                    total_frames = p.get("total_frames")
+                    if frame is not None and total_frames:
+                        step = f"{step} [{frame}/{total_frames}f]"
+                    job["step"] = step
+                    job["frame"] = frame
+                    job["total_frames"] = total_frames
     cfg = get_render_config()
     return jsonify({
         "jobs": jobs,
@@ -1804,26 +2057,37 @@ def api_cancel_job(job_id):
         job["completed_at"] = datetime.now().isoformat()
         save_global_queue(q)
         return jsonify({"status": "cancelled"})
-    if job["status"] == "running" and _gq_active_job_id == job_id:
+    if job["status"] == "running":
         _gq_cancel_requested = True
         job["status"] = "cancelled"
         job["completed_at"] = datetime.now().isoformat()
         save_global_queue(q)
-        # 실행 중인 프로세스 종료
-        for proc in [_nas_proc, _illust_proc, _gq_active_proc]:
-            if proc and proc.poll() is None:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=5)
-                except Exception:
-                    try: proc.kill()
-                    except Exception: pass
+        # NAS 프로세스 종료 (NAS 실행 잡인 경우)
+        if _gq_active_job_id == job_id:
+            for proc in [_nas_proc, _illust_proc, _gq_active_proc]:
+                if proc and proc.poll() is None:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=5)
+                    except Exception:
+                        try: proc.kill()
+                        except Exception: pass
+        # 데스크탑 렌더링 취소 신호: render_queue.json 상태를 cancelled로 변경
+        rq = load_json(QUEUE_FILE, {})
+        if rq.get("status") in ("pending", "claimed"):
+            rq["status"] = "cancelled"
+            rq["error"] = "cancelled"
+            rq["completed_at"] = datetime.now().isoformat()
+            save_json(QUEUE_FILE, rq)
         # batch_queue.json도 취소 처리
         bq = load_json(BATCH_QUEUE_F, {})
         if bq.get("status") == "running":
             bq["status"] = "cancelled"
             bq["completed_at"] = datetime.now().isoformat()
             save_json(BATCH_QUEUE_F, bq)
+        # progress.json 즉시 idle로 리셋 (녹색 불 유지 방지)
+        save_json(PROGRESS_F, {"status": "idle", "step": "", "pct": 0,
+                               "updated_at": datetime.now().isoformat()})
         return jsonify({"status": "cancelled"})
     return jsonify({"status": "nothing_to_cancel"})
 
@@ -1898,6 +2162,99 @@ def api_set_job_target(job_id):
 @app.route("/api/youtube/channels")
 def api_youtube_channels():
     return jsonify(get_all_channel_stats())
+
+@app.route("/api/youtube/debug/<lang>")
+def api_youtube_debug(lang):
+    """채널 원시 통계 디버그 (viewCount, video stats 비교)"""
+    try:
+        import importlib.util, pickle as _pickle
+        spec = importlib.util.spec_from_file_location("upload_youtube",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "upload_youtube.py"))
+        uy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(uy)
+        from google.auth.transport.requests import Request as _Req
+        from googleapiclient.discovery import build as _build
+        token_path = uy._token_path_for_lang(lang.upper())
+        with open(token_path, "rb") as f:
+            creds = _pickle.load(f)
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(_Req())
+        yt = _build("youtube", "v3", credentials=creds)
+        ch = yt.channels().list(part="statistics,snippet,contentDetails", mine=True).execute()
+        ch_stats = ch["items"][0]["statistics"] if ch.get("items") else {}
+        uploads_pl = (ch["items"][0].get("contentDetails",{}).get("relatedPlaylists",{}).get("uploads","") if ch.get("items") else "")
+        video_ids = []
+        if uploads_pl:
+            pl_res = yt.playlistItems().list(part="contentDetails", playlistId=uploads_pl, maxResults=5).execute()
+            video_ids = [it["contentDetails"]["videoId"] for it in pl_res.get("items",[]) if it.get("contentDetails",{}).get("videoId")]
+        video_stats = []
+        if video_ids:
+            vres = yt.videos().list(part="statistics,snippet", id=",".join(video_ids)).execute()
+            for v in vres.get("items",[]):
+                video_stats.append({"id": v["id"], "title": v["snippet"]["title"][:50], "stats": v.get("statistics",{})})
+        return jsonify({"channel_stats": ch_stats, "first_videos": video_stats})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/youtube/upload-status")
+def api_yt_upload_status():
+    """렌더링된 영상의 업로드 상태 조회 (단어 + 회화)"""
+    def _norm(p):
+        p = str(p).replace("\\", "/")
+        if "/output/" in p:
+            return OUTPUT_DIR + "/" + p.split("/output/", 1)[1]
+        return p
+
+    # 업로드 완료 set 구성
+    uploads = load_json(UPLOADS_LOG, {"uploaded": []})
+    uploaded_pairs = set()
+    for u in uploads.get("uploaded", []):
+        uploaded_pairs.add((u["word_id"], u.get("lang", "EN"), u.get("fmt", "youtube")))
+
+    upload_all = load_json(f"{BASE}/logs/upload_all_done.json", {"uploaded_keys": []})
+    for key in upload_all.get("uploaded_keys", []):
+        parts = key.split("_")
+        if len(parts) >= 3:
+            try:
+                wid = int(parts[0])
+                fmt_k = parts[-1]
+                lang_k = parts[-2]
+                uploaded_pairs.add((wid, lang_k, fmt_k))
+            except (ValueError, IndexError):
+                pass
+
+    # 단어 영상
+    word_videos = []
+    for v in load_json(VIDEOS_LOG, []):
+        wid = v["word_id"]
+        lang = v.get("language", "EN")
+        fmt = v.get("fmt", "youtube")
+        word_videos.append({
+            "word_id": wid,
+            "word": v.get("word", ""),
+            "meaning": v.get("meaning", ""),
+            "lang": lang,
+            "level": v.get("level", 1),
+            "exam": v.get("exam", "TOPIK"),
+            "fmt": fmt,
+            "file_exists": os.path.exists(_norm(v.get("output_path", ""))),
+            "uploaded": (wid, lang, fmt) in uploaded_pairs,
+            "generated_at": v.get("generated_at", ""),
+        })
+
+    # 회화 영상
+    conv_videos = []
+    for c in load_json(CONV_LOG_F, []):
+        conv_videos.append({
+            "theme_id": c.get("theme_id"),
+            "lang": c.get("lang", "EN"),
+            "fmt": c.get("fmt", "youtube"),
+            "uploaded": c.get("uploaded", False),
+            "file_exists": os.path.exists(_norm(c.get("video_path", ""))),
+            "rendered_at": c.get("rendered_at", ""),
+        })
+
+    return jsonify({"word_videos": word_videos, "conv_videos": conv_videos})
 
 # ─── Instagram API ────────────────────────────────────────────
 IG_TOKEN_F = f"{BASE}/logs/instagram_token.json"
@@ -1996,12 +2353,28 @@ def api_save_schedule():
     return jsonify({"status": "ok", "slots": slots})
 
 # ─── 일별 자동 API ───────────────────────────────────────────
+_DAILY_CONFIG_KEYS = {
+    "auto_upload":        bool,
+    "word_freq":          str,  # daily | every2days | every3days | 2perday | 3perday
+    "word_render":        str,  # auto | auto_if_missing | manual
+    "word_illust":        str,  # auto | auto_if_missing | manual
+    "word_prebuffer_h":   int,  # hours before upload to pre-render word video
+    "phrase_freq":        str,  # daily | every2days | every3days
+    "phrase_render":      str,  # auto | auto_if_missing | manual
+    "phrase_illust":      str,  # auto | auto_if_missing | manual
+    "phrase_prebuffer_h": int,  # hours before upload to pre-render phrase video
+    "auto_start_date":    str,  # YYYY-MM-DD — schedule begins from this date
+}
+
 @app.route("/api/daily/config", methods=["GET","POST"])
 def api_daily_config():
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         s = load_json(DAILY_AUTO_F, {})
-        if "auto_upload" in data: s["auto_upload"] = bool(data["auto_upload"])
+        for key, cast in _DAILY_CONFIG_KEYS.items():
+            if key in data:
+                try: s[key] = cast(data[key])
+                except Exception: pass
         save_json(DAILY_AUTO_F, s)
         if data.get("auto_upload"):
             threading.Thread(target=_daily_auto_tick, daemon=True).start()
@@ -2030,8 +2403,9 @@ def api_daily_status():
                     ls["publish_local"] = dt.strftime("%m/%d %H:%M UTC")
             except: pass
     lv1_total = len([w for w in get_words_db() if w.get("level")==1])
+    illust_generating = _illust_proc is not None and _illust_proc.poll() is None
     return jsonify({"state": s, "word": word, "rendering": _daily_rendering,
-                    "lv1_total": lv1_total})
+                    "lv1_total": lv1_total, "illust_generating": illust_generating})
 
 @app.route("/api/daily/trigger", methods=["POST"])
 def api_daily_trigger():
@@ -2162,15 +2536,26 @@ def api_render_upload():
     if not word:
         return jsonify({"error": f"단어 {word_id} 없음"}), 404
     lv = word.get("level", 1)
-    # fmt에 따라 경로 결정
-    if fmt == "reels":
-        vpath = f"/app/output/{exam}/{lang}/lv{lv}/reels/{exam.lower()}_{word_id:04d}_{word['word']}_{lang}_reels.mp4"
-    else:
-        vpath = f"/app/output/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}_{lang}.mp4"
+    # videos_log에서 정확한 경로 우선 조회
+    def _norm(p):
+        p = str(p).replace("\\", "/")
+        if "/output/" in p:
+            return OUTPUT_DIR + "/" + p.split("/output/", 1)[1]
+        return p
+    vpath = None
+    for v in load_json(VIDEOS_LOG, []):
+        if v["word_id"] == word_id and v.get("language") == lang and v.get("fmt", "youtube") == fmt:
+            vpath = _norm(v.get("output_path", "")); break
+    if not vpath:
+        # 폴백: 경로 패턴으로 추정
+        if fmt == "reels":
+            vpath = f"{OUTPUT_DIR}/{exam}/{lang}/lv{lv}/reels/{exam.lower()}_{word_id:04d}_{word['word']}_{lang}_reels.mp4"
+        else:
+            vpath = f"{OUTPUT_DIR}/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}_{lang}.mp4"
     if not os.path.exists(vpath):
         return jsonify({"error": f"영상 파일 없음: {vpath}"}), 404
     def _do_upload():
-        vid = run_upload(word, vpath, exam=exam, lang=lang)
+        vid = run_upload(word, vpath, exam=exam, lang=lang, fmt=fmt)
         if vid:
             bq = load_json(BATCH_QUEUE_F, {})
             for it in bq.get("items", []):
@@ -2356,7 +2741,7 @@ def api_render_custom():
     raw_targets = data.get("targets")
     if raw_targets:
         targets = [{"exam": t.get("exam","TOPIK"), "level": int(t.get("level",1)),
-                    "ids_str": t.get("ids_str","")} for t in raw_targets]
+                    "ids_str": t.get("ids_str",""), "fmts": t.get("fmts")} for t in raw_targets]
     else:
         targets = [{"exam": data.get("exam","TOPIK"), "level": int(data.get("level",1)),
                     "ids_str": ""}]
@@ -2671,9 +3056,11 @@ def api_conv_render():
     if not theme_id:
         return jsonify({"error": "theme_id 필요"}), 400
     target = data.get("target", "nas")
-    desc = f"회화영상 {theme_id} [{lang}]"
+    fmt = data.get("fmt", "youtube")
+    fmt_label = " [쇼츠]" if fmt == "reels" else ""
+    desc = f"회화영상 {theme_id} [{lang}]{fmt_label}"
     job_id = enqueue_job("conv_video", desc, target=target,
-                         params={"theme_id": theme_id, "lang": lang})
+                         params={"theme_id": theme_id, "lang": lang, "fmt": fmt})
     return jsonify({"status": "queued", "job_id": job_id, "theme_id": theme_id, "lang": lang})
 
 @app.route("/api/conv/render/status")
@@ -2686,9 +3073,10 @@ def api_conv_upload():
     data = request.get_json(silent=True) or {}
     theme_id = data.get("theme_id")
     lang = data.get("lang", "EN")
+    fmt = data.get("fmt", "youtube")
     if not theme_id:
         return jsonify({"error": "theme_id 필요"}), 400
-    video_id, err = run_conv_upload(theme_id, lang)
+    video_id, err = run_conv_upload(theme_id, lang, fmt=fmt)
     if err:
         return jsonify({"error": err}), 500
     return jsonify({"status": "ok", "video_id": video_id,
@@ -3064,6 +3452,30 @@ tr:hover td{background:var(--bg3);}
 .pulse{animation:pulse 1.8s infinite;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 @keyframes regenProg{0%{width:0%}60%{width:75%}85%{width:88%}95%{width:93%}100%{width:96%}}
+/* ── BATCH REDESIGN ─── */
+.batch-section{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:10px;}
+.batch-section-header{display:flex;align-items:center;gap:8px;margin-bottom:12px;}
+.batch-section-title{font-size:.88rem;font-weight:700;}
+.batch-section-sub{font-size:.75rem;font-weight:600;color:var(--muted);}
+.batch-section-badge{margin-left:auto;font-size:.65rem;color:var(--muted2);}
+.batch-word-info{font-size:1.2rem;font-weight:700;color:var(--blue);}
+.batch-divider{border:none;border-top:1px solid var(--border);margin:10px 0;}
+.batch-setting-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.batch-setting-label{font-size:.65rem;color:var(--muted2);font-weight:600;text-transform:uppercase;letter-spacing:.05em;min-width:62px;flex-shrink:0;}
+.pill-group{display:flex;gap:4px;flex-wrap:wrap;}
+.pill{padding:3px 10px;border-radius:20px;font-size:.68rem;font-weight:600;cursor:pointer;border:1px solid var(--border2);background:transparent;color:var(--muted);transition:.12s;}
+.pill:hover{border-color:var(--muted);color:var(--text);}
+.pill.on{background:var(--bg3);border-color:var(--blue);color:var(--blue);}
+.pill.on-green{background:#0d2b0d;border-color:var(--green);color:var(--green);}
+.batch-lang-table{width:100%;font-size:.7rem;border-collapse:collapse;margin-bottom:10px;}
+.batch-lang-table th{text-align:left;padding:4px 6px;font-size:.62rem;color:var(--muted2);border-bottom:1px solid var(--border);font-weight:500;text-transform:none;letter-spacing:0;}
+.batch-lang-table td{padding:4px 6px;border-bottom:1px solid var(--border);}
+.batch-action-row{display:flex;gap:7px;margin-top:12px;}
+.batch-footer{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:8px;}
+.batch-auto-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:9px;margin-top:10px;}
+.batch-auto-title{font-size:.84rem;font-weight:700;}
+.batch-auto-sub{font-size:.64rem;color:var(--muted);margin-top:2px;}
+.batch-prebuf-row{display:flex;align-items:center;gap:6px;}
 @keyframes regenSpin{to{transform:rotate(360deg)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 .regen-overlay{position:absolute;inset:0;background:rgba(0,0,0,.78);border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:10;}
@@ -3161,9 +3573,6 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <div class="s-item l2" data-view="render-custom" onclick="navRenderTab(this,'custom')" style="--c:#3fb950;">
       <span>🎬</span><span>영상 커스텀</span>
     </div>
-    <div class="s-item l2" data-view="render-config" onclick="navRenderTab(this,'config')" style="--c:#3fb950;">
-      <span>⚙️</span><span>설정</span>
-    </div>
   </div>
 
   <!-- YouTube -->
@@ -3172,7 +3581,10 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   </div>
   <div class="s-ch open" id="s-ch-yt">
     <div class="s-item l2" data-view="youtube" onclick="nav(this,'youtube')" style="--c:#f87171;">
-      <span>▶</span><span>YouTube</span>
+      <span>📊</span><span>채널 통계</span>
+    </div>
+    <div class="s-item l2" data-view="yt-upload" onclick="nav(this,'yt-upload')" style="--c:#f87171;">
+      <span>📤</span><span>업로드 관리</span>
     </div>
   </div>
 
@@ -3286,91 +3698,207 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
 <div id="view-render" class="view">
   <!-- 탭 내용: 배치 (일별 자동 시스템) -->
   <div id="rp-batch">
-    <!-- 자동 업로드 토글 -->
-    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
-      <div>
-        <div style="font-weight:700;font-size:.85rem;">매일 자동 렌더링 & 업로드</div>
-        <div style="font-size:.68rem;color:var(--muted);margin-top:2px;">Lv1 단어 1개 · 본편+쇼츠 · 5개 언어 · 현지 아침 7:30</div>
-      </div>
-      <label style="position:relative;display:inline-block;width:52px;height:28px;cursor:pointer;">
-        <input type="checkbox" id="daily-auto-toggle" onchange="setDailyAuto(this.checked)" style="opacity:0;width:0;height:0;">
-        <span id="daily-toggle-slider" style="position:absolute;inset:0;background:#444;border-radius:28px;transition:.3s;">
-          <span id="daily-toggle-knob" style="position:absolute;left:3px;top:3px;width:22px;height:22px;background:#fff;border-radius:50%;transition:.3s;"></span>
-        </span>
-      </label>
-    </div>
 
-    <!-- 오늘의 단어 -->
-    <div style="background:var(--bg);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <div style="font-size:.72rem;color:var(--muted);font-weight:600;">오늘의 단어 · Lv1</div>
-        <div id="daily-lv1-progress" style="font-size:.68rem;color:var(--muted2);"></div>
+    <!-- ═══ 단어 섹션 ═════════════════════════════════════════ -->
+    <div class="batch-section">
+      <!-- 헤더 -->
+      <div class="batch-section-header">
+        <span style="font-size:1rem;">🎬</span>
+        <span class="batch-section-title">단어</span>
+        <span id="daily-lv1-progress" class="batch-section-badge"></span>
       </div>
-      <div id="daily-word-display" style="display:flex;align-items:center;gap:12px;">
-        <div style="font-size:1.6rem;font-weight:700;color:var(--blue);" id="daily-word-ko">—</div>
-        <div style="font-size:.82rem;color:var(--muted);" id="daily-word-meaning"></div>
-      </div>
-      <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
-        <span style="font-size:.65rem;color:var(--muted2);">ID:</span>
-        <input id="daily-word-id-input" class="inp" type="number" min="1" max="300" style="width:70px;font-size:.72rem;padding:2px 6px;" placeholder="ID">
-        <button onclick="dailySetWord()" class="btn btn-m" style="font-size:.68rem;padding:3px 10px;">단어 변경</button>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px;">
+        <span id="daily-word-ko" class="batch-word-info">—</span>
+        <span id="daily-word-meaning" style="font-size:.8rem;color:var(--muted);"></span>
         <span id="daily-illust-badge" style="margin-left:auto;font-size:.65rem;"></span>
       </div>
-    </div>
 
-    <!-- 언어별 상태 -->
-    <div style="background:var(--bg);border-radius:10px;padding:10px 14px;margin-bottom:12px;">
-      <div style="font-size:.7rem;color:var(--muted);font-weight:600;margin-bottom:8px;">언어별 렌더링 & 업로드</div>
-      <table style="width:100%;font-size:.7rem;border-collapse:collapse;" id="daily-lang-table">
-        <thead><tr style="color:var(--muted2);font-size:.65rem;">
-          <th style="text-align:left;padding:3px 6px;">언어</th>
-          <th style="text-align:center;padding:3px 6px;">본편</th>
-          <th style="text-align:center;padding:3px 6px;">쇼츠</th>
-          <th style="text-align:left;padding:3px 6px;">업로드 예약</th>
+      <hr class="batch-divider">
+
+      <!-- 설정 -->
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">업로드 빈도</span>
+        <div class="pill-group" id="word-freq-group">
+          <button class="pill" data-v="daily"      onclick="setBatchPill('word-freq-group',this,'word_freq')">매일</button>
+          <button class="pill" data-v="every2days" onclick="setBatchPill('word-freq-group',this,'word_freq')">이틀에 1개</button>
+          <button class="pill" data-v="every3days" onclick="setBatchPill('word-freq-group',this,'word_freq')">삼일에 1개</button>
+          <button class="pill" data-v="2perday"    onclick="setBatchPill('word-freq-group',this,'word_freq')">하루 2개</button>
+          <button class="pill" data-v="3perday"    onclick="setBatchPill('word-freq-group',this,'word_freq')">하루 3개</button>
+        </div>
+      </div>
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">렌더링</span>
+        <div class="pill-group" id="word-render-group">
+          <button class="pill" data-v="auto"   onclick="setBatchPill('word-render-group',this,'word_render')">자동</button>
+          <button class="pill" data-v="auto_if_missing" onclick="setBatchPill('word-render-group',this,'word_render')">없으면 자동</button>
+          <button class="pill" data-v="manual"          onclick="setBatchPill('word-render-group',this,'word_render')">수동</button>
+        </div>
+      </div>
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">일러스트</span>
+        <div class="pill-group" id="word-illust-group">
+          <button class="pill" data-v="auto"            onclick="setBatchPill('word-illust-group',this,'word_illust')">자동</button>
+          <button class="pill" data-v="auto_if_missing" onclick="setBatchPill('word-illust-group',this,'word_illust')">없으면 자동</button>
+          <button class="pill" data-v="manual"          onclick="setBatchPill('word-illust-group',this,'word_illust')">수동</button>
+        </div>
+      </div>
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">사전 제작</span>
+        <div class="batch-prebuf-row">
+          <span style="font-size:.7rem;color:var(--muted);">업로드</span>
+          <input id="word-prebuf-h" type="number" value="2" min="1" max="24" class="inp"
+            style="width:46px;font-size:.72rem;padding:2px 5px;text-align:center;"
+            onchange="saveBatchConfig({word_prebuffer_h:parseInt(this.value)||2})">
+          <span style="font-size:.7rem;color:var(--muted);">시간 전 영상 미리 제작</span>
+        </div>
+      </div>
+
+      <hr class="batch-divider">
+
+      <!-- 언어별 상태 -->
+      <table class="batch-lang-table" id="daily-lang-table">
+        <thead><tr>
+          <th>언어</th><th style="text-align:center;">본편</th>
+          <th style="text-align:center;">쇼츠</th>
+          <th style="text-align:center;">업로드됨</th><th>예약 시간</th>
         </tr></thead>
         <tbody id="daily-lang-tbody"></tbody>
       </table>
+      <div id="daily-render-status" style="display:none;padding:6px 10px;background:var(--bg);border-radius:7px;margin-bottom:8px;font-size:.7rem;color:var(--amber);font-weight:600;"></div>
+
+      <!-- ID 변경 -->
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
+        <span style="font-size:.63rem;color:var(--muted2);">ID:</span>
+        <input id="daily-word-id-input" class="inp" type="number" min="1" max="300" style="width:64px;font-size:.72rem;padding:2px 6px;" placeholder="ID">
+        <button onclick="dailySetWord()" class="btn btn-m" style="font-size:.68rem;padding:3px 8px;">변경</button>
+      </div>
+
+      <!-- 단어 실행 버튼 -->
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <label style="display:flex;align-items:center;gap:5px;font-size:.74rem;cursor:pointer;">
+          <input type="checkbox" id="rp-auto-upload" style="width:14px;height:14px;">
+          렌더링 후 자동 업로드
+        </label>
+      </div>
+      <div class="batch-action-row">
+        <button id="rp-render-all" onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.74rem;">▶ 단어 렌더링</button>
+        <button id="rp-cancel-btn" onclick="cancelRender()" class="btn btn-d" style="display:none;font-size:.74rem;padding:0 12px;">✕ 취소</button>
+      </div>
     </div>
 
-    <!-- 렌더링 현황 -->
-    <div id="daily-render-status" style="display:none;padding:8px 12px;background:var(--bg);border-radius:8px;margin-bottom:10px;font-size:.72rem;color:var(--amber);font-weight:600;"></div>
+    <!-- ═══ 회화 섹션 ═════════════════════════════════════════ -->
+    <div class="batch-section">
+      <!-- 헤더 -->
+      <div class="batch-section-header">
+        <span style="font-size:1rem;">💬</span>
+        <span class="batch-section-title">회화</span>
+        <span id="daily-phrase-next-badge" class="batch-section-badge"></span>
+      </div>
+      <div id="daily-conv-display" style="font-size:.88rem;font-weight:700;margin-bottom:12px;">—</div>
 
-    <!-- 오늘의 회화 -->
-    <div style="background:var(--bg);border-radius:10px;padding:12px 16px;margin-bottom:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <div style="font-size:.72rem;color:var(--muted);font-weight:600;">오늘의 회화</div>
-        <div style="display:flex;align-items:center;gap:6px;">
-          <span style="font-size:.62rem;color:var(--muted2);">상황 ID:</span>
-          <input id="daily-conv-id-input" class="inp" type="number" min="1" style="width:60px;font-size:.72rem;padding:2px 6px;" placeholder="ID">
-          <button onclick="dailySetConv()" class="btn btn-m" style="font-size:.68rem;padding:3px 8px;">변경</button>
+      <hr class="batch-divider">
+
+      <!-- 설정 -->
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">업로드 빈도</span>
+        <div class="pill-group" id="phrase-freq-group">
+          <button class="pill" data-v="daily"      onclick="setBatchPill('phrase-freq-group',this,'phrase_freq')">매일</button>
+          <button class="pill" data-v="every2days" onclick="setBatchPill('phrase-freq-group',this,'phrase_freq')">이틀에 1개</button>
+          <button class="pill" data-v="every3days" onclick="setBatchPill('phrase-freq-group',this,'phrase_freq')">삼일에 1개</button>
         </div>
       </div>
-      <div id="daily-conv-display" style="font-size:.9rem;font-weight:700;color:var(--green);margin-bottom:8px;">—</div>
-      <table style="width:100%;font-size:.7rem;border-collapse:collapse;" id="daily-conv-table">
-        <thead><tr style="color:var(--muted2);font-size:.65rem;">
-          <th style="text-align:left;padding:3px 6px;">언어</th>
-          <th style="text-align:center;padding:3px 6px;">렌더됨</th>
-          <th style="text-align:center;padding:3px 6px;">업로드됨</th>
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">렌더링</span>
+        <div class="pill-group" id="phrase-render-group">
+          <button class="pill" data-v="auto"            onclick="setBatchPill('phrase-render-group',this,'phrase_render')">자동</button>
+          <button class="pill" data-v="auto_if_missing" onclick="setBatchPill('phrase-render-group',this,'phrase_render')">없으면 자동</button>
+          <button class="pill" data-v="manual"          onclick="setBatchPill('phrase-render-group',this,'phrase_render')">수동</button>
+        </div>
+      </div>
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">일러스트</span>
+        <div class="pill-group" id="phrase-illust-group">
+          <button class="pill" data-v="auto"            onclick="setBatchPill('phrase-illust-group',this,'phrase_illust')">자동</button>
+          <button class="pill" data-v="auto_if_missing" onclick="setBatchPill('phrase-illust-group',this,'phrase_illust')">없으면 자동</button>
+          <button class="pill" data-v="manual"          onclick="setBatchPill('phrase-illust-group',this,'phrase_illust')">수동</button>
+        </div>
+      </div>
+      <div class="batch-setting-row">
+        <span class="batch-setting-label">사전 제작</span>
+        <div class="batch-prebuf-row">
+          <span style="font-size:.7rem;color:var(--muted);">업로드</span>
+          <input id="phrase-prebuf-h" type="number" value="2" min="1" max="24" class="inp"
+            style="width:46px;font-size:.72rem;padding:2px 5px;text-align:center;"
+            onchange="saveBatchConfig({phrase_prebuffer_h:parseInt(this.value)||2})">
+          <span style="font-size:.7rem;color:var(--muted);">시간 전 영상 미리 제작</span>
+        </div>
+      </div>
+
+      <hr class="batch-divider">
+
+      <!-- 회화 언어별 상태 -->
+      <table class="batch-lang-table" id="daily-conv-table">
+        <thead><tr>
+          <th>언어</th><th style="text-align:center;">렌더됨</th><th style="text-align:center;">업로드됨</th>
         </tr></thead>
         <tbody id="daily-conv-tbody"></tbody>
       </table>
+
+      <!-- 상황 ID 변경 -->
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;">
+        <span style="font-size:.63rem;color:var(--muted2);">상황 ID:</span>
+        <input id="daily-conv-id-input" class="inp" type="number" min="1" style="width:60px;font-size:.72rem;padding:2px 6px;" placeholder="ID">
+        <button onclick="dailySetConv()" class="btn btn-m" style="font-size:.68rem;padding:3px 8px;">변경</button>
+      </div>
+
+      <!-- 회화 실행 버튼 -->
+      <div class="batch-action-row">
+        <button id="rp-render-conv" onclick="renderConvOnly()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.74rem;">▶ 회화 렌더링</button>
+        <button onclick="uploadPhraseToday()" class="btn btn-b" style="flex:1;justify-content:center;font-size:.74rem;">⬆ 회화 업로드</button>
+      </div>
     </div>
 
-    <!-- 수동 트리거 -->
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-      <span style="font-size:.65rem;color:var(--muted2);white-space:nowrap;">콘텐츠:</span>
-      <button id="rp-tog-word" onclick="toggleRpContent('word')" class="btn btn-g" style="font-size:.68rem;padding:3px 10px;">🎬 단어</button>
-      <button id="rp-tog-conv" onclick="toggleRpContent('conv')" class="btn btn-m" style="font-size:.68rem;padding:3px 10px;">💬 회화</button>
-      <span style="font-size:.65rem;color:var(--muted2);margin-left:6px;white-space:nowrap;">포맷:</span>
-      <button id="rp-tog-yt" onclick="toggleRpFmt('youtube')" class="btn btn-g" style="font-size:.68rem;padding:3px 10px;">▶ YouTube</button>
-      <button id="rp-tog-rl" onclick="toggleRpFmt('reels')" class="btn btn-m" style="font-size:.68rem;padding:3px 10px;">📱 릴스</button>
+    <!-- ═══ 통합 실행 ════════════════════════════════════════ -->
+    <div class="batch-footer">
+      <div style="display:flex;gap:7px;margin-bottom:10px;">
+        <button id="rp-render-both" onclick="renderBatchBoth()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.75rem;">▶ 단어+회화 렌더링 (YT+릴스)</button>
+        <button onclick="dailyTrigger()" class="btn btn-m" style="font-size:.75rem;padding:0 14px;">▶ 오늘</button>
+      </div>
+
+      <!-- 자동 배치 기준일 -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:12px 14px;margin-bottom:8px;">
+        <div style="font-size:.72rem;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+          <span>📅</span><span>자동 배치 스케줄</span>
+          <span id="daily-schedule-status" style="margin-left:auto;font-size:.65rem;color:var(--muted2);"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:.68rem;color:var(--muted);">기준일:</span>
+          <input type="date" id="auto-start-date" class="inp"
+            style="font-size:.72rem;padding:3px 8px;width:130px;"
+            onchange="saveBatchConfig({auto_start_date:this.value});_updateScheduleStatus()">
+          <span style="font-size:.65rem;color:var(--muted2);">이 날짜부터 자동으로 렌더링·업로드 시작</span>
+        </div>
+        <div style="margin-top:8px;font-size:.64rem;color:var(--muted);line-height:1.5;" id="daily-schedule-desc">
+          기준일을 설정하면 단어·회화 각각의 빈도 설정에 따라 자동 스케줄이 계산됩니다.
+        </div>
+      </div>
+
+      <!-- 매일 자동 실행 토글 -->
+      <div class="batch-auto-row">
+        <div>
+          <div class="batch-auto-title">자동 실행 ON/OFF</div>
+          <div class="batch-auto-sub" id="daily-auto-desc">설정 로딩 중…</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:52px;height:28px;cursor:pointer;flex-shrink:0;">
+          <input type="checkbox" id="daily-auto-toggle" onchange="setDailyAuto(this.checked)" style="opacity:0;width:0;height:0;">
+          <span id="daily-toggle-slider" style="position:absolute;inset:0;background:#444;border-radius:28px;transition:.3s;">
+            <span id="daily-toggle-knob" style="position:absolute;left:3px;top:3px;width:22px;height:22px;background:#fff;border-radius:50%;transition:.3s;"></span>
+          </span>
+        </label>
+      </div>
+      <div style="margin-top:8px;font-size:.62rem;color:var(--muted2);text-align:center;">자동 OFF 상태에서도 수동으로 실행 가능</div>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:6px;">
-      <button id="rp-render-all" onclick="renderBatchAll()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.75rem;">▶ 렌더링</button>
-      <button onclick="dailyTrigger()" class="btn btn-m" style="font-size:.75rem;padding:0 10px;">▶ 오늘</button>
-      <button id="rp-cancel-btn" onclick="cancelRender()" class="btn btn-d" style="display:none;font-size:.75rem;padding:0 12px;">✕ 취소</button>
-    </div>
-    <div style="margin-top:6px;font-size:.65rem;color:var(--muted2);text-align:center;">자동 OFF 상태에서도 수동으로 실행 가능</div>
+
   </div>
   <!-- 탭 내용: 커스텀 -->
   <div id="rp-custom" style="display:none;">
@@ -3572,16 +4100,6 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     </div>
     <div id="live-list" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;"></div>
   </div>
-  <!-- 탭 내용: 설정 -->
-  <div id="rp-config" style="display:none;">
-    <div style="font-size:.74rem;color:var(--muted);margin-bottom:10px;">하루 분량 설정 (시험/언어/등급별 슬롯)</div>
-    <div id="rp-config-slots"></div>
-    <button onclick="addSlot()" class="btn btn-m" style="width:100%;margin-top:8px;justify-content:center;">+ 슬롯 추가</button>
-    <div style="display:flex;gap:8px;margin-top:12px;">
-      <button onclick="saveSchedule()" class="btn btn-g" style="flex:1;justify-content:center;">💾 저장</button>
-      <button onclick="resetSchedule()" class="btn btn-m">기본값</button>
-    </div>
-  </div>
 </div>
 
 <!-- ══ 영상 목록 ════════════════════════════════════════ -->
@@ -3606,9 +4124,62 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
 
 <!-- ══ YouTube ══════════════════════════════════════════ -->
 <div id="view-youtube" class="view">
-  <div class="bc"><span class="cur">▶ YouTube 통계</span></div>
+  <div class="bc"><span class="cur">▶ YouTube 채널 통계</span></div>
   <div id="yt-loading" style="text-align:center;padding:24px;color:var(--muted);display:none;">채널 통계 로드 중...</div>
   <div id="yt-content"></div>
+</div>
+
+<!-- ══ YouTube 업로드 관리 ════════════════════════════════ -->
+<div id="view-yt-upload" class="view">
+  <div class="bc"><span class="cur">📤 YouTube 업로드 관리</span></div>
+  <!-- 필터 & 액션 바 -->
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+    <select id="ytu-lang" onchange="ytUploadFilter()" class="inp">
+      <option value="">전체 언어</option>
+      <option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option>
+      <option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option>
+    </select>
+    <select id="ytu-fmt" onchange="ytUploadFilter()" class="inp">
+      <option value="">전체 포맷</option>
+      <option value="youtube">▶ YouTube</option>
+      <option value="reels">📱 쇼츠</option>
+    </select>
+    <select id="ytu-status" onchange="ytUploadFilter()" class="inp">
+      <option value="pending">업로드 대기</option>
+      <option value="all">전체</option>
+      <option value="uploaded">업로드 완료</option>
+    </select>
+    <button onclick="loadYtUpload()" class="btn btn-m">새로고침</button>
+    <span id="ytu-count" style="font-size:.72rem;color:var(--muted);margin-left:auto;"></span>
+  </div>
+  <!-- 탭 -->
+  <div style="display:flex;gap:4px;margin-bottom:10px;">
+    <button id="ytu-tab-word" class="btn btn-g" style="font-size:.72rem;" onclick="ytUploadTab('word')">단어/쇼츠</button>
+    <button id="ytu-tab-conv" class="btn btn-m" style="font-size:.72rem;" onclick="ytUploadTab('conv')">회화</button>
+  </div>
+  <!-- 단어 영상 테이블 -->
+  <div id="ytu-word-section">
+    <div class="card" style="overflow-x:auto;padding:0;">
+      <table>
+        <thead><tr>
+          <th>언어</th><th>ID</th><th>단어</th><th>뜻</th><th>등급</th><th>포맷</th><th>파일</th><th>상태</th><th>액션</th>
+        </tr></thead>
+        <tbody id="ytu-word-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <!-- 회화 영상 테이블 -->
+  <div id="ytu-conv-section" style="display:none;">
+    <div class="card" style="overflow-x:auto;padding:0;">
+      <table>
+        <thead><tr>
+          <th>언어</th><th>테마 ID</th><th>포맷</th><th>파일</th><th>상태</th><th>렌더링일</th><th>액션</th>
+        </tr></thead>
+        <tbody id="ytu-conv-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div id="ytu-loading" style="text-align:center;padding:24px;color:var(--muted);display:none;">로드 중...</div>
 </div>
 
 <!-- ══ Instagram ════════════════════════════════════════ -->
@@ -3877,6 +4448,7 @@ function nav(el,view){
   if(view==='conv'){loadConvThemes();loadPhraseSituations();cvTab('basic');}
   if(view==='videos') loadAllVideos();
   if(view==='youtube') loadYoutubeChannels();
+  if(view==='yt-upload') loadYtUpload();
   if(view==='instagram') loadIgData();
 }
 
@@ -4082,6 +4654,11 @@ function renderJobQueue(d){
         : (job.current_type==='word'?'단어':'');
       const label = typeLabel ? `${typeLabel} · ${job.step}` : job.step;
       batchProgress=`<div style="margin-top:3px;font-size:.62rem;color:var(--amber);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>`;
+    }
+    if(job.type==='conv_video'&&job.status==='running'&&job.step){
+      const frameInfo = (job.frame!=null&&job.total_frames)
+        ? `<span style="color:var(--cyan,#22d3ee);margin-left:6px;">🎞 ${job.frame}/${job.total_frames}f</span>` : '';
+      batchProgress=`<div style="margin-top:3px;font-size:.62rem;color:var(--amber);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${job.step}${frameInfo}</div>`;
     }
 
     return`<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);${!isActive?'opacity:.55;':''}">
@@ -4621,17 +5198,25 @@ async function loadYoutubeChannels(){
     </div><div class="g3" style="margin-bottom:14px;">`;
     channels.forEach(ch=>{
       if(ch.error){
-        html+=`<div class="card-sm" style="opacity:.5;"><div style="font-size:.75rem;font-weight:700;">${ch.flag} ${ch.lang}</div><div style="font-size:.65rem;color:var(--red);margin-top:6px;">토큰 없음 또는 오류</div></div>`;
+        html+=`<div class="card-sm" style="opacity:.5;"><div style="font-size:.75rem;font-weight:700;">${ch.flag} ${ch.lang}</div><div style="font-size:.62rem;color:var(--red);margin-top:6px;word-break:break-all;">${ch.error||'토큰 없음 또는 오류'}</div></div>`;
       } else {
         const ytUrl=`https://www.youtube.com/channel/${ch.channel_id}`;
+        const hasPl=(ch.bonpyeon||0)+(ch.reels||0)+(ch.phrase||0)>0;
         html+=`<div class="card-sm">
           <div style="font-size:.78rem;font-weight:700;margin-bottom:10px;">
             <a href="${ytUrl}" target="_blank" style="color:inherit;text-decoration:none;">${ch.flag} ${ch.name}</a>
           </div>
-          <div style="display:flex;gap:16px;font-size:.72rem;">
+          <div style="display:flex;gap:12px;font-size:.72rem;margin-bottom:10px;flex-wrap:wrap;">
             <div><div style="color:var(--red);font-weight:700;font-size:1rem;">${fmt(ch.subscribers)}</div><div style="color:var(--muted);">구독자</div></div>
             <div><div style="color:var(--amber);font-weight:700;font-size:1rem;">${fmt(ch.views)}</div><div style="color:var(--muted);">조회수</div></div>
-            <div><div style="color:var(--blue);font-weight:700;font-size:1rem;">${fmt(ch.video_count)}</div><div style="color:var(--muted);">영상</div></div>
+            ${ch.likes!=null?`<div><div style="color:#f472b6;font-weight:700;font-size:1rem;">${fmt(ch.likes)}</div><div style="color:var(--muted);">좋아요</div></div>`:''}
+            ${ch.comments!=null?`<div><div style="color:var(--green);font-weight:700;font-size:1rem;">${fmt(ch.comments)}</div><div style="color:var(--muted);">댓글</div></div>`:''}
+            <div><div style="color:var(--blue);font-weight:700;font-size:1rem;">${fmt(ch.video_count)}</div><div style="color:var(--muted);">총영상</div></div>
+          </div>
+          <div style="display:flex;gap:8px;font-size:.68rem;border-top:1px solid var(--border);padding-top:8px;">
+            <div style="flex:1;text-align:center;"><div style="font-weight:700;color:var(--green);">${ch.bonpyeon||0}</div><div style="color:var(--muted);">본편</div></div>
+            <div style="flex:1;text-align:center;"><div style="font-weight:700;color:var(--purple,#a78bfa);">${ch.reels||0}</div><div style="color:var(--muted);">쇼츠</div></div>
+            <div style="flex:1;text-align:center;"><div style="font-weight:700;color:var(--cyan,#22d3ee);">${ch.phrase||0}</div><div style="color:var(--muted);">회화</div></div>
           </div>
         </div>`;
       }
@@ -4642,6 +5227,133 @@ async function loadYoutubeChannels(){
     ld.style.display='none';
     el.innerHTML='<div class="card" style="color:var(--red);">오류: '+e+'</div>';
   }
+}
+
+// ── YouTube 업로드 관리 ──────────────────────────────────────
+let _ytuData = {word_videos:[], conv_videos:[]};
+let _ytuTab = 'word';
+
+async function loadYtUpload(){
+  const ld=document.getElementById('ytu-loading');
+  if(ld) ld.style.display='block';
+  try{
+    const r=await fetch('/api/youtube/upload-status');
+    const d=await r.json();
+    _ytuData=d;
+    ytUploadFilter();
+  }catch(e){
+    if(ld) ld.style.display='none';
+    alert('로드 실패: '+e);
+  }
+}
+
+function ytUploadTab(tab){
+  _ytuTab=tab;
+  document.getElementById('ytu-word-section').style.display=tab==='word'?'block':'none';
+  document.getElementById('ytu-conv-section').style.display=tab==='conv'?'block':'none';
+  document.getElementById('ytu-tab-word').className=tab==='word'?'btn btn-g':'btn btn-m';
+  document.getElementById('ytu-tab-conv').className=tab==='conv'?'btn btn-g':'btn btn-m';
+  // fmt 필터 숨김/표시 (회화탭엔 무의미하지 않음)
+  ytUploadFilter();
+}
+
+function ytUploadFilter(){
+  const lang=document.getElementById('ytu-lang')?.value||'';
+  const fmt=document.getElementById('ytu-fmt')?.value||'';
+  const status=document.getElementById('ytu-status')?.value||'pending';
+  const ld=document.getElementById('ytu-loading');
+
+  if(_ytuTab==='word'){
+    let rows=(_ytuData.word_videos||[]);
+    if(lang) rows=rows.filter(v=>v.lang===lang);
+    if(fmt)  rows=rows.filter(v=>v.fmt===fmt);
+    if(status==='pending')  rows=rows.filter(v=>!v.uploaded&&v.file_exists);
+    if(status==='uploaded') rows=rows.filter(v=>v.uploaded);
+    document.getElementById('ytu-count').textContent=rows.length+'개';
+    const tbody=document.getElementById('ytu-word-tbody');
+    const _LANG_FLAGS={'EN':'🇺🇸','JP':'🇯🇵','CN':'🇨🇳','VN':'🇻🇳','ES':'🇪🇸'};
+    tbody.innerHTML=rows.map(v=>{
+      const flag=_LANG_FLAGS[v.lang]||'';
+      const fmtLabel=v.fmt==='reels'?'<span style="color:var(--purple,#a78bfa)">📱 쇼츠</span>':'<span style="color:var(--red)">▶ YouTube</span>';
+      const fileIcon=v.file_exists?'<span style="color:var(--green)">●</span>':'<span style="color:var(--red)">✗</span>';
+      const statusBadge=v.uploaded?'<span class="badge badge-g" style="font-size:.65rem;">완료</span>':'<span class="badge badge-m" style="font-size:.65rem;">대기</span>';
+      const btn=v.uploaded
+        ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
+        :v.file_exists
+          ?`<button class="btn btn-g" style="font-size:.65rem;padding:2px 8px;" onclick="ytUploadWord(${v.word_id},'${v.lang}','${v.exam}','${v.fmt}',this)">업로드</button>`
+          :`<span style="font-size:.65rem;color:var(--red);">파일없음</span>`;
+      return `<tr>
+        <td>${flag} ${v.lang}</td>
+        <td style="color:var(--muted);">${v.word_id}</td>
+        <td style="font-weight:700;">${v.word}</td>
+        <td style="color:var(--muted);font-size:.72rem;">${v.meaning||''}</td>
+        <td>Lv.${v.level}</td>
+        <td>${fmtLabel}</td>
+        <td>${fileIcon}</td>
+        <td>${statusBadge}</td>
+        <td>${btn}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    let rows=(_ytuData.conv_videos||[]);
+    if(lang) rows=rows.filter(v=>v.lang===lang);
+    if(fmt)  rows=rows.filter(v=>v.fmt===fmt);
+    if(status==='pending')  rows=rows.filter(v=>!v.uploaded&&v.file_exists);
+    if(status==='uploaded') rows=rows.filter(v=>v.uploaded);
+    document.getElementById('ytu-count').textContent=rows.length+'개';
+    const tbody=document.getElementById('ytu-conv-tbody');
+    const _LANG_FLAGS={'EN':'🇺🇸','JP':'🇯🇵','CN':'🇨🇳','VN':'🇻🇳','ES':'🇪🇸'};
+    tbody.innerHTML=rows.map(v=>{
+      const flag=_LANG_FLAGS[v.lang]||'';
+      const fmtLabel=v.fmt==='reels'?'<span style="color:var(--purple,#a78bfa)">📱 쇼츠</span>':'<span style="color:var(--red)">▶ YouTube</span>';
+      const fileIcon=v.file_exists?'<span style="color:var(--green)">●</span>':'<span style="color:var(--red)">✗</span>';
+      const statusBadge=v.uploaded?'<span class="badge badge-g" style="font-size:.65rem;">완료</span>':'<span class="badge badge-m" style="font-size:.65rem;">대기</span>';
+      const dt=v.rendered_at?v.rendered_at.substring(0,10):'';
+      const btn=v.uploaded
+        ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
+        :v.file_exists
+          ?`<button class="btn btn-g" style="font-size:.65rem;padding:2px 8px;" onclick="ytUploadConv('${v.theme_id}','${v.lang}','${v.fmt}',this)">업로드</button>`
+          :`<span style="font-size:.65rem;color:var(--red);">파일없음</span>`;
+      return `<tr>
+        <td>${flag} ${v.lang}</td>
+        <td style="font-weight:700;">${v.theme_id}</td>
+        <td>${fmtLabel}</td>
+        <td>${fileIcon}</td>
+        <td>${statusBadge}</td>
+        <td style="color:var(--muted);font-size:.72rem;">${dt}</td>
+        <td>${btn}</td>
+      </tr>`;
+    }).join('');
+  }
+  if(ld) ld.style.display='none';
+}
+
+async function ytUploadWord(wordId, lang, exam, fmt, btnEl){
+  if(!confirm(`[${lang}] 단어 #${wordId} (${fmt==='reels'?'쇼츠':'YouTube'}) 업로드할까요?`)) return;
+  btnEl.disabled=true; btnEl.textContent='업로드 중...';
+  try{
+    const r=await fetch('/api/render/upload',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({word_id:wordId,lang,exam,fmt})});
+    const d=await r.json();
+    if(!r.ok){btnEl.textContent='실패';btnEl.style.color='var(--red)';alert('오류: '+(d.error||''));return;}
+    btnEl.textContent='완료';btnEl.style.color='var(--green)';
+    setTimeout(()=>loadYtUpload(),1500);
+  }catch(e){btnEl.textContent='오류';alert('실패: '+e);}
+}
+
+async function ytUploadConv(themeId, lang, fmt, btnEl){
+  if(!confirm(`[${lang}] 회화 ${themeId} (${fmt==='reels'?'쇼츠':'YouTube'}) 업로드할까요?`)) return;
+  btnEl.disabled=true; btnEl.textContent='업로드 중...';
+  try{
+    const r=await fetch('/api/conv/upload',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({theme_id:themeId,lang,fmt})});
+    const d=await r.json();
+    if(!r.ok){btnEl.textContent='실패';btnEl.style.color='var(--red)';alert('오류: '+(d.error||''));return;}
+    btnEl.textContent='완료';btnEl.style.color='var(--green)';
+    setTimeout(()=>loadYtUpload(),1500);
+  }catch(e){btnEl.textContent='오류';alert('실패: '+e);}
 }
 
 // ── Instagram ────────────────────────────────────────────────
@@ -5072,6 +5784,86 @@ const _DAILY_FLAG={'EN':'🇺🇸','CN':'🇹🇼','JP':'🇯🇵','VN':'🇻�
 const _DAILY_NAME={'EN':'English','CN':'中文','JP':'日本語','VN':'Tiếng Việt','ES':'Español'};
 let _dailyPollTimer=null;
 
+// ── pill 그룹 유틸 ────────────────────────────────────────────
+function _activatePill(groupId, value, cls='on'){
+  const g=document.getElementById(groupId);
+  if(!g)return;
+  g.querySelectorAll('.pill').forEach(p=>{
+    p.classList.remove('on','on-green');
+    if(p.dataset.v===value) p.classList.add(cls);
+  });
+}
+
+async function setBatchPill(groupId, btn, key){
+  const v=btn.dataset.v;
+  _activatePill(groupId,v);
+  await saveBatchConfig({[key]:v});
+}
+
+async function saveBatchConfig(patch){
+  await fetch('/api/daily/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(patch)});
+}
+
+// ── 자동 설명 텍스트 업데이트 ─────────────────────────────────
+const _FREQ_LABEL={'daily':'매일','every2days':'이틀에 1개','every3days':'삼일에 1개',
+                   '2perday':'하루 2개','3perday':'하루 3개'};
+function _updateAutoDesc(s){
+  const el=document.getElementById('daily-auto-desc');
+  if(!el)return;
+  const wf=_FREQ_LABEL[s.word_freq||'daily']||'매일';
+  const pf=_FREQ_LABEL[s.phrase_freq||'every2days']||'이틀에 1개';
+  el.textContent=`단어 ${wf} · 회화 ${pf} · 5개 언어 · 현지 아침 7:30`;
+}
+
+function _updateScheduleStatus(s){
+  s=s||{};
+  const sd=document.getElementById('auto-start-date');
+  const startDate=(sd&&sd.value)||s.auto_start_date||'';
+  const statusEl=document.getElementById('daily-schedule-status');
+  const descEl=document.getElementById('daily-schedule-desc');
+  if(!startDate){
+    if(statusEl) statusEl.textContent='기준일 미설정';
+    if(descEl) descEl.textContent='기준일을 설정하면 단어·회화 각각의 빈도 설정에 따라 자동 스케줄이 계산됩니다.';
+    return;
+  }
+  const today=new Date().toISOString().slice(0,10);
+  const wf=s.word_freq||'daily';
+  const pf=s.phrase_freq||'every2days';
+  const _wint={'daily':1,'every2days':2,'every3days':3,'2perday':1,'3perday':1};
+  const _wcnt={'daily':1,'every2days':1,'every3days':1,'2perday':2,'3perday':3};
+  const _pint={'daily':1,'every2days':2,'every3days':3};
+  const wi=_wint[wf]||1, wc=_wcnt[wf]||1, pi=_pint[pf]||2;
+  // 오늘이 단어/회화 실행일인지 계산
+  const d0=new Date(startDate), dt=new Date(today);
+  const diff=Math.round((dt-d0)/(1000*86400));
+  const wordRuns= diff>=0 && diff%wi===0;
+  const phraseRuns= diff>=0 && diff%pi===0;
+  const isAfterStart= dt>=d0;
+  if(statusEl){
+    if(!isAfterStart) statusEl.innerHTML=`<span style="color:var(--amber);">⏳ ${startDate} 대기 중</span>`;
+    else statusEl.innerHTML=`<span style="color:var(--green);">● 진행 중 (D+${diff})</span>`;
+  }
+  if(descEl){
+    const wNext=wordRuns?'오늘':_nextRunDate(startDate,wi,today);
+    const pNext=phraseRuns?'오늘':_nextRunDate(startDate,pi,today);
+    descEl.innerHTML=`단어: <b style="color:var(--blue);">${_FREQ_LABEL[wf]||wf}</b> ${wc>1?wc+'개':'1개'}/일 — 다음 실행 <b>${wNext}</b><br>`+
+      `회화: <b style="color:var(--green);">${_FREQ_LABEL[pf]||pf}</b> — 다음 실행 <b>${pNext}</b>`;
+  }
+}
+
+function _nextRunDate(startDate, interval, today){
+  try{
+    const d0=new Date(startDate), dt=new Date(today);
+    const diff=Math.round((dt-d0)/(1000*86400));
+    const rem=diff%interval;
+    const daysLeft=rem===0?0:(interval-rem);
+    if(daysLeft===0) return '오늘';
+    const next=new Date(dt); next.setDate(next.getDate()+daysLeft);
+    return next.toISOString().slice(5,10); // MM-DD
+  }catch(e){return '?';}
+}
+
 async function loadDailyStatus(){
   const r=await fetch('/api/daily/status');
   if(!r.ok)return;
@@ -5101,11 +5893,16 @@ async function loadDailyStatus(){
 
   // 일러스트 배지
   const ibadge=document.getElementById('daily-illust-badge');
-  if(ibadge) ibadge.innerHTML=s.illust_done
-    ?`<span style="color:var(--green);font-weight:700;">✓ 일러스트</span>`
-    :`<span style="color:var(--amber);">⏳ 일러스트 생성 중...</span>`;
+  if(ibadge){
+    if(s.illust_done)
+      ibadge.innerHTML=`<span style="color:var(--green);font-weight:700;">✓ 일러스트</span>`;
+    else if(d.illust_generating)
+      ibadge.innerHTML=`<span style="color:var(--amber);">⏳ 일러스트 생성 중...</span>`;
+    else
+      ibadge.innerHTML='';
+  }
 
-  // 언어별 상태 테이블
+  // 언어별 상태 테이블 (단어)
   const tbody=document.getElementById('daily-lang-tbody');
   const stCell=(ok,rendering)=>ok
     ?`<span style="color:var(--green);font-weight:700;">✓</span>`
@@ -5113,29 +5910,58 @@ async function loadDailyStatus(){
   const rows=_DAILY_LANGS.map(lg=>{
     const ls=(s.langs||{})[lg]||{};
     const ytOk=ls.youtube_rendered,rlOk=ls.reels_rendered;
-    const ytUp=ls.youtube_uploaded,rlUp=ls.reels_uploaded;
+    const ytUp=ls.youtube_uploaded;
     const isRend=d.rendering;
-    const vidLink=ls.youtube_video_id?`<a href="https://youtube.com/watch?v=${ls.youtube_video_id}" target="_blank" style="color:var(--green);font-size:.65rem;">▶</a>`:'';
-    const rlLink=ls.reels_video_id?`<a href="https://youtube.com/watch?v=${ls.reels_video_id}" target="_blank" style="color:var(--green);font-size:.65rem;">▶</a>`:'';
-    const uploadCell=ytUp?`<span style="color:var(--green);font-size:.65rem;">✓ 예약완료 ${vidLink}${rlLink}</span>`
-      :`<span style="color:var(--muted2);font-size:.65rem;">${ls.publish_local||ls.publish_at||''}</span>`;
-    return `<tr style="border-top:1px solid var(--border);">
-      <td style="padding:4px 6px;">${_DAILY_FLAG[lg]||''} ${_DAILY_NAME[lg]||lg}</td>
-      <td style="text-align:center;padding:4px 6px;">${stCell(ytOk,isRend)}</td>
-      <td style="text-align:center;padding:4px 6px;">${stCell(rlOk,isRend)}</td>
-      <td style="padding:4px 6px;">${uploadCell}</td>
+    const vidLink=ls.youtube_video_id?`<a href="https://youtube.com/watch?v=${ls.youtube_video_id}" target="_blank" style="color:var(--green);font-size:.62rem;">▶</a>`:'';
+    const rlLink=ls.reels_video_id?`<a href="https://youtube.com/watch?v=${ls.reels_video_id}" target="_blank" style="color:var(--green);font-size:.62rem;">▶</a>`:'';
+    const uplCell=ytUp
+      ?`<span style="color:var(--green);font-weight:700;">✓</span> ${vidLink}${rlLink}`
+      :`<span style="color:var(--muted2);">○</span>`;
+    const schedCell=`<span style="font-size:.62rem;color:var(--muted2);">${ls.publish_local||ls.publish_at||'—'}</span>`;
+    return `<tr>
+      <td>${_DAILY_FLAG[lg]||''} ${_DAILY_NAME[lg]||lg}</td>
+      <td style="text-align:center;">${stCell(ytOk,isRend)}</td>
+      <td style="text-align:center;">${stCell(rlOk,isRend)}</td>
+      <td style="text-align:center;">${uplCell}</td>
+      <td>${schedCell}</td>
     </tr>`;
   }).join('');
   tbody.innerHTML=rows;
 
   // 렌더링 상태
   const rs=document.getElementById('daily-render-status');
-  if(d.rendering){
-    rs.style.display='block';
-    rs.textContent='⏳ 렌더링 중...';
-  } else {
-    rs.style.display='none';
+  if(d.rendering){rs.style.display='block';rs.textContent='⏳ 단어 렌더링 중...';}
+  else rs.style.display='none';
+
+  // ── 설정 pill 동기화 (첫 로드 시 한 번만) ──
+  if(!loadDailyStatus._pillsInit){
+    loadDailyStatus._pillsInit=true;
+    _activatePill('word-freq-group',    s.word_freq||'daily');
+    _activatePill('word-render-group',  s.word_render||'auto');
+    _activatePill('word-illust-group',  s.word_illust||'auto');
+    _activatePill('phrase-freq-group',  s.phrase_freq||'every2days');
+    _activatePill('phrase-render-group',s.phrase_render||'auto');
+    _activatePill('phrase-illust-group',s.phrase_illust||'auto');
+    const pb=document.getElementById('phrase-prebuf-h');
+    if(pb&&s.phrase_prebuffer_h) pb.value=s.phrase_prebuffer_h;
+    const wb=document.getElementById('word-prebuf-h');
+    if(wb&&s.word_prebuffer_h) wb.value=s.word_prebuffer_h;
+    const sd=document.getElementById('auto-start-date');
+    if(sd&&s.auto_start_date) sd.value=s.auto_start_date;
+    _updateScheduleStatus(s);
   }
+
+  // ── 회화 다음 예정 배지 ──
+  const pnb=document.getElementById('daily-phrase-next-badge');
+  if(pnb){
+    if(s.phrase_due) pnb.innerHTML=`<span style="color:var(--amber);">● 오늘 예정</span>`;
+    else if(s.phrase_last_date) pnb.textContent=`마지막: ${s.phrase_last_date}`;
+    else pnb.textContent='';
+  }
+
+  // ── 자동 설명 업데이트 ──
+  _updateAutoDesc(s);
+  _updateScheduleStatus(s);
 }
 
 const _DAILY_LANGS=['EN','CN','JP','VN','ES'];
@@ -5145,8 +5971,7 @@ async function setDailyAuto(on){
   const knob=document.getElementById('daily-toggle-knob');
   slider.style.background=on?'var(--green)':'#444';
   knob.style.left=on?'27px':'3px';
-  await fetch('/api/daily/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({auto_upload:on})});
+  await saveBatchConfig({auto_upload:on});
   loadDailyStatus();
 }
 
@@ -5163,8 +5988,18 @@ async function dailySetWord(){
   loadDailyStatus();
 }
 
+async function uploadPhraseToday(){
+  const btn=event.target;
+  btn.disabled=true;btn.textContent='⏳ 업로드 중...';
+  try{
+    await fetch('/api/daily/trigger',{method:'POST'});
+    setTimeout(()=>{loadDailyStatus();btn.disabled=false;btn.textContent='⬆ 회화 업로드';},1500);
+  }catch(e){btn.disabled=false;btn.textContent='⬆ 회화 업로드';}
+}
+
 // 배치 탭 열릴 때 폴링 시작
 function _startDailyPoll(){
+  loadDailyStatus._pillsInit=false; // 탭 열릴 때마다 pill 재동기화
   loadDailyStatus();
   if(_dailyPollTimer)clearInterval(_dailyPollTimer);
   _dailyPollTimer=setInterval(loadDailyStatus,5000);
@@ -5334,7 +6169,7 @@ let _livePollTimer=null;
 
 function rpTab(tab){
   _rpTab=tab;
-  ['batch','custom','illust','history','live','config'].forEach(t=>{
+  ['batch','custom','illust','history','live'].forEach(t=>{
     const v=document.getElementById('rp-'+t);if(v)v.style.display=t===tab?'block':'none';
     const b=document.getElementById('rp-tab-'+t);
     if(b){b.classList.toggle('on',t===tab);}
@@ -5716,9 +6551,14 @@ function toggleRpContent(key){
   _updateRpRenderBtn();
 }
 function toggleRpFmt(key){
-  if(_rpFmt.has(key)) _rpFmt.delete(key);
-  else _rpFmt.add(key);
-  if(_rpFmt.size===0) _rpFmt.add(key); // 최소 1개
+  if(_rpFmt.size===1 && _rpFmt.has(key)){
+    // 이미 단독 선택된 상태 → 둘 다 선택으로 전환
+    _rpFmt.add(key==='youtube'?'reels':'youtube');
+  } else {
+    // 클릭한 포맷만 단독 선택
+    _rpFmt.clear();
+    _rpFmt.add(key);
+  }
   const yBtn=document.getElementById('rp-tog-yt');
   const rBtn=document.getElementById('rp-tog-rl');
   if(yBtn){yBtn.className='btn '+(_rpFmt.has('youtube')?'btn-g':'btn-m');yBtn.style.opacity=_rpFmt.has('youtube')?'1':'.45';}
@@ -5742,7 +6582,7 @@ async function renderBatchAll(){
   btn.disabled=true;btn.textContent='⏳ 요청 중...';
   let started=false;
   try{
-    const autoUpload=document.getElementById('rp-auto-upload').checked;
+    const autoUpload=document.getElementById('rp-auto-upload')?.checked??false;
     const batch=(_batchData||{}).batch||[];
     const fmtList=[..._rpFmt]; // 선택된 포맷 목록
 
@@ -5849,18 +6689,22 @@ function getSelectedFmts(){
 }
 function toggleRowFmt(btn){
   const row=btn.closest('.rc-target-row');
+  const allBtns=[...row.querySelectorAll('.rc-row-fmt')];
   const active=[...row.querySelectorAll('.rc-row-fmt.active')];
-  const isActive=btn.classList.contains('active');
-  if(isActive&&active.length<=1)return; // 최소 1개 유지
-  const fmt=btn.dataset.fmt;
-  const color=fmt==='youtube'?'var(--green)':'var(--amber)';
-  if(isActive){
-    btn.classList.remove('active');
-    btn.style.background='transparent';btn.style.color='var(--muted)';btn.style.borderColor='var(--border)';btn.style.opacity='.45';
-  }else{
-    btn.classList.add('active');
-    btn.style.background=color+'22';btn.style.color=color;btn.style.borderColor=color;btn.style.opacity='1';
-  }
+  const isAlreadySole=active.length===1&&btn.classList.contains('active');
+  // 클릭한 포맷만 단독 선택 (이미 단독이면 둘 다 선택으로 전환)
+  allBtns.forEach(b=>{
+    const bFmt=b.dataset.fmt;
+    const bColor=bFmt==='youtube'?'var(--green)':'var(--amber)';
+    const select=isAlreadySole||(b===btn);
+    if(select){
+      b.classList.add('active');
+      b.style.background=bColor+'22';b.style.color=bColor;b.style.borderColor=bColor;b.style.opacity='1';
+    }else{
+      b.classList.remove('active');
+      b.style.background='transparent';b.style.color='var(--muted)';b.style.borderColor='var(--border)';b.style.opacity='.45';
+    }
+  });
   updateCustomPreview();
 }
 function toggleLangBtn(btn){
@@ -5973,8 +6817,9 @@ function removeTargetRow(el){
 }
 
 function toggleConvSection(){
-  const en=document.getElementById('rc-conv-enabled').checked;
-  document.getElementById('rc-conv-detail').style.display=en?'block':'none';
+  const en=document.getElementById('rc-conv-enabled')?.checked??false;
+  const detailEl=document.getElementById('rc-conv-detail');
+  if(detailEl) detailEl.style.display=en?'block':'none';
   updateCustomPreview();
 }
 
@@ -6129,13 +6974,15 @@ async function startCustomRender(){
       const d=await r.json();
       if(!r.ok){alert('단어 렌더링 오류: '+(d.error||''));btn.disabled=false;btn.textContent='▶ 렌더링 시작';return;}
     }
-    // 회화 렌더링 (범위 확장)
+    // 회화 렌더링 (선택된 포맷만)
     for(const t of convTargets){
       const epIds=parseIds(t.conv_range);
       for(const epId of epIds){
         for(const lang of langs){
-          await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({theme_id:String(epId),lang,target:renderTarget})});
+          for(const fmt of (t.fmts||['youtube'])){
+            await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({theme_id:String(epId),lang,target:renderTarget,fmt})});
+          }
         }
       }
     }
@@ -6996,4 +7843,14 @@ if __name__ == "__main__":
     if prog.get("status") == "running":
         save_json(ILLUST_PROG_F, {**prog, "status": "cancelled",
                                   "cancelled_at": datetime.now().isoformat()})
+    # global_queue.json의 stale 'running' 잡 정리
+    gq = load_global_queue()
+    stale_fixed = False
+    for j in gq.get("jobs", []):
+        if j.get("status") == "running":
+            j["status"] = "cancelled"
+            j["completed_at"] = datetime.now().isoformat()
+            stale_fixed = True
+    if stale_fixed:
+        save_global_queue(gq)
     app.run(host="0.0.0.0", port=8765, debug=False)
