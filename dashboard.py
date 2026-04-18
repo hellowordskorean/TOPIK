@@ -19,6 +19,7 @@ ILLUST_PROG_F = f"{BASE}/logs/illust_progress.json"
 RENDER_CONFIG   = f"{BASE}/logs/render_config.json"
 QUEUE_FILE      = f"{BASE}/logs/render_queue.json"
 SCHEDULE_CONFIG = f"{BASE}/logs/schedule_config.json"
+UPLOAD_SCHED_F  = f"{BASE}/logs/upload_schedule_config.json"
 BATCH_QUEUE_F   = f"{BASE}/logs/batch_queue.json"
 ILLUST_USAGE_F  = f"{BASE}/logs/illust_usage.json"
 DAILY_AUTO_F    = f"{BASE}/logs/daily_auto.json"
@@ -1370,6 +1371,72 @@ def run_conv_upload(theme_id: str, lang: str, fmt: str = "youtube"):
         import traceback; traceback.print_exc()
         return None, str(e)
 
+def _run_upload_batch(count: int, lang: str = "", fmt: str = "", tab: str = "word") -> dict:
+    """스케줄에 따라 대기 중인 영상을 count개 업로드"""
+    done = 0
+    errors = []
+    try:
+        if tab == "word":
+            videos = load_json(VIDEOS_LOG, [])
+            uploads = load_json(UPLOADS_LOG, {"uploaded": []})
+            uploaded_keys = set()
+            for u in uploads.get("uploaded", []):
+                uploaded_keys.add((u["word_id"], u.get("lang", "EN"), u.get("fmt", "youtube")))
+            pending = []
+            for v in videos:
+                _path = v.get("output_path", "")
+                _fmt = v.get("fmt") or ("reels" if "/reels/" in _path or "_reels" in _path else "youtube")
+                _lang = v.get("language", "EN")
+                if lang and _lang != lang:
+                    continue
+                if fmt and _fmt != fmt:
+                    continue
+                key = (v["word_id"], _lang, _fmt)
+                if key not in uploaded_keys and os.path.exists(_path):
+                    pending.append((v, _lang, _fmt, _path))
+            for v, _lang, _fmt, _path in pending[:count]:
+                try:
+                    db = get_words_db()
+                    word = next((w for w in db if w["id"] == v["word_id"]), None)
+                    if not word:
+                        errors.append(f"단어 없음: id={v['word_id']}")
+                        continue
+                    vid = run_upload(word, _path, exam=v.get("exam", "TOPIK"), lang=_lang, fmt=_fmt)
+                    if vid:
+                        done += 1
+                    else:
+                        errors.append(f"업로드 실패: {v['word_id']} ({_lang}/{_fmt})")
+                except Exception as e:
+                    errors.append(str(e)[:200])
+        else:
+            # conv 탭
+            conv_log = load_json(CONV_LOG_F, [])
+            pending = []
+            for c in conv_log:
+                if c.get("uploaded"):
+                    continue
+                _lang = c.get("lang", "EN")
+                _fmt  = c.get("fmt", "youtube")
+                _path = c.get("video_path", "")
+                if lang and _lang != lang:
+                    continue
+                if fmt and _fmt != fmt:
+                    continue
+                if os.path.exists(_path):
+                    pending.append(c)
+            for c in pending[:count]:
+                try:
+                    vid, err = run_conv_upload(str(c.get("theme_id")), c.get("lang", "EN"), c.get("fmt", "youtube"))
+                    if vid:
+                        done += 1
+                    else:
+                        errors.append(f"회화 업로드 실패: {c.get('theme_id')} ({c.get('lang')}) — {err}")
+                except Exception as e:
+                    errors.append(str(e)[:200])
+    except Exception as e:
+        errors.append(f"배치 전체 오류: {str(e)[:300]}")
+    return {"done": done, "errors": errors}
+
 # ─── 일별 자동 렌더링·업로드 시스템 ─────────────────────────
 _daily_rendering = False
 _daily_render_lock = threading.Lock()
@@ -1791,6 +1858,21 @@ def _daily_auto_tick():
                     s["phrase_due"] = False
                     s["phrase_last_date"] = s.get("today", "")
                     save_json(DAILY_AUTO_F, s)
+
+        # ── 업로드 스케줄 체크 ────────────────────────────────
+        usched = load_json(UPLOAD_SCHED_F, {})
+        if usched.get("enabled"):
+            interval = int(usched.get("interval_days", 1))
+            last_run = usched.get("last_run") or "2000-01-01"
+            if _is_schedule_day(today, last_run, interval) and today != last_run:
+                _run_upload_batch(
+                    int(usched.get("count", 2)),
+                    usched.get("lang", ""),
+                    usched.get("fmt", ""),
+                    usched.get("tab", "word")
+                )
+                usched["last_run"] = today
+                save_json(UPLOAD_SCHED_F, usched)
 
     except Exception as e:
         print(f"  [daily_tick] {e}")
@@ -2308,6 +2390,33 @@ def api_yt_upload_status():
         })
 
     return jsonify({"word_videos": word_videos, "conv_videos": conv_videos})
+
+@app.route("/api/youtube/upload-schedule", methods=["GET"])
+def api_get_upload_schedule():
+    return jsonify(load_json(UPLOAD_SCHED_F, {
+        "enabled": False, "interval_days": 1, "count": 2,
+        "lang": "", "fmt": "", "tab": "word", "last_run": None
+    }))
+
+@app.route("/api/youtube/upload-schedule", methods=["POST"])
+def api_save_upload_schedule():
+    data = request.get_json(silent=True) or {}
+    save_json(UPLOAD_SCHED_F, data)
+    return jsonify({"ok": True})
+
+@app.route("/api/youtube/upload-run", methods=["POST"])
+def api_upload_run():
+    data = request.get_json(silent=True) or {}
+    cfg = load_json(UPLOAD_SCHED_F, {})
+    count = int(data.get("count", cfg.get("count", 2)))
+    lang  = data.get("lang", cfg.get("lang", ""))
+    fmt   = data.get("fmt",  cfg.get("fmt",  ""))
+    tab   = data.get("tab",  cfg.get("tab",  "word"))
+    result = _run_upload_batch(count, lang, fmt, tab)
+    cfg_now = load_json(UPLOAD_SCHED_F, {})
+    cfg_now["last_run"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(UPLOAD_SCHED_F, cfg_now)
+    return jsonify(result)
 
 # ─── Instagram API ────────────────────────────────────────────
 IG_TOKEN_F = f"{BASE}/logs/instagram_token.json"
@@ -4185,6 +4294,50 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
 <!-- ══ YouTube 업로드 관리 ════════════════════════════════ -->
 <div id="view-yt-upload" class="view">
   <div class="bc"><span class="cur">📤 YouTube 업로드 관리</span></div>
+  <!-- 업로드 스케줄 설정 패널 -->
+  <div id="ytu-sched-panel" class="card" style="margin-bottom:12px;padding:14px 16px;">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span style="font-weight:700;font-size:.82rem;">⏱ 업로드 스케줄</span>
+      <!-- ON/OFF 토글 -->
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <div id="ytu-sched-toggle-wrap" onclick="ytSchedToggle()" style="width:44px;height:22px;border-radius:11px;background:#333;position:relative;cursor:pointer;transition:background .2s;">
+          <div id="ytu-sched-knob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+        </div>
+        <span id="ytu-sched-status" style="font-size:.72rem;color:var(--muted);">OFF</span>
+      </label>
+      <!-- 간격 -->
+      <select id="ytu-sched-interval" class="inp" style="width:110px;">
+        <option value="1">매일</option>
+        <option value="2">격일</option>
+        <option value="3">3일마다</option>
+      </select>
+      <!-- 개수 -->
+      <label style="font-size:.75rem;color:var(--muted);">회당</label>
+      <input id="ytu-sched-count" type="number" min="1" max="10" value="2" class="inp" style="width:60px;">
+      <label style="font-size:.75rem;color:var(--muted);">개</label>
+      <!-- 언어 -->
+      <select id="ytu-sched-lang" class="inp" style="width:90px;">
+        <option value="">전체 언어</option>
+        <option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option>
+        <option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option>
+      </select>
+      <!-- 포맷 -->
+      <select id="ytu-sched-fmt" class="inp" style="width:100px;">
+        <option value="">전체 포맷</option>
+        <option value="youtube">▶ YouTube</option>
+        <option value="reels">📱 쇼츠</option>
+      </select>
+      <!-- 탭 -->
+      <select id="ytu-sched-tab" class="inp" style="width:80px;">
+        <option value="word">단어</option>
+        <option value="conv">회화</option>
+      </select>
+      <!-- 버튼 -->
+      <button onclick="ytSchedSave()" class="btn btn-m" style="font-size:.72rem;">저장</button>
+      <button id="ytu-sched-run-btn" onclick="ytSchedRun()" class="btn btn-g" style="font-size:.72rem;">▶ 지금 실행</button>
+      <span id="ytu-sched-last" style="font-size:.66rem;color:var(--muted);margin-left:auto;"></span>
+    </div>
+  </div>
   <!-- 필터 & 액션 바 -->
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
     <select id="ytu-lang" onchange="ytUploadFilter()" class="inp">
@@ -5286,6 +5439,77 @@ async function loadYoutubeChannels(){
 let _ytuData = {word_videos:[], conv_videos:[]};
 let _ytuTab = 'word';
 
+let _ytSchedEnabled = false;
+
+async function loadYtSched(){
+  try{
+    const r=await fetch('/api/youtube/upload-schedule');
+    const s=await r.json();
+    _ytSchedEnabled=!!s.enabled;
+    document.getElementById('ytu-sched-interval').value=String(s.interval_days||1);
+    document.getElementById('ytu-sched-count').value=String(s.count||2);
+    document.getElementById('ytu-sched-lang').value=s.lang||'';
+    document.getElementById('ytu-sched-fmt').value=s.fmt||'';
+    document.getElementById('ytu-sched-tab').value=s.tab||'word';
+    const last=s.last_run?`마지막 실행: ${s.last_run}`:'';
+    document.getElementById('ytu-sched-last').textContent=last;
+    _ytSchedRenderToggle();
+  }catch(e){}
+}
+
+function _ytSchedRenderToggle(){
+  const wrap=document.getElementById('ytu-sched-toggle-wrap');
+  const knob=document.getElementById('ytu-sched-knob');
+  const status=document.getElementById('ytu-sched-status');
+  if(!wrap) return;
+  wrap.style.background=_ytSchedEnabled?'var(--green)':'#333';
+  knob.style.left=_ytSchedEnabled?'24px':'2px';
+  status.textContent=_ytSchedEnabled?'ON':'OFF';
+  status.style.color=_ytSchedEnabled?'var(--green)':'var(--muted)';
+}
+
+function ytSchedToggle(){
+  _ytSchedEnabled=!_ytSchedEnabled;
+  _ytSchedRenderToggle();
+}
+
+async function ytSchedSave(){
+  const body={
+    enabled:_ytSchedEnabled,
+    interval_days:parseInt(document.getElementById('ytu-sched-interval').value)||1,
+    count:parseInt(document.getElementById('ytu-sched-count').value)||2,
+    lang:document.getElementById('ytu-sched-lang').value,
+    fmt:document.getElementById('ytu-sched-fmt').value,
+    tab:document.getElementById('ytu-sched-tab').value,
+  };
+  try{
+    await fetch('/api/youtube/upload-schedule',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    alert('저장됨');
+  }catch(e){alert('저장 실패: '+e);}
+}
+
+async function ytSchedRun(){
+  const btn=document.getElementById('ytu-sched-run-btn');
+  const count=parseInt(document.getElementById('ytu-sched-count').value)||2;
+  const lang=document.getElementById('ytu-sched-lang').value;
+  const fmt=document.getElementById('ytu-sched-fmt').value;
+  const tab=document.getElementById('ytu-sched-tab').value;
+  if(!confirm(`지금 ${count}개 업로드 실행할까요?`)) return;
+  btn.disabled=true; btn.textContent='업로드 중...';
+  try{
+    const r=await fetch('/api/youtube/upload-run',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({count,lang,fmt,tab})});
+    const d=await r.json();
+    if(!r.ok){alert('오류: '+(d.error||''));return;}
+    alert(`완료: ${d.done}개 업로드됨${d.errors?.length?' / 오류: '+d.errors.length+'건':''}`);
+    document.getElementById('ytu-sched-last').textContent=`마지막 실행: ${new Date().toISOString().slice(0,10)}`;
+    loadYtUpload();
+  }catch(e){alert('실패: '+e);}
+  finally{btn.disabled=false; btn.textContent='▶ 지금 실행';}
+}
+
 async function loadYtUpload(){
   const ld=document.getElementById('ytu-loading');
   if(ld) ld.style.display='block';
@@ -5294,6 +5518,7 @@ async function loadYtUpload(){
     const d=await r.json();
     _ytuData=d;
     ytUploadFilter();
+    loadYtSched();
   }catch(e){
     if(ld) ld.style.display='none';
     alert('로드 실패: '+e);
