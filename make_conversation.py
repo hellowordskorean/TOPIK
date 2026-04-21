@@ -32,6 +32,11 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from google.cloud import texttospeech
 
+try:
+    from make_thumbnail import make_conv_thumbnail as _make_conv_thumb
+except Exception:
+    _make_conv_thumb = None
+
 # ─── 경로 설정 ────────────────────────────────────────────────
 _APP_BASE = os.environ.get("APP_BASE", str(Path(__file__).parent))
 
@@ -526,17 +531,39 @@ def _conv_tts_cache_path(cache_path_override: str, text: str, lang: str, slow: b
 
 def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
                    cache_path: str = None, is_resp: bool = False):
-    """GCP TTS 음성 생성 (캐시 지원).
+    """GCP TTS 음성 생성 (캐시 지원 + 텍스트 변경 감지).
     is_resp=False → 학습자 목소리 (여아, pitch +4)
-    is_resp=True  → 응답자 목소리 (다른 목소리, pitch 기본값)"""
+    is_resp=True  → 응답자 목소리 (다른 목소리, pitch 기본값)
+    cache_path 명시 시: 파일명이 예문 번호로 고정되므로 .txt 짝 파일로
+    텍스트 변경 감지 필수. MD5 캐시는 키 자체가 텍스트에 묶여 있어 안전.
+    """
     voice_table = _TTS_VOICES_RESP if is_resp else _TTS_VOICES
     lc, vname, gender = voice_table.get(lang.lower(), voice_table.get("en", _TTS_VOICES["en"]))
     pitch = 0.0 if is_resp else _LEARNER_PITCH
 
     cp = _conv_tts_cache_path(cache_path, text, lang, slow, vname, pitch)
+    _is_md5_cache = (cache_path is None)
     if os.path.exists(cp) and os.path.getsize(cp) > 0:
-        shutil.copy2(cp, output_path)
-        return
+        txt_path = cp + ".txt"
+        if os.path.exists(txt_path):
+            try:
+                cached_text = open(txt_path, encoding="utf-8").read()
+            except Exception:
+                cached_text = None
+            if cached_text == text:
+                shutil.copy2(cp, output_path)
+                return
+            # 텍스트 변경 — 무효화 후 재생성
+            os.remove(cp); os.remove(txt_path)
+        elif _is_md5_cache:
+            # MD5 캐시는 키가 텍스트에 묶여 있으므로 안전
+            shutil.copy2(cp, output_path)
+            return
+        else:
+            # 명시적 cache_path인데 .txt 없음 — 옛 버전 캐시일 수 있으므로 안전하게 무효화
+            print(f"  [cache] .txt 짝 파일 없음 — 재생성: {os.path.basename(cp)}")
+            os.remove(cp)
+
     _sa = os.path.join(os.path.dirname(__file__), "secrets", "gcp_service_account.json")
     if os.path.exists(_sa) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _sa
@@ -553,9 +580,14 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
         input=synthesis_input, voice=voice, audio_config=audio_config)
     with open(output_path, "wb") as f:
         f.write(response.audio_content)
-    # 캐시 저장
+    # 캐시 저장 (+ .txt 짝 파일)
     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
         shutil.copy2(output_path, cp)
+        try:
+            with open(cp + ".txt", "w", encoding="utf-8") as _f:
+                _f.write(text)
+        except Exception:
+            pass
 
 def get_audio_duration(path: str) -> float:
     if not os.path.exists(path):
@@ -725,8 +757,9 @@ def render_dialogue_frame(
     sent_key = lang.lower()
 
     # ── 일러스트 (크로마키 영역에 삽화 붙여넣기) ──────────────
+    _illust_dir = os.environ.get("ILLUST_DIR_NAME", "phrase_illustrations")
     illust_path = _app_path(
-        f"assets/phrase_illustrations/sit_{theme_id}/phrase_{phrase_idx + 1}.png"
+        f"assets/{_illust_dir}/sit_{theme_id}/phrase_{phrase_idx + 1}.png"
     )
     iw = ILLUST_R - ILLUST_L
     ih = ILLUST_B - ILLUST_T
@@ -1181,7 +1214,8 @@ def render_intro_frame(theme: dict, lang: str, progress: float = 1.0) -> Image.I
     illust_radius = 32
 
     theme_id     = theme.get("id", 0)
-    intro_illust = _app_path(f"assets/phrase_illustrations/sit_{theme_id}/intro.png")
+    _illust_dir = os.environ.get("ILLUST_DIR_NAME", "phrase_illustrations")
+    intro_illust = _app_path(f"assets/{_illust_dir}/sit_{theme_id}/intro.png")
     if os.path.exists(intro_illust):
         try:
             illust_raw = Image.open(intro_illust).convert("RGBA")
@@ -1407,7 +1441,7 @@ def _make_silence(path: str, dur: float = 0.5):
 def create_conversation_video(theme: dict, phrases: list, output_path: str,
                                lang: str, tmpdir: str, fmt: str = "youtube"):
     if fmt == "reels":
-        phrases = phrases[:6]
+        phrases = phrases[:5]   # 최대 5구문으로 시작, 이후 58초 초과 시 동적으로 제거
     sent_key = lang.lower()
     total = len(phrases)
     lang_lower = lang.lower()
@@ -1535,6 +1569,20 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
 
     total_duration = INTRO_DUR + sum(phrase_durations) + OUTRO_DUR + ENDING_DUR
 
+    # reels 포맷: 58초 초과 시 마지막 구문을 제거해 쇼츠 60초 제한을 맞춤
+    if fmt == "reels":
+        REELS_MAX_DUR = 58.0
+        while total_duration > REELS_MAX_DUR and len(phrase_durations) > 1:
+            phrase_durations.pop()
+            phrase_seg_durs.pop()
+            # audio_timeline에서 해당 구문의 TTS 4개 엔트리 제거
+            audio_timeline = audio_timeline[:-4]
+            total_duration = INTRO_DUR + sum(phrase_durations) + OUTRO_DUR + ENDING_DUR
+            print(f"  [쇼츠] 58초 초과 → {len(phrase_durations)}구문으로 축소 ({total_duration:.1f}초)")
+        # 렌더링 루프와 아웃트로에 넘기는 phrases도 동일하게 축소
+        phrases = phrases[:len(phrase_durations)]
+        total = len(phrases)
+
     write_progress("3/4 프레임 렌더링 중...", pct=30, theme_id=theme["id"], lang=lang)
     print(f"  3/4 프레임 렌더링 중... (총 {total_duration:.1f}초)")
 
@@ -1566,6 +1614,11 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
     def _pct(n):
         return 30 + int(55 * n / max(1, total_frames))
 
+    # ── 정적 프레임 사전 렌더 (동일 프레임은 1회만 PIL 호출) ────
+    _intro_bytes  = render_intro_frame(theme, lang, progress=1.0).tobytes()
+    _outro_bytes  = render_outro_frame(theme, phrases, lang, progress=1.0).tobytes()
+    _ending_bytes = render_reels_ending_frame(lang, progress=1.0).tobytes()
+
     # 인트로 프레임
     for f in range(intro_frames):
         rendered += 1
@@ -1573,22 +1626,23 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
             write_progress("3/4 프레임 렌더링 중... (인트로)",
                            pct=_pct(rendered), theme_id=theme["id"], lang=lang,
                            frame=rendered, total_frames=total_frames)
-        save_frame(render_intro_frame(theme, lang, progress=1.0))
+        pipe_proc.stdin.write(_intro_bytes)
 
     # 구문 프레임 (까딱 애니메이션 포함)
     BOB_AMP  = 8     # 얼굴 상하 진폭 (px)
     BOB_FREQ = 2.8   # 초당 진동 횟수 (Hz)
 
     for i, ph in enumerate(phrases):
-        dur       = phrase_durations[i]
         ph_frames = phrase_frames[i]
         my_ko_d, my_tl_d, resp_ko_d, resp_tl_d = phrase_seg_durs[i]
 
-        # 구문 내 발화 구간 (구문 시작 기준)
         t_my_start   = PRE_GAP
         t_my_end     = t_my_start + my_ko_d + KO_TL_GAP + my_tl_d
         t_resp_start = t_my_end + PAIR_GAP
         t_resp_end   = t_resp_start + resp_ko_d + KO_TL_GAP + resp_tl_d
+
+        # 구문별 bob 조합 캐시 (동일 bob 값 재사용)
+        _ph_cache: dict = {}
 
         for f in range(ph_frames):
             rendered += 1
@@ -1599,7 +1653,6 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
                     frame=rendered, total_frames=total_frames)
             phrase_t = f / FPS
 
-            # 까딱: 발화 구간에서만 사인파 오프셋
             if t_my_start <= phrase_t < t_my_end:
                 bob_my   = int(BOB_AMP * math.sin(2 * math.pi * BOB_FREQ * phrase_t))
                 bob_resp = 0
@@ -1609,9 +1662,12 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
             else:
                 bob_my = bob_resp = 0
 
-            save_frame(render_phrase_frame(ph, i, total, theme, lang,
-                                           progress=1.0,
-                                           bob_my=bob_my, bob_resp=bob_resp))
+            key = (bob_my, bob_resp)
+            if key not in _ph_cache:
+                _ph_cache[key] = render_phrase_frame(
+                    ph, i, total, theme, lang, progress=1.0,
+                    bob_my=bob_my, bob_resp=bob_resp).tobytes()
+            pipe_proc.stdin.write(_ph_cache[key])
 
     # 아웃트로 프레임
     for f in range(outro_frames):
@@ -1620,7 +1676,7 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
             write_progress("3/4 프레임 렌더링 중... (아웃트로)",
                            pct=_pct(rendered), theme_id=theme["id"], lang=lang,
                            frame=rendered, total_frames=total_frames)
-        save_frame(render_outro_frame(theme, phrases, lang, progress=1.0))
+        pipe_proc.stdin.write(_outro_bytes)
 
     # 쇼츠 전용 엔딩 프레임 (유튜브 본편 안내)
     for f in range(ending_frames):
@@ -1629,7 +1685,7 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
             write_progress("3/4 프레임 렌더링 중... (엔딩)",
                            pct=_pct(rendered), theme_id=theme["id"], lang=lang,
                            frame=rendered, total_frames=total_frames)
-        save_frame(render_reels_ending_frame(lang, progress=1.0))
+        pipe_proc.stdin.write(_ending_bytes)
 
     # Pass 1 완료 — pipe 닫기
     pipe_proc.stdin.close()
@@ -1672,13 +1728,28 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
         input_args += ["-i", music_src]
     music_idx = a_idx + 2  # 0=raw_video, 1=silence, 2..a_idx+1=TTS, a_idx+2=music
 
+    # 배경음악 처리: 영상 총 길이로 정확히 자르고 페이드아웃 (쇼츠가 음악 길이만큼 늘어나는 문제 방지)
+    # - aloop으로 무한 반복 → 음악이 영상보다 짧아도 안전
+    # - atrim으로 영상 총 길이로 자름
+    # - afade로 마지막 1.5초 자연스러운 페이드아웃
+    # - volume 0.08 (기존 weight와 동일)
+    fade_dur = min(1.5, max(0.5, total_duration * 0.05))
+    fade_st  = max(0.0, total_duration - fade_dur)
+    bgm_chain = (
+        f"[{music_idx}:a]aloop=loop=-1:size=2147483647,"
+        f"atrim=duration={total_duration:.3f},"
+        f"afade=t=out:st={fade_st:.3f}:d={fade_dur:.3f},"
+        f"volume=0.08[bgm]"
+    )
+
     # filter_complex & audio_map 결정
     if a_idx > 0 and has_music:
-        # TTS 믹스 → 배경음악 합성
+        # TTS 믹스 → 배경음악 합성 (duration=first로 voice 길이에 정확히 맞춤)
         fc = (
             ";".join(delay_filters) + ";" +
             f"{mix_inputs}amix=inputs={a_idx}:normalize=0:duration=longest[voice];"
-            f"[voice][{music_idx}:a]amix=inputs=2:weights=1 0.08:normalize=0[aout]"
+            f"{bgm_chain};"
+            f"[voice][bgm]amix=inputs=2:duration=first:normalize=0[aout]"
         )
         filter_complex = fc
         audio_map = ["-map", "[aout]"]
@@ -1690,8 +1761,8 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
         )
         audio_map = ["-map", "[aout]"]
     elif has_music:
-        # TTS 없음, 배경음악만
-        filter_complex = f"[{music_idx}:a]avolume=0.08[aout]"
+        # TTS 없음, 배경음악만 — 그래도 영상 길이로 자름
+        filter_complex = bgm_chain.replace("[bgm]", "[aout]")
         audio_map = ["-map", "[aout]"]
     else:
         # TTS도 음악도 없음 → silence 직접 매핑 (filter_complex 불필요)
@@ -1710,6 +1781,8 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
     ] + audio_map + [
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k",
+        # 안전망: 출력 길이를 영상 총 길이로 강제 제한 (오디오가 어떤 이유로든 길어져도 cut)
+        "-t", f"{total_duration:.3f}",
         "-movflags", "+faststart",
         output_path,
     ]
@@ -1730,6 +1803,25 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
     except Exception:
         pass
 
+    # 썸네일 생성 (YouTube 업로드용 1280×720)
+    thumb_path = None
+    if fmt == "youtube" and _make_conv_thumb is not None:
+        try:
+            # 항상 {lang}/thumbnail/ 에 저장
+            base_lang_dir = os.path.normpath(os.path.join(os.path.dirname(output_path), "..")) \
+                            if fmt == "youtube" else os.path.dirname(output_path)
+            # output_path가 base_dir/conv_*.mp4 이므로 dirname이 곧 {lang} 폴더
+            thumb_dir  = os.path.join(os.path.dirname(output_path), "thumbnail")
+            os.makedirs(thumb_dir, exist_ok=True)
+            _thumb_prefix = os.environ.get("THUMB_FILENAME_PREFIX", "conv")
+            thumb_name = f"{_thumb_prefix}_{theme['id']}_{lang}_thumb.png"
+            thumb_path = os.path.normpath(os.path.join(thumb_dir, thumb_name))
+            _make_conv_thumb(theme, lang, thumb_path)
+            print(f"  [OK] 썸네일 저장: {thumb_path}")
+        except Exception as e:
+            print(f"  [WARN] 썸네일 생성 실패: {e}")
+            thumb_path = None
+
     # 로그 저장
     log_path = _app_path("logs/conversations_log.json")
     try:
@@ -1737,13 +1829,16 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
         if os.path.exists(log_path):
             with open(log_path, encoding="utf-8") as f:
                 log = json.load(f)
-        log.append({
+        entry = {
             "theme_id": theme["id"],
             "lang": lang,
             "output_path": output_path,
             "file_size": os.path.getsize(output_path) if os.path.exists(output_path) else 0,
             "generated_at": datetime.now().isoformat(),
-        })
+        }
+        if thumb_path:
+            entry["thumbnail_path"] = thumb_path
+        log.append(entry)
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(log, f, ensure_ascii=False, indent=2)
     except Exception:
@@ -1761,6 +1856,11 @@ if __name__ == "__main__":
                         choices=["EN", "JP", "CN", "VN", "ES"], help="번역 언어")
     parser.add_argument("--output", default="output/", help="출력 루트 폴더")
     parser.add_argument("--format", default="youtube", choices=["youtube", "reels"])
+    parser.add_argument("--subdir", default="conversation", help="출력 서브폴더 (기본: conversation)")
+    parser.add_argument("--illust-dir", default="phrase_illustrations",
+                        help="일러스트 폴더명 (assets/ 하위. 기본: phrase_illustrations, K-드라마: kdrama_illustrations)")
+    parser.add_argument("--filename-prefix", default="conv",
+                        help="출력 파일명 prefix (기본: conv, K-드라마: kdrama)")
     args = parser.parse_args()
 
     # DB 로드
@@ -1843,12 +1943,20 @@ if __name__ == "__main__":
             })
     phrases = pair_phrases
 
-    # 출력 경로
-    out_dir = os.path.join(args.output, "conversation", args.lang)
+    # 출력 경로 — 포맷별 서브폴더
+    base_dir = os.path.join(args.output, args.subdir, args.lang)
+    prefix = args.filename_prefix
+    if args.format == "reels":
+        out_dir = os.path.join(base_dir, "reels")
+        filename = f"{prefix}_{args.theme}_{args.lang}_reels.mp4"
+    else:
+        out_dir = base_dir
+        filename = f"{prefix}_{args.theme}_{args.lang}.mp4"
     os.makedirs(out_dir, exist_ok=True)
-    fmt_suffix = "_reels" if args.format == "reels" else ""
-    filename = f"conv_{args.theme}_{args.lang}{fmt_suffix}.mp4"
     output_path = os.path.join(out_dir, filename)
+    # 일러스트 경로 (K-드라마는 kdrama_illustrations 폴더 사용)
+    os.environ["ILLUST_DIR_NAME"] = args.illust_dir
+    os.environ["THUMB_FILENAME_PREFIX"] = prefix
 
     print(f"\n>> 회화 영상 생성: [{args.lang}] {theme.get('title', {}).get('ko', args.theme)}")
     print(f"   구문 수: {len(phrases)}개 / 포맷: {args.format}")

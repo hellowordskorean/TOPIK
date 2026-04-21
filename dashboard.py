@@ -23,13 +23,16 @@ UPLOAD_SCHED_F  = f"{BASE}/logs/upload_schedule_config.json"
 BATCH_QUEUE_F   = f"{BASE}/logs/batch_queue.json"
 ILLUST_USAGE_F  = f"{BASE}/logs/illust_usage.json"
 DAILY_AUTO_F    = f"{BASE}/logs/daily_auto.json"
-PHRASES_DB_PATH   = f"{BASE}/data/Conversation/phrases_db.json"   # 단일 정규 경로
+PHRASES_DB_PATH   = f"{BASE}/data/Conversation/phrases_db.json"
+KDRAMA_DB_PATH    = f"{BASE}/data/Conversation/kdrama_db.json"
 CONV_DB_PATH    = PHRASES_DB_PATH   # 하위 호환 별칭
 CONV_LOG_F      = f"{BASE}/logs/conv_log.json"
+KDRAMA_LOG_F    = f"{BASE}/logs/kdrama_log.json"
+KDRAMA_ILLUST_DIR   = f"{BASE}/assets/kdrama_illustrations"
+KDRAMA_ILLUST_PROG  = f"{BASE}/logs/kdrama_illust_progress.json"
 PHRASE_DB_F     = PHRASES_DB_PATH   # 하위 호환 별칭
 PHRASE_ILLUST_DIR = f"{BASE}/assets/phrase_illustrations"
 PHRASE_ILLUST_PROG= f"{BASE}/logs/phrase_illust_progress.json"
-PHRASE_VIDEO_DIR  = f"{BASE}/output/phrases"
 PHRASE_VIDEO_LOG  = f"{BASE}/logs/phrase_videos_log.json"
 GLOBAL_QUEUE_F    = f"{BASE}/logs/global_queue.json"
 DESKTOP_PHRASE_Q  = f"{BASE}/logs/desktop_phrase_queue.json"
@@ -214,12 +217,13 @@ def get_words_db():
     return load_json(f"{DATA_ROOT}/LanguageTest/words_db.json", [])
 
 def get_topik_examples(level: int, word_id: int) -> list:
-    """topik_{level}.json (EN)에서 최신 예문 반환. 없으면 빈 리스트."""
-    path = f"{DATA_ROOT}/LanguageTest/TOPIK/EN/topik_{level}.json"
-    data = load_json(path, {})
-    words = data.get("words", [])
-    w = next((x for x in words if x["id"] == word_id), None)
-    return w.get("examples", []) if w else []
+    """words_db.json에서 예문(sentences) 반환 — topik_N.json은 id가 달라 불일치 발생하므로 사용 안 함."""
+    db = get_words_db()
+    w = next((x for x in db if x["id"] == word_id), None)
+    if not w:
+        return []
+    sents = w.get("sentences") or w.get("examples") or []
+    return [{"ko": s.get("ko", ""), "en": s.get("en", "")} for s in sents]
 
 def get_illustration_stats():
     db = get_words_db()
@@ -388,6 +392,35 @@ def _get_playlist_item_count(yt, playlist_id: str) -> int:
         pass
     return 0
 
+def _get_local_upload_counts(lang: str) -> dict:
+    """로컬 uploads.json에서 본편/쇼츠/회화/K드라마 수 집계 (API 불필요)"""
+    bonpyeon = reels = phrase = kdrama = 0
+    try:
+        ul = load_json(f"{BASE}/logs/uploads.json", {}).get("uploaded", [])
+        for u in ul:
+            if u.get("lang") != lang:
+                continue
+            if u.get("type") == "kdrama":
+                kdrama += 1
+            elif u.get("type") == "conversation" or u.get("theme_id"):
+                phrase += 1
+            elif u.get("fmt") == "reels":
+                reels += 1
+            else:
+                bonpyeon += 1
+        # conv_log에서 업로드 완료된 회화도 합산
+        for e in load_json(CONV_LOG_F, []):
+            if e.get("lang") == lang and e.get("uploaded") and e.get("fmt", "youtube") == "youtube":
+                phrase += 1
+        # kdrama_log에서 업로드 완료된 K드라마도 합산
+        for e in load_json(KDRAMA_LOG_F, []):
+            if e.get("lang") == lang and e.get("uploaded") and e.get("fmt", "youtube") == "youtube":
+                kdrama += 1
+    except Exception:
+        pass
+    return {"bonpyeon": bonpyeon, "reels": reels, "phrase": phrase, "kdrama": kdrama}
+
+
 def _get_playlist_type_counts(yt, lang_playlists: dict) -> dict:
     """본편/릴스/회화 플레이리스트 영상 수 집계"""
     bonpyeon = 0
@@ -398,11 +431,58 @@ def _get_playlist_type_counts(yt, lang_playlists: dict) -> dict:
             continue
         if key in ("shorts",):
             reels += _get_playlist_item_count(yt, pid)
-        elif key in ("phrase",):
+        elif key in ("phrase", "phrase_shorts"):
             phrase += _get_playlist_item_count(yt, pid)
         elif key.startswith("lv"):
             bonpyeon += _get_playlist_item_count(yt, pid)
     return {"bonpyeon": bonpyeon, "reels": reels, "phrase": phrase}
+
+
+def _scan_and_save_playlists(yt, lang: str, uy) -> dict:
+    """채널의 모든 플레이리스트를 스캔해 제목으로 매핑, youtube_playlists.json에 저장."""
+    _PT   = getattr(uy, "PLAYLIST_TITLES",              {})
+    _PTS  = getattr(uy, "PLAYLIST_TITLES_SHORTS",        {})
+    _PTP  = getattr(uy, "PLAYLIST_TITLES_PHRASE",        {})
+    _PTPS = getattr(uy, "PLAYLIST_TITLES_PHRASE_SHORTS", {})
+    title_map = {}
+    for lv in range(1, 7):
+        tmpl = _PT.get(lang) or _PT.get("EN", "")
+        if tmpl:
+            title_map[tmpl.format(level=lv)] = f"lv{lv}"
+    if _PTS:  title_map[_PTS.get(lang) or _PTS.get("EN", "")] = "shorts"
+    if _PTP:  title_map[_PTP.get(lang) or _PTP.get("EN", "")] = "phrase"
+    if _PTPS: title_map[_PTPS.get(lang) or _PTPS.get("EN", "")] = "phrase_shorts"
+    title_map.pop("", None)
+
+    found = {}
+    next_page = None
+    while True:
+        kwargs = dict(part="snippet", mine=True, maxResults=50)
+        if next_page:
+            kwargs["pageToken"] = next_page
+        resp = yt.playlists().list(**kwargs).execute()
+        for item in resp.get("items", []):
+            t = item["snippet"]["title"]
+            if t in title_map:
+                found[title_map[t]] = item["id"]
+        next_page = resp.get("nextPageToken")
+        if not next_page:
+            break
+
+    if found:
+        playlists_file = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "secrets", "youtube_playlists.json")
+        try:
+            all_pl = {}
+            if os.path.exists(playlists_file):
+                with open(playlists_file, encoding="utf-8") as f:
+                    all_pl = json.load(f)
+            all_pl.setdefault(lang, {}).update(found)
+            with open(playlists_file, "w", encoding="utf-8") as f:
+                json.dump(all_pl, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+    return found
 
 def get_all_channel_stats():
     """언어별 OAuth 토큰으로 각 채널 통계 조회"""
@@ -456,7 +536,13 @@ def get_all_channel_stats():
                 s    = ch["items"][0]["statistics"]
                 snip = ch["items"][0]["snippet"]
                 lang_playlists = all_playlists.get(lang, {})
+                if not lang_playlists:
+                    lang_playlists = _scan_and_save_playlists(yt, lang, uy)
+                    all_playlists[lang] = lang_playlists
+                # 플레이리스트 API 카운트 시도, 모두 0이면 로컬 로그로 fallback
                 type_counts = _get_playlist_type_counts(yt, lang_playlists) if lang_playlists else {}
+                if not any(type_counts.values()):
+                    type_counts = _get_local_upload_counts(lang)
 
                 # 채널 업로드 플레이리스트에서 실제 video_id 수집
                 uploads_pl = (ch["items"][0]
@@ -585,12 +671,14 @@ def get_batch_for_date(date_str):
     return sorted(result, key=lambda x: x.get("generated_at",""))
 
 # ─── 렌더링 ──────────────────────────────────────────────────
-def write_queue_job(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube"):
+def write_queue_job(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube",
+                    thumb_style="portrait", thumb_only=False):
     if not db_path:
         db_path = "/app/data/LanguageTest/words_db.json"
     job_id = f"{word_id}_{lang}_{fmt}_{int(time.time()*1000)}"
     save_json(QUEUE_FILE,{"job_id":job_id,"word_id":word_id,"db_path":db_path,
-        "exam":exam,"lang":lang,"fmt":fmt,
+        "exam":exam,"lang":lang,"fmt":fmt,"thumb_style":thumb_style,
+        "thumb_only":thumb_only,
         "status":"pending","claimed_by":None,"claimed_at":None,
         "created_at":datetime.now().isoformat(),"completed_at":None})
     return job_id
@@ -705,6 +793,8 @@ def _run_gq_job(job):
             auto_upload = params.get("auto_upload", False)
             exam        = params.get("exam", "TOPIK")
             lang        = params.get("lang", "EN")
+            thumb_style = params.get("thumb_style", "portrait")
+            thumb_only  = params.get("thumb_only", False)
             save_json(BATCH_QUEUE_F, {
                 "status": "running", "total": len(queue_items), "current": 0,
                 "items": queue_items, "target": target,
@@ -712,7 +802,8 @@ def _run_gq_job(job):
             })
             run_batch_render(
                 word_ids=[], target=target, exam=exam, lang=lang,
-                job_items=job_items, auto_upload=auto_upload, words_map=words_map
+                job_items=job_items, auto_upload=auto_upload, words_map=words_map,
+                thumb_style=thumb_style, thumb_only=thumb_only
             )
             bq = load_json(BATCH_QUEUE_F, {})
             if bq.get("status") == "cancelled" or _gq_cancel_requested:
@@ -781,25 +872,32 @@ def _run_gq_job(job):
                 err = (proc.stderr.read() or b"").decode("utf-8", errors="replace")[-400:]
                 _gq_update_job(job_id, "failed", error=err)
 
-        elif jtype in ("conv_video", "phrase_video", "phrase_illust"):
+        elif jtype in ("conv_video", "kdrama_video", "phrase_video", "phrase_illust", "kdrama_illust"):
             cfg = get_render_config()
             if target == "desktop" and cfg.get("desktop_enabled"):
                 _dispatch_to_desktop_phrase(job_id, jtype, params)
-                # conv_video 완료 시 conv_log 업데이트
-                if jtype == "conv_video":
+                # conv/kdrama 영상 완료 시 로그 업데이트
+                if jtype in ("conv_video", "kdrama_video"):
                     q_check = load_global_queue()
                     j_check = next((j for j in q_check["jobs"] if j["id"] == job_id), None)
                     if j_check and j_check["status"] == "done":
                         tid  = str(params.get("theme_id"))
                         lang = params.get("lang", "EN")
                         fmt  = params.get("fmt", "youtube")
-                        fmt_suffix = "_reels" if fmt == "reels" else ""
-                        vp   = f"{OUTPUT_DIR}/conversation/{lang}/conv_{tid}_{lang}{fmt_suffix}.mp4"
-                        clog = load_conv_log()
-                        clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
-                        clog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
-                                     "rendered_at": datetime.now().isoformat(), "uploaded": False})
-                        save_conv_log(clog)
+                        if jtype == "kdrama_video":
+                            vp   = _kdrama_video_path(tid, lang, fmt)
+                            klog = load_kdrama_log()
+                            klog = [x for x in klog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
+                            klog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
+                                         "rendered_at": datetime.now().isoformat(), "uploaded": False})
+                            save_kdrama_log(klog)
+                        else:
+                            vp   = _conv_video_path(tid, lang, fmt)
+                            clog = load_conv_log()
+                            clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
+                            clog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
+                                         "rendered_at": datetime.now().isoformat(), "uploaded": False})
+                            save_conv_log(clog)
                 return
             # NAS 실행
             if jtype == "conv_video":
@@ -810,16 +908,46 @@ def _run_gq_job(job):
                        "--output", OUTPUT_DIR]
                 if params.get("fmt") == "reels":
                     cmd += ["--format", "reels"]
+            elif jtype == "kdrama_video":
+                cmd = [sys.executable, "/app/make_conversation.py",
+                       "--db", KDRAMA_DB_PATH,
+                       "--theme", str(params.get("theme_id")),
+                       "--lang", params.get("lang", "EN"),
+                       "--output", OUTPUT_DIR,
+                       "--subdir", "kdrama",
+                       "--illust-dir", "kdrama_illustrations",
+                       "--filename-prefix", "kdrama"]
+                if params.get("fmt") == "reels":
+                    cmd += ["--format", "reels"]
             elif jtype == "phrase_video":
-                cmd = [sys.executable, "/app/make_video_phrases.py",
-                       "--db", PHRASE_DB_F, "--output", PHRASE_VIDEO_DIR]
                 sit_id = params.get("sit_id")
+                lang   = params.get("lang", "EN")
+                cmd = [sys.executable, "/app/make_conversation.py",
+                       "--db", PHRASE_DB_F,
+                       "--theme", str(sit_id),
+                       "--lang", lang,
+                       "--output", OUTPUT_DIR,
+                       "--subdir", "phrases",
+                       "--illust-dir", "phrase_illustrations",
+                       "--filename-prefix", "phrases"]
+                if params.get("fmt") == "reels":
+                    cmd += ["--format", "reels"]
+            elif jtype == "kdrama_illust":
+                cmd = [sys.executable, "/app/generate_kdrama_illustrations.py",
+                       "--db", KDRAMA_DB_PATH]
+                theme_id = params.get("theme_id")
                 start  = params.get("start")
                 end    = params.get("end")
-                if sit_id is not None:
-                    cmd += ["--id", str(sit_id)]
+                if theme_id is not None:
+                    cmd += ["--theme-id", str(theme_id)]
                 elif start is not None and end is not None:
                     cmd += ["--start", str(start), "--end", str(end)]
+                if params.get("overwrite"):
+                    cmd += ["--overwrite"]
+                if params.get("intro_only"):
+                    cmd += ["--intro-only"]
+                if params.get("phrases_only"):
+                    cmd += ["--phrases-only"]
             else:  # phrase_illust
                 cmd = [sys.executable, "/app/generate_phrase_illustrations.py",
                        "--db", PHRASE_DB_F]
@@ -851,18 +979,25 @@ def _run_gq_job(job):
             out = (proc.stdout.read() or b"").decode("utf-8", errors="replace")
             if proc.returncode == 0:
                 _gq_update_job(job_id, "done", pct=100)
-                # conv_video 완료 시 conv_log 업데이트
-                if jtype == "conv_video":
+                # conv/kdrama 완료 시 로그 업데이트
+                if jtype in ("conv_video", "kdrama_video"):
                     tid  = str(params.get("theme_id"))
                     lang = params.get("lang", "EN")
                     fmt  = params.get("fmt", "youtube")
-                    fmt_suffix = "_reels" if fmt == "reels" else ""
-                    vp   = f"{OUTPUT_DIR}/conversation/{lang}/conv_{tid}_{lang}{fmt_suffix}.mp4"
-                    clog = load_conv_log()
-                    clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
-                    clog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
-                                 "rendered_at": datetime.now().isoformat(), "uploaded": False})
-                    save_conv_log(clog)
+                    if jtype == "kdrama_video":
+                        vp   = _kdrama_video_path(tid, lang, fmt)
+                        klog = load_kdrama_log()
+                        klog = [x for x in klog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
+                        klog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
+                                     "rendered_at": datetime.now().isoformat(), "uploaded": False})
+                        save_kdrama_log(klog)
+                    else:
+                        vp   = _conv_video_path(tid, lang, fmt)
+                        clog = load_conv_log()
+                        clog = [x for x in clog if not (str(x.get("theme_id")) == tid and x.get("lang") == lang and x.get("fmt", "youtube") == fmt)]
+                        clog.append({"theme_id": tid, "lang": lang, "fmt": fmt, "video_path": vp,
+                                     "rendered_at": datetime.now().isoformat(), "uploaded": False})
+                        save_conv_log(clog)
             else:
                 _gq_update_job(job_id, "failed", error=out[-600:])
     except Exception as e:
@@ -940,7 +1075,8 @@ def _is_batch_cancelled():
     return bq.get("status") == "cancelled"
 
 def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
-                     exam="TOPIK", lang="EN", words_map=None, job_items=None):
+                     exam="TOPIK", lang="EN", words_map=None, job_items=None,
+                     thumb_style="portrait", thumb_only=False):
     """target: "desktop", "nas", "auto"(글로벌 토글 따름)
     auto_upload: True면 렌더링 후 YouTube 자동 업로드
     job_items: [(word_id, lang, db_path, word_text), ...] — 다중 언어 지원 시 사용"""
@@ -991,10 +1127,10 @@ def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
                 # 여전히 바쁘면 NAS로 전환
                 if _desktop_is_busy():
                     print(f"  [batch] 데스크탑 busy → NAS 폴백 ({job_lang}/{job_fmt})")
-                    render_ok = run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                    render_ok = run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt, thumb_style=thumb_style, thumb_only=thumb_only)
                 else:
                     # job_id로 내 작업 완료 여부 추적
-                    job_id = write_queue_job(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                    job_id = write_queue_job(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt, thumb_style=thumb_style, thumb_only=thumb_only)
                     deadline = time.time() + 40 * 60
                     finished = False
                     while time.time() < deadline:
@@ -1007,12 +1143,12 @@ def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
                     if _is_batch_cancelled(): continue
                     if not finished:
                         print(f"  [batch] 데스크탑 타임아웃 → NAS 폴백 ({job_lang}/{job_fmt})")
-                        render_ok = run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                        render_ok = run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt, thumb_style=thumb_style, thumb_only=thumb_only)
                     else:
                         rq = load_json(QUEUE_FILE, {})
                         render_ok = rq.get("status") == "done"
             else:
-                render_ok = run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt)
+                render_ok = run_render_nas(word_id, job_db_path, exam=exam, lang=job_lang, fmt=job_fmt, thumb_style=thumb_style, thumb_only=thumb_only)
 
             # 렌더링 후 자동 업로드
             if render_ok and auto_upload and words_map and word_id in words_map:
@@ -1052,7 +1188,8 @@ def run_batch_render(word_ids, target="auto", db_path=None, auto_upload=False,
     bq["completed_at"] = datetime.now().isoformat()
     save_json(BATCH_QUEUE_F, bq)
 
-def run_render_nas(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube") -> bool:
+def run_render_nas(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube",
+                   thumb_style="portrait", thumb_only=False) -> bool:
     """NAS에서 단어 영상 렌더링. True=성공, False=실패/취소"""
     global _nas_proc
     if not db_path:
@@ -1063,6 +1200,8 @@ def run_render_nas(word_id, db_path=None, exam="TOPIK", lang="EN", fmt="youtube"
             "--output","/app/output/","--exam",exam,"--lang",lang]
         if fmt == "reels":
             cmd += ["--format","reels"]
+        if thumb_only:
+            cmd += ["--thumb-only"]
         _nas_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         cancelled = False
         while _nas_proc.poll() is None:
@@ -1095,7 +1234,7 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None, fmt="
 
         log_path = f"{BASE}/logs/uploads.json"
         upload_log = load_upload_log(log_path)
-        day_number = upload_log.get("last_day", 0) + 1
+        day_number = word["id"]  # 단어 ID를 그대로 에피소드 번호로 사용
 
         # 언어별 의미 조회 (per-language DB에서 — 없으면 word['meaning'] 그대로)
         lang_meaning = None
@@ -1110,7 +1249,10 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None, fmt="
         except Exception:
             pass
 
-        metadata = generate_metadata(word, day_number, lang=lang, lang_meaning=lang_meaning)
+        try:
+            metadata = generate_metadata(word, day_number, lang=lang, lang_meaning=lang_meaning, fmt=fmt)
+        except TypeError:
+            metadata = generate_metadata(word, day_number, lang=lang, lang_meaning=lang_meaning)
         youtube = get_youtube_client(lang=lang)
 
         # 썸네일 경로 추정
@@ -1129,6 +1271,20 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None, fmt="
         video_id = upload_video(youtube, video_path, metadata,
                                 publish_at=publish_at,
                                 thumbnail_path=thumb_path if thumb_path and os.path.exists(thumb_path) else None)
+        if not video_id:
+            raise RuntimeError("upload_video가 video_id를 반환하지 않음")
+
+        # 재생목록에 추가
+        try:
+            from upload_youtube import get_or_create_playlist, get_or_create_typed_playlist, add_to_playlist
+            if fmt == "reels":
+                pl_id = get_or_create_typed_playlist(youtube, lang, "shorts")
+            else:
+                pl_id = get_or_create_playlist(youtube, lang, word.get("level", 1))
+            add_to_playlist(youtube, pl_id, video_id)
+            print(f"  [playlist] {lang}/{fmt} 재생목록 추가 완료")
+        except Exception as pe:
+            print(f"  [playlist] 추가 실패 (무시): {pe}")
 
         if not publish_at:
             upload_log["last_day"] = day_number
@@ -1148,23 +1304,55 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None, fmt="
         save_upload_log(upload_log, log_path)
         return video_id
     except Exception as e:
-        print(f"  업로드 실패: {e}")
-        import traceback; traceback.print_exc()
-        return None
+        import traceback
+        print(f"  업로드 실패: {e}\n{traceback.format_exc()}")
+        raise  # 호출자에게 예외 전파
 
 # ─── 회화 영상 렌더링·업로드 ──────────────────────────────────
 _CONV_CAT_STYLE = {
-    "여행":      ("#4F8EF7", "✈️"),
-    "식사":      ("#F77C4F", "🍜"),
-    "쇼핑":      ("#F7C44F", "🛍️"),
-    "인사":      ("#4FF7A0", "👋"),
-    "일상":      ("#A04FF7", "💬"),
-    "비즈니스":  ("#4FD4F7", "💼"),
-    "K-Culture": ("#F74FA0", "🎭"),
-    "의료":      ("#F74F4F", "🏥"),
-    "주거":      ("#7EF74F", "🏠"),
-    "여가":      ("#F7A04F", "🎮"),
+    "여행":           ("#4F8EF7", "✈️"),
+    "식사":           ("#F77C4F", "🍜"),
+    "쇼핑":           ("#F7C44F", "🛍️"),
+    "인사":           ("#4FF7A0", "👋"),
+    "일상":           ("#A04FF7", "💬"),
+    "비즈니스":       ("#4FD4F7", "💼"),
+    "K-Culture":      ("#F74FA0", "🎭"),
+    "의료":           ("#F74F4F", "🏥"),
+    "주거":           ("#7EF74F", "🏠"),
+    "여가":           ("#F7A04F", "🎮"),
+    # K-드라마 카테고리
+    "연애/고백/이별":  ("#FF6B9D", "💕"),
+    "감탄/반응":       ("#FFB347", "😲"),
+    "드라마 클리셰":   ("#C77DFF", "🎬"),
+    "싸움/갈등/화해":  ("#FF6B6B", "⚡"),
+    "감정 표현":       ("#74B9FF", "💙"),
+    "일상 구어체":     ("#55EFC4", "💬"),
+    "직장/학교":       ("#636E72", "🏢"),
+    "가족/관계":       ("#FDCB6E", "👨‍👩‍👧"),
+    "속어/유행어":     ("#00CEC9", "🔥"),
 }
+
+def load_kdrama_db():
+    raw = load_json(KDRAMA_DB_PATH, [])
+    if isinstance(raw, list):
+        def _enrich(item):
+            cat = item.get("category", "")
+            color, emoji = _CONV_CAT_STYLE.get(cat, ("#FF6B9D", "🎭"))
+            return {
+                **item,
+                "title": {
+                    "ko": item.get("situation",""), "KR": item.get("situation",""),
+                    "en": item.get("situation_en",""), "EN": item.get("situation_en",""),
+                    "jp": item.get("situation_jp",""), "JP": item.get("situation_jp",""),
+                    "cn": item.get("situation_cn",""), "CN": item.get("situation_cn",""),
+                    "vn": item.get("situation_vn",""), "VN": item.get("situation_vn",""),
+                    "es": item.get("situation_es",""), "ES": item.get("situation_es",""),
+                },
+                "color": item.get("color", color),
+                "emoji": item.get("emoji", emoji),
+            }
+        return {"themes": [_enrich(item) for item in raw]}
+    return raw
 
 def load_conv_db():
     raw = load_json(CONV_DB_PATH, [])
@@ -1188,6 +1376,48 @@ def load_conv_log():
 def save_conv_log(log):
     save_json(CONV_LOG_F, log)
 
+def load_kdrama_log():
+    return load_json(KDRAMA_LOG_F, [])
+
+def save_kdrama_log(log):
+    save_json(KDRAMA_LOG_F, log)
+
+def _kdrama_video_path(tid, lang, fmt):
+    base = f"{OUTPUT_DIR}/kdrama/{lang}"
+    if fmt == "reels":
+        return f"{base}/reels/kdrama_{tid}_{lang}_reels.mp4"
+    return f"{base}/kdrama_{tid}_{lang}.mp4"
+
+def _conv_video_path(tid, lang, fmt):
+    """회화 영상 실제 경로 반환 (포맷별 서브폴더)"""
+    base = f"{OUTPUT_DIR}/conversation/{lang}"
+    if fmt == "reels":
+        return f"{base}/reels/conv_{tid}_{lang}_reels.mp4"
+    return f"{base}/conv_{tid}_{lang}.mp4"
+
+def _phrase_video_path(tid, lang, fmt="youtube"):
+    """일반 회화(phrases) 영상 경로"""
+    base = f"{OUTPUT_DIR}/phrases/{lang}"
+    if fmt == "reels":
+        return f"{base}/reels/phrases_{tid}_{lang}_reels.mp4"
+    return f"{base}/phrases_{tid}_{lang}.mp4"
+
+def _conv_thumb_path(tid, lang):
+    """회화 썸네일 경로 반환"""
+    return f"{OUTPUT_DIR}/conversation/{lang}/thumbnail/conv_{tid}_{lang}_thumb.png"
+
+def _kdrama_thumb_path(tid, lang):
+    """K-드라마 썸네일 경로 반환"""
+    return f"{OUTPUT_DIR}/kdrama/{lang}/thumbnail/kdrama_{tid}_{lang}_thumb.png"
+
+def _conv_path_exists(path: str) -> bool:
+    """Docker /app 경로와 로컬 경로를 모두 확인"""
+    if os.path.exists(path):
+        return True
+    # /app/... → BASE/... 로컬 변환 시도
+    local = path.replace("/app/", BASE.rstrip("/") + "/", 1) if path.startswith("/app/") else path
+    return os.path.exists(local)
+
 _conv_render_thread = None
 _conv_render_progress = {"status": "idle", "theme_id": None, "lang": None, "pct": 0, "msg": ""}
 
@@ -1207,7 +1437,7 @@ def run_conv_render_bg(theme_id: str, lang: str):
             _conv_render_progress["pct"] = 20
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode == 0:
-                video_path = f"{OUTPUT_DIR}/conversation/{lang}/conv_{theme_id}_{lang}.mp4"
+                video_path = _conv_video_path(theme_id, lang, "youtube")
                 log = load_conv_log()
                 log = [x for x in log if not (x.get("theme_id") == theme_id and x.get("lang") == lang)]
                 log.append({"theme_id": theme_id, "lang": lang, "video_path": video_path,
@@ -1263,7 +1493,7 @@ def run_phrase_illust_bg(sit_id: int | None, start: int | None, end: int | None)
 _phrase_video_thread = None
 _phrase_video_progress = {"status": "idle", "sit_id": None, "pct": 0, "msg": ""}
 
-def run_phrase_video_bg(sit_id: int | None, start: int | None, end: int | None):
+def run_phrase_video_bg(sit_id: int | None, start: int | None, end: int | None, lang: str = "EN"):
     global _phrase_video_thread, _phrase_video_progress
     if _phrase_video_thread and _phrase_video_thread.is_alive():
         return False, "이미 영상 생성 중입니다"
@@ -1271,20 +1501,23 @@ def run_phrase_video_bg(sit_id: int | None, start: int | None, end: int | None):
         global _phrase_video_progress
         _phrase_video_progress = {"status": "running", "sit_id": sit_id, "pct": 10, "msg": "영상 생성 시작..."}
         try:
-            cmd = [sys.executable, "/app/make_video_phrases.py",
-                   "--db", PHRASE_DB_F,
-                   "--output", PHRASE_VIDEO_DIR]
-            if sit_id is not None:
-                cmd += ["--id", str(sit_id)]
-            elif start is not None and end is not None:
-                cmd += ["--start", str(start), "--end", str(end)]
-            _phrase_video_progress["pct"] = 20
-            r = subprocess.run(cmd, capture_output=True, text=True)
-            if r.returncode == 0:
-                _phrase_video_progress = {"status": "done", "sit_id": sit_id, "pct": 100, "msg": "완료"}
-            else:
-                _phrase_video_progress = {"status": "failed", "sit_id": sit_id,
-                                          "pct": 0, "msg": r.stderr[-400:]}
+            ids = [sit_id] if sit_id is not None else list(range(start, end + 1))
+            for i, sid in enumerate(ids):
+                cmd = [sys.executable, "/app/make_conversation.py",
+                       "--db", PHRASE_DB_F,
+                       "--theme", str(sid),
+                       "--lang", lang,
+                       "--output", OUTPUT_DIR,
+                       "--subdir", "phrases",
+                       "--illust-dir", "phrase_illustrations",
+                       "--filename-prefix", "phrases"]
+                _phrase_video_progress["pct"] = 20 + int(i / len(ids) * 70)
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                if r.returncode != 0:
+                    _phrase_video_progress = {"status": "failed", "sit_id": sid,
+                                              "pct": 0, "msg": r.stderr[-400:]}
+                    return
+            _phrase_video_progress = {"status": "done", "sit_id": sit_id, "pct": 100, "msg": "완료"}
         except Exception as e:
             _phrase_video_progress = {"status": "failed", "sit_id": sit_id, "pct": 0, "msg": str(e)}
     _phrase_video_thread = threading.Thread(target=_run, daemon=True)
@@ -1294,13 +1527,12 @@ def run_phrase_video_bg(sit_id: int | None, start: int | None, end: int | None):
 def run_conv_upload(theme_id: str, lang: str, fmt: str = "youtube"):
     """회화 영상 YouTube 업로드"""
     try:
-        suffix = "_reels" if fmt == "reels" else ""
-        video_path = f"{OUTPUT_DIR}/conversation/{lang}/conv_{theme_id}_{lang}{suffix}.mp4"
-        if not os.path.exists(video_path):
+        video_path = _conv_video_path(theme_id, lang, fmt)
+        if not _conv_path_exists(video_path):
             return None, "영상 파일이 없습니다 — 먼저 렌더링하세요"
 
         db = load_conv_db()
-        theme = next((t for t in db["themes"] if t["id"] == theme_id), None)
+        theme = next((t for t in db["themes"] if str(t["id"]) == str(theme_id)), None)
         if not theme:
             return None, f"테마 '{theme_id}'를 찾을 수 없습니다"
 
@@ -1312,38 +1544,274 @@ def run_conv_upload(theme_id: str, lang: str, fmt: str = "youtube"):
         local_title = theme["title"].get(lang_key, ko_title)
         search_title = theme.get("search_title", {}).get(lang_key, local_title)
         emoji = theme.get("emoji", "💬")
+        theme_num = int(theme_id) if str(theme_id).isdigit() else 0
 
         _CONV_HOOKS = {
-            "EN": f"Learn real Korean phrases for everyday situations! {emoji}",
-            "JP": f"韓国語の実践フレーズを1テーマずつ学ぼう！{emoji}",
-            "CN": f"一起学习韩语日常会话！{emoji}",
-            "VN": f"Học hội thoại tiếng Hàn thực tế mỗi ngày！{emoji}",
-            "ES": f"¡Aprende frases coreanas para situaciones reales! {emoji}",
+            "EN": f"🔥 Master Real Korean Conversations — Phrases Natives ACTUALLY Use! {emoji}",
+            "JP": f"🔥 ネイティブが実際に使う韓国語フレーズを一気にマスター！{emoji}",
+            "CN": f"🔥 韩国人每天都在用的实用韩语短句！一次学会！{emoji}",
+            "VN": f"🔥 Học những câu tiếng Hàn người bản xứ dùng HÀNG NGÀY! {emoji}",
+            "ES": f"🔥 ¡Aprende frases coreanas REALES que los nativos usan a diario! {emoji}",
         }
-        _CONV_TAGS = {
-            "EN": ["learn korean", "korean conversation", "korean phrases", "speak korean", "korean for beginners", search_title, ko_title],
-            "JP": ["韓国語会話", "韓国語フレーズ", "韓国語初心者", "K-POP韓国語", search_title, ko_title],
-            "CN": ["韩语日常会话", "韩语短语", "学韩语", "韩语教程", search_title, ko_title],
-            "VN": ["học tiếng Hàn", "hội thoại tiếng Hàn", "tiếng Hàn giao tiếp", search_title, ko_title],
-            "ES": ["coreano conversación", "frases en coreano", "aprender coreano", search_title, ko_title],
+        _CONV_LABELS = {
+            "EN": {"title":"📖 Today's Phrases","sub":"Korean Conversation","learn":"Learn these 10 phrases by heart — you'll sound like a local!","like":"👍 Like + Subscribe for daily Korean lessons!","hash":"#LearnKorean #KoreanConversation #KoreanPhrases #Korean #한국어 #KoreanStudy #KDrama #KPop #SpeakKorean #KoreanForBeginners"},
+            "JP": {"title":"📖 今日のフレーズ","sub":"韓国語会話シリーズ","learn":"この10フレーズを覚えれば、ネイティブみたいに話せる！","like":"👍 いいね＆チャンネル登録で毎日韓国語レッスン！","hash":"#韓国語 #韓国語会話 #韓国語フレーズ #韓国語勉強 #한국어 #K-POP #韓流 #韓国ドラマ #韓国語初心者 #韓国語学習"},
+            "CN": {"title":"📖 今日短句","sub":"韩语日常会话","learn":"把这10句记下来，你就跟韩国人一样会说！","like":"👍 点赞＋订阅，每天学韩语！","hash":"#韩语 #韩语对话 #韩语短句 #学韩语 #한국어 #韩流 #韩剧 #K-POP #韩语入门 #韩语学习"},
+            "VN": {"title":"📖 Câu hội thoại hôm nay","sub":"Hội thoại tiếng Hàn","learn":"Học thuộc 10 câu này — bạn sẽ nói tiếng Hàn như người bản xứ!","like":"👍 Like & Đăng ký để học tiếng Hàn mỗi ngày!","hash":"#tiếngHàn #hộithoạitiếngHàn #họctiếngHàn #한국어 #phimHàn #KPop #tiếngHàngiaotiếp #tiếngHàncơbản #EPSTOPIK #tiếngHànonline"},
+            "ES": {"title":"📖 Frases de Hoy","sub":"Conversación en Coreano","learn":"¡Memoriza estas 10 frases y hablarás como un nativo!","like":"👍 Dale like y suscríbete para lecciones diarias!","hash":"#aprendercoreano #coreano #frasesEnCoreano #한국어 #KPop #KDrama #Hangul #coreanoParaPrincipiantes #coreanoBásico #doramas"},
         }
 
         hook = _CONV_HOOKS.get(lang, _CONV_HOOKS["EN"])
-        tags = _CONV_TAGS.get(lang, _CONV_TAGS["EN"])
-        tags_str = ",".join(t for t in tags if t)[:490]
+        L = _CONV_LABELS.get(lang, _CONV_LABELS["EN"])
 
+        # ── phrase 10개를 설명에 포함 ────────────────────────
+        phrases = theme.get("phrases", [])
+        sent_lines = []
+        for i, p in enumerate(phrases, 1):
+            ml = p.get("my_line", {}) or {}
+            ko = ml.get("ko", "")
+            tr = ml.get(lang_key) or ml.get("en", "")
+            if ko and tr:
+                sent_lines.append(f"  {i}. {ko}\n     → {tr}")
+        phrases_text = "\n".join(sent_lines) if sent_lines else ""
+
+        # ── 풍부한 description ──────────────────────────────
+        num_str = f" #{theme_num:03d}" if theme_num > 0 else ""
         shorts_suffix = " #Shorts" if fmt == "reels" else ""
-        shorts_tags = (tags_str + ",Shorts,Korean Shorts")[:490] if fmt == "reels" else tags_str
+        divider = "─" * 36
+        if fmt == "reels":
+            description = (
+                f"{hook}\n\n"
+                f"{L['sub']}{num_str} — {local_title}\n\n"
+                f"{L['like']}\n\n"
+                f"{L['hash']}"
+            )
+        else:
+            description = (
+                f"{hook}\n\n"
+                f"{divider}\n"
+                f"{L['title']} — {local_title}\n"
+                f"{divider}\n"
+                f"{phrases_text}\n\n"
+                f"{L['learn']}\n\n"
+                f"{L['like']}\n\n"
+                f"📚 {L['sub']}{num_str}\n\n"
+                f"{L['hash']}"
+            )
+
+        # ── 태그 대폭 확장 (언어별 50+ 풀) ──────────────────
+        _CONV_TAGS = {
+            "EN": [
+                "learn Korean", "Korean conversation", "Korean phrases", "speak Korean",
+                "Korean for beginners", "Korean listening", "daily Korean", "Korean speaking",
+                "K-drama Korean", "K-pop Korean", "BTS Korean", "BLACKPINK Korean",
+                "Stray Kids Korean", "NewJeans Korean", "aespa Korean", "TWICE Korean",
+                "Korean lessons", "how to speak Korean", "real Korean", "natural Korean",
+                "Korean expressions", "useful Korean", "Korean culture", "한국어",
+                "한국어 공부", "한국어 회화", "Hangul", "learn Hangul", "read Hangul",
+                "Korean tutorial", "Korean podcast", "Korean listening practice",
+                "everyday Korean", "Korean survival phrases", "Korean travel phrases",
+                "easy Korean", "Korean practice", "Korean for travel", "Korean greetings",
+                "Korean slang", "Korean romance", "Korean love phrases", "Korean confession",
+                "Korean apology", "Korean thank you", "Korean small talk",
+                "Korean work expressions", "Korean business Korean", "Korean texting",
+                "Korean for kdrama fans", "Korean for kpop fans", "Korean for army",
+                "Korean formal", "Korean informal", "Korean honorifics", "Korean pronunciation",
+                "learn Korean fast", "learn Korean free", "study Korean", "Korean 101",
+            ],
+            "JP": [
+                "韓国語", "韓国語会話", "韓国語フレーズ", "韓国語勉強", "韓国語初心者",
+                "韓国語日常会話", "毎日韓国語", "ハングル", "ハングル読み方", "韓国語学習",
+                "韓国語リスニング", "韓国語聞き流し", "韓国語発音", "韓国語独学",
+                "韓流", "韓国ドラマ韓国語", "韓ドラで学ぶ韓国語", "K-POP韓国語",
+                "BTS韓国語", "BLACKPINK韓国語", "Stray Kids 韓国語", "NewJeans 韓国語",
+                "TWICE 韓国語", "aespa 韓国語", "推しの韓国語", "オタ活韓国語",
+                "한국어", "한국어 회화", "한국어 공부", "韓国旅行 会話", "旅行韓国語",
+                "韓国語 挨拶", "韓国語 日常", "韓国語 ネイティブ", "韓国語 スラング",
+                "韓国語 かわいい", "韓国語 恋愛", "韓国語 告白", "韓国語 愛してる",
+                "韓国語 ありがとう", "韓国語 ごめんなさい", "韓国語 喧嘩", "韓国語 仲直り",
+                "韓国語 家族", "韓国語 ビジネス", "韓国語 友達", "韓国語 SNS",
+                "韓国語 新造語", "韓国語 流行語", "1日1フレーズ", "韓国語 教室",
+                "ゼロから韓国語", "韓国語 タメ口", "韓国語 敬語",
+            ],
+            "CN": [
+                "韩语", "韩语对话", "韩语短语", "学韩语", "韩语入门",
+                "韩语日常会话", "每日韩语", "韩语发音", "韩语学习", "韩语听力",
+                "零基础学韩语", "韩语自学", "韩剧学韩语", "韩综学韩语", "韩流",
+                "K-POP韩语", "BTS韩语", "BLACKPINK韩语", "防弹少年团", "Stray Kids 韩语",
+                "NewJeans 韩语", "TWICE 韩语", "aespa 韩语", "韩语口语", "韩语旅游",
+                "实用韩语", "韩语打卡", "学韩文", "韩国人常用", "韩语短句", "背韩语",
+                "한국어", "한국어 공부", "한국어 회화", "韩语教学", "韩语课程",
+                "韩语 恋爱", "韩语 表白", "韩语 告白", "韩语 情话", "韩语 我爱你",
+                "韩语 谢谢", "韩语 对不起", "韩语 吵架", "韩语 和好", "韩语 家庭",
+                "韩语 职场", "韩语 朋友", "韩语 网络用语", "韩语 流行语", "韩语 新造词",
+                "韩语 敬语", "韩语 半语", "韩国文化", "韩语 每日一句",
+            ],
+            "VN": [
+                "tiếng Hàn", "hội thoại tiếng Hàn", "học tiếng Hàn", "tiếng Hàn giao tiếp",
+                "tiếng Hàn cơ bản", "tiếng Hàn cho người mới", "phát âm tiếng Hàn",
+                "tiếng Hàn mỗi ngày", "EPS tiếng Hàn", "EPSTOPIK", "tự học tiếng Hàn",
+                "tiếng Hàn online", "tiếng Hàn miễn phí", "tiếng Hàn thực tế",
+                "K-pop tiếng Hàn", "Kdrama tiếng Hàn", "BTS tiếng Hàn",
+                "BLACKPINK tiếng Hàn", "Stray Kids tiếng Hàn", "NewJeans tiếng Hàn",
+                "TWICE tiếng Hàn", "phim Hàn Quốc", "xem phim Hàn",
+                "한국어", "한국어 공부", "한국어 회화", "đi Hàn Quốc", "visa Hàn Quốc",
+                "du học Hàn Quốc", "Hangul", "học Hangul", "tiếng Hàn du lịch",
+                "tiếng Hàn sơ cấp", "câu tiếng Hàn thông dụng", "tiếng Hàn dễ học",
+                "tiếng Hàn tỏ tình", "tiếng Hàn yêu thương", "tiếng Hàn anh yêu em",
+                "tiếng Hàn cảm ơn", "tiếng Hàn xin lỗi", "tiếng Hàn cãi nhau",
+                "tiếng Hàn làm hòa", "tiếng Hàn gia đình", "tiếng Hàn công sở",
+                "tiếng Hàn bạn bè", "tiếng Hàn mạng xã hội", "tiếng Hàn tuổi teen",
+                "tiếng Hàn trang trọng", "tiếng Hàn thân mật", "văn hóa Hàn Quốc",
+                "tiếng Hàn mỗi ngày 1 câu",
+            ],
+            "ES": [
+                "aprender coreano", "coreano conversación", "frases en coreano",
+                "coreano para principiantes", "coreano básico", "coreano del día",
+                "coreano fácil", "clases de coreano", "curso de coreano",
+                "pronunciación coreana", "gramática coreana", "Kpop español",
+                "Kdrama español", "BTS español", "BLACKPINK español",
+                "Stray Kids español", "NewJeans español", "TWICE español", "aespa español",
+                "coreano kpop", "coreano kdrama", "army español", "blink español",
+                "한국어", "한국어 공부", "한국어 회화", "hangul", "alfabeto coreano",
+                "leer hangul", "viaje a Corea", "coreano para viajar", "Corea del Sur",
+                "aprender coreano desde cero", "coreano México", "coreano latino",
+                "frases útiles coreano", "doramas coreanos", "coreano romance",
+                "coreano te amo", "coreano confesión", "coreano gracias",
+                "coreano perdón", "coreano discusión", "coreano reconciliación",
+                "coreano familia", "coreano trabajo", "coreano amigos",
+                "coreano redes sociales", "coreano slang", "coreano jerga",
+                "coreano formal", "coreano informal", "cultura coreana", "idioma coreano",
+                "escuchar coreano", "coreano diario",
+            ],
+        }
+        # 카테고리별 전략 태그 (상황 맞춤 — 앞쪽에 배치해 우선 선택되게)
+        _CAT_BOOST = {
+            "연애/고백/이별": {
+                "EN": ["Korean love phrases", "Korean confession phrases", "Korean romance", "Korean dating phrases", "Korean pickup lines", "K-drama love lines", "how to say I love you in Korean"],
+                "JP": ["韓国語 恋愛", "韓国語 告白", "韓国語 愛してる", "韓国語 彼氏彼女", "韓ドラ 名セリフ 告白", "韓国語 プロポーズ"],
+                "CN": ["韩语 表白", "韩语 告白", "韩语 我爱你", "韩语 情话", "韩剧 经典台词 表白", "韩语 恋爱用语"],
+                "VN": ["tiếng Hàn tỏ tình", "tiếng Hàn anh yêu em", "tiếng Hàn hẹn hò", "câu nói tỏ tình tiếng Hàn", "phim Hàn cảnh tỏ tình"],
+                "ES": ["coreano te amo", "coreano confesión", "coreano citas", "frases románticas coreano", "cómo decir te amo en coreano"],
+            },
+            "감탄/반응": {
+                "EN": ["Korean reactions", "Korean exclamations", "K-drama reactions", "how Koreans react", "Korean surprise phrases"],
+                "JP": ["韓国語 リアクション", "韓国語 感嘆", "韓国語 びっくり", "韓国語 相槌"],
+                "CN": ["韩语 感叹", "韩语 反应", "韩语 惊讶", "韩语 日常反应"],
+                "VN": ["tiếng Hàn phản ứng", "tiếng Hàn cảm thán", "tiếng Hàn bất ngờ"],
+                "ES": ["reacciones en coreano", "exclamaciones coreano", "coreano sorpresa"],
+            },
+            "드라마 클리셰": {
+                "EN": ["K-drama cliche lines", "K-drama iconic phrases", "K-drama classic lines", "K-drama famous quotes"],
+                "JP": ["韓国ドラマ 名セリフ", "韓ドラ あるある", "韓国ドラマ 名言"],
+                "CN": ["韩剧 经典台词", "韩剧 名台词", "韩剧 名言", "韩剧 套路"],
+                "VN": ["câu thoại phim Hàn kinh điển", "câu nói hay phim Hàn", "thoại phim Hàn đi vào lòng"],
+                "ES": ["frases icónicas kdrama", "frases clásicas de doramas", "citas famosas kdrama"],
+            },
+            "싸움/갈등/화해": {
+                "EN": ["Korean argument phrases", "Korean reconciliation", "Korean apology phrases", "Korean fight phrases"],
+                "JP": ["韓国語 喧嘩", "韓国語 仲直り", "韓国語 謝罪", "韓国語 言い争い"],
+                "CN": ["韩语 吵架", "韩语 和好", "韩语 道歉", "韩语 争吵"],
+                "VN": ["tiếng Hàn cãi nhau", "tiếng Hàn làm hòa", "tiếng Hàn xin lỗi", "tiếng Hàn giận dỗi"],
+                "ES": ["coreano discusión", "coreano reconciliación", "coreano disculpa", "coreano pelea"],
+            },
+            "감정 표현": {
+                "EN": ["Korean emotions", "express emotions in Korean", "Korean feeling words", "Korean mood phrases"],
+                "JP": ["韓国語 感情", "韓国語 気持ち", "韓国語 感情表現"],
+                "CN": ["韩语 情感", "韩语 心情", "韩语 情绪表达"],
+                "VN": ["tiếng Hàn cảm xúc", "tiếng Hàn biểu lộ cảm xúc", "tiếng Hàn tâm trạng"],
+                "ES": ["coreano emociones", "expresar emociones en coreano", "coreano sentimientos"],
+            },
+            "일상 구어체": {
+                "EN": ["Korean casual phrases", "Korean everyday phrases", "Korean small talk", "Korean colloquial"],
+                "JP": ["韓国語 日常", "韓国語 タメ口", "韓国語 日常会話", "韓国語 リアル"],
+                "CN": ["韩语 日常口语", "韩语 日常用语", "韩国人 日常", "韩语 生活用语"],
+                "VN": ["tiếng Hàn đời thường", "tiếng Hàn thông dụng", "tiếng Hàn hàng ngày"],
+                "ES": ["coreano cotidiano", "coreano diario", "frases cotidianas coreano", "coreano coloquial"],
+            },
+            "직장/학교": {
+                "EN": ["Korean workplace phrases", "Korean school phrases", "Korean business Korean", "Korean for work"],
+                "JP": ["韓国語 職場", "韓国語 学校", "韓国語 ビジネス", "韓国語 会社"],
+                "CN": ["韩语 职场", "韩语 学校", "韩语 商务", "韩语 公司"],
+                "VN": ["tiếng Hàn công sở", "tiếng Hàn trường học", "tiếng Hàn thương mại", "tiếng Hàn văn phòng"],
+                "ES": ["coreano trabajo", "coreano escuela", "coreano de negocios", "coreano oficina"],
+            },
+            "가족/관계": {
+                "EN": ["Korean family phrases", "Korean relationship words", "Korean family terms", "Korean for parents"],
+                "JP": ["韓国語 家族", "韓国語 両親", "韓国語 兄弟姉妹", "韓国語 親戚"],
+                "CN": ["韩语 家庭", "韩语 家人", "韩语 亲戚", "韩语 父母"],
+                "VN": ["tiếng Hàn gia đình", "tiếng Hàn cha mẹ", "tiếng Hàn anh chị em", "tiếng Hàn họ hàng"],
+                "ES": ["coreano familia", "coreano padres", "coreano hermanos", "coreano parientes"],
+            },
+            "속어/유행어": {
+                "EN": ["Korean slang", "Korean trendy phrases", "Korean Gen Z slang", "Korean internet slang", "Korean new words"],
+                "JP": ["韓国語 スラング", "韓国語 流行語", "韓国語 新造語", "韓国語 若者言葉"],
+                "CN": ["韩语 俚语", "韩语 流行语", "韩语 新造词", "韩语 网络流行语"],
+                "VN": ["tiếng Hàn tiếng lóng", "tiếng Hàn trend", "tiếng Hàn teen", "tiếng Hàn mạng"],
+                "ES": ["coreano slang", "coreano jerga", "coreano de moda", "coreano Gen Z"],
+            },
+        }
+        tags = _CONV_TAGS.get(lang, _CONV_TAGS["EN"])
+        # 카테고리 boost: 상황 맞춤 키워드를 맨 앞에 배치
+        category = theme.get("category", "")
+        boost = _CAT_BOOST.get(category, {}).get(lang, [])
+        # 테마 특화 태그
+        theme_tags = [t for t in [search_title, local_title, ko_title, category] if t]
+        # 우선순위: 카테고리 booster → 테마 특화 → 범용 풀
+        all_tags = boost + theme_tags + tags
+        if fmt == "reels":
+            all_tags += ["Shorts", "Korean Shorts", "shorts", "Korean shorts video"]
+        # 중복 제거(순서 유지) + 500자 이내로 자르기
+        seen = set()
+        selected, total = [], 0
+        for t in all_tags:
+            if not t: continue
+            key = t.lower()
+            if key in seen: continue
+            seen.add(key)
+            if total + len(t) + 1 <= 490:
+                selected.append(t); total += len(t) + 1
+            if len(selected) >= 35:
+                break
+
         metadata = {
-            "title": f"{emoji} {search_title}{shorts_suffix}",
-            "description": f"{hook}\n\n{ko_title} | Korean Conversation Series\n\n#한국어 #Korean #{lang}",
-            "tags": shorts_tags,
-            "categoryId": "27",
+            "title": f"{emoji} {search_title}{num_str}{shorts_suffix}"[:100],
+            "description": description[:4900],
+            "tags": selected,            # YouTube API는 list[str] 기대
+            "category_id": "27",
+            "categoryId": "27",          # 하위 호환
+            "default_language": "ko",
             "privacyStatus": "public",
         }
 
+        # 회화 썸네일 경로 (새 구조: {lang}/thumbnail/)
+        thumb_candidate = _conv_thumb_path(theme_id, lang)
+        conv_thumb = thumb_candidate if _conv_path_exists(thumb_candidate) else None
+
+        # 없으면 즉시 생성
+        if conv_thumb is None:
+            try:
+                sys.path.insert(0, os.path.dirname(__file__) or "/app")
+                from make_thumbnail import make_conv_thumbnail as _mct
+                os.makedirs(os.path.dirname(thumb_candidate), exist_ok=True)
+                _mct(theme, lang, thumb_candidate)
+                conv_thumb = thumb_candidate
+                print(f"  [thumb] 회화 썸네일 생성: {conv_thumb}")
+            except Exception as te:
+                print(f"  [thumb] 회화 썸네일 생성 실패 (무시): {te}")
+
         youtube = get_youtube_client(lang=lang)
-        video_id = upload_video(youtube, video_path, metadata, publish_at=None, thumbnail_path=None)
+        video_id = upload_video(youtube, video_path, metadata, publish_at=None, thumbnail_path=conv_thumb)
+
+        # 재생목록에 추가
+        try:
+            from upload_youtube import get_or_create_typed_playlist, add_to_playlist
+            ptype = "phrase_shorts" if fmt == "reels" else "phrase"
+            pl_id = get_or_create_typed_playlist(youtube, lang, ptype)
+            add_to_playlist(youtube, pl_id, video_id)
+            print(f"  [playlist] 회화 {lang}/{fmt} 재생목록 추가 완료")
+        except Exception as pe:
+            print(f"  [playlist] 회화 추가 실패 (무시): {pe}")
 
         log_path = f"{BASE}/logs/uploads.json"
         upload_log = load_upload_log(log_path)
@@ -1358,10 +1826,10 @@ def run_conv_upload(theme_id: str, lang: str, fmt: str = "youtube"):
         })
         save_upload_log(upload_log, log_path)
 
-        # conv_log 업데이트
+        # conv_log 업데이트 (theme_id 타입 불일치 방지: str로 통일 비교)
         clog = load_conv_log()
         for e in clog:
-            if e.get("theme_id") == theme_id and e.get("lang") == lang and e.get("fmt", "youtube") == fmt:
+            if str(e.get("theme_id")) == str(theme_id) and e.get("lang") == lang and e.get("fmt", "youtube") == fmt:
                 e["uploaded"] = True
                 e["video_id"] = video_id
         save_conv_log(clog)
@@ -1370,6 +1838,214 @@ def run_conv_upload(theme_id: str, lang: str, fmt: str = "youtube"):
     except Exception as e:
         import traceback; traceback.print_exc()
         return None, str(e)
+
+def run_kdrama_upload(theme_id: str, lang: str, fmt: str = "youtube"):
+    """K-드라마 영상 YouTube 업로드 (배치 업로드 공용)"""
+    try:
+        video_path = _kdrama_video_path(theme_id, lang, fmt)
+        if not _conv_path_exists(video_path):
+            return None, "영상 파일이 없습니다 — 먼저 렌더링하세요"
+
+        db = load_kdrama_db()
+        themes = db.get("themes", [])
+        theme = next((t for t in themes if str(t["id"]) == str(theme_id)), None)
+        if not theme:
+            return None, f"테마 '{theme_id}'를 찾을 수 없습니다"
+
+        sys.path.insert(0, os.path.dirname(__file__) or "/app")
+        from upload_youtube import get_youtube_client, upload_video, load_upload_log, save_upload_log
+
+        lang_key = lang.lower()
+        ko_title = theme.get("title", {}).get("ko", str(theme_id))
+        local_title = theme.get("title", {}).get(lang_key, ko_title)
+        search_title = theme.get("search_title", {}).get(lang_key, local_title)
+        emoji = theme.get("emoji", "🎬")
+        category = theme.get("category", "")
+        theme_num = int(theme_id) if str(theme_id).isdigit() else 0
+
+        _HOOKS = {
+            "EN": f"🎬 K-DRAMA Phrases Decoded! The EXACT lines you hear in every K-drama {emoji}",
+            "JP": f"🎬 Kドラマ頻出フレーズ解説！韓国ドラマで絶対聞くセリフを習得 {emoji}",
+            "CN": f"🎬 韩剧必学台词！你追的每部韩剧都会听到这些句子 {emoji}",
+            "VN": f"🎬 Câu thoại K-Drama đỉnh cao! Nghe được trong MỌI phim Hàn Quốc {emoji}",
+            "ES": f"🎬 ¡Frases ICÓNICAS de K-Dramas! Las escucharás en TODOS los doramas {emoji}",
+        }
+        _LABELS = {
+            "EN": {"title":"📖 K-Drama Phrases","sub":"Learn Korean with K-Drama","learn":"Memorize these 10 phrases — you'll understand K-dramas WITHOUT subtitles!","like":"👍 Like + Subscribe for more K-drama Korean!","hash":"#Kdrama #LearnKorean #KoreanPhrases #KoreanConversation #한국어 #KoreanDrama #KPop #BTS #KoreanLanguage #SpeakKorean #KdramaKorean #KoreanStudy"},
+            "JP": {"title":"📖 Kドラマで学ぶ韓国語","sub":"韓国ドラマで学ぶ韓国語","learn":"この10フレーズを覚えれば字幕なしで韓国ドラマが分かる！","like":"👍 いいね＆登録でKドラマ韓国語レッスン！","hash":"#韓国ドラマ #韓国語 #Kドラマ #韓流 #韓国語勉強 #韓国語フレーズ #韓国語会話 #한국어 #KPOP #推しの韓国語 #BTS韓国語"},
+            "CN": {"title":"📖 韩剧学韩语","sub":"看韩剧学韩语","learn":"背下这10句，不用字幕也能看懂韩剧！","like":"👍 点赞订阅，每天学韩剧韩语！","hash":"#韩剧 #韩语 #学韩语 #韩剧台词 #韩流 #韩语入门 #韩语对话 #한국어 #K-POP #BTS #防弹少年团 #韩综"},
+            "VN": {"title":"📖 Tiếng Hàn qua K-Drama","sub":"Học tiếng Hàn qua phim Hàn","learn":"Học thuộc 10 câu này — bạn xem phim Hàn KHÔNG CẦN phụ đề!","like":"👍 Like & Đăng ký để học tiếng Hàn qua K-drama!","hash":"#KDrama #phimHàn #tiếngHàn #hộithoạitiếngHàn #학tiếngHàn #한국어 #KPop #BTS #BLACKPINK #tiếngHàngiaotiếp #phimHànQuốc"},
+            "ES": {"title":"📖 Coreano con K-Dramas","sub":"Aprende coreano con doramas","learn":"¡Memoriza estas 10 frases y entenderás K-dramas SIN subtítulos!","like":"👍 Dale like y suscríbete para más coreano K-drama!","hash":"#Kdrama #aprendercoreano #doramas #coreano #frasesEnCoreano #한국어 #KPop #BTS #BLACKPINK #doramascoreanos #coreanoKpop"},
+        }
+
+        hook = _HOOKS.get(lang, _HOOKS["EN"])
+        L = _LABELS.get(lang, _LABELS["EN"])
+
+        # ── phrase 10개를 설명에 포함 ────────────────────────
+        phrases = theme.get("phrases", [])
+        sent_lines = []
+        for i, p in enumerate(phrases, 1):
+            ml = p.get("my_line", {}) or {}
+            ko = ml.get("ko", "")
+            tr = ml.get(lang_key) or ml.get("en", "")
+            if ko and tr:
+                sent_lines.append(f"  {i}. {ko}\n     → {tr}")
+        phrases_text = "\n".join(sent_lines) if sent_lines else ""
+
+        num_str = f" #{theme_num:03d}" if theme_num > 0 else ""
+        shorts_suffix = " #Shorts" if fmt == "reels" else ""
+        divider = "─" * 36
+        if fmt == "reels":
+            description = (
+                f"{hook}\n\n"
+                f"{L['sub']}{num_str} — {local_title}\n"
+                f"{('🏷 ' + category) if category else ''}\n\n"
+                f"{L['like']}\n\n"
+                f"{L['hash']}"
+            )
+        else:
+            description = (
+                f"{hook}\n\n"
+                f"{divider}\n"
+                f"{L['title']} — {local_title}\n"
+                f"{('🏷 ' + category) if category else ''}\n"
+                f"{divider}\n"
+                f"{phrases_text}\n\n"
+                f"{L['learn']}\n\n"
+                f"{L['like']}\n\n"
+                f"📚 {L['sub']}{num_str}\n\n"
+                f"{L['hash']}"
+            )
+
+        # ── K-드라마 특화 태그 ─────────────────────────────
+        _TAGS = {
+            "EN": [
+                "K-drama", "Kdrama", "Korean drama", "learn Korean with K-drama",
+                "K-drama phrases", "Korean drama phrases", "Korean drama lines",
+                "learn Korean", "Korean conversation", "Korean phrases", "speak Korean",
+                "Korean for beginners", "K-drama Korean", "K-pop Korean", "BTS Korean",
+                "BLACKPINK Korean", "Korean lessons", "real Korean", "natural Korean",
+                "Korean expressions", "useful Korean", "Korean culture", "Netflix Korean",
+                "squid game Korean", "한국어", "한국어 공부", "한국어 회화", "K드라마",
+                "Korean romance phrases", "Korean confession phrases", "Korean love phrases",
+            ],
+            "JP": [
+                "韓国ドラマ", "Kドラマ", "韓流ドラマ", "韓国ドラマ 名台詞", "韓ドラ",
+                "韓ドラ 韓国語", "韓国語 ドラマ", "韓国語会話", "韓国語フレーズ",
+                "韓国語勉強", "韓国語初心者", "韓国語リスニング", "韓国語学習",
+                "推しの韓国語", "オタ活韓国語", "BTS韓国語", "BLACKPINK韓国語",
+                "K-POP韓国語", "韓流", "毎日韓国語", "ハングル", "한국어",
+                "한국어 회화", "韓国ドラマで学ぶ", "ネトフリ 韓国", "韓国語 愛してる",
+                "韓国語 告白", "韓国語 かっこいい", "韓国語 名言", "韓流スター",
+            ],
+            "CN": [
+                "韩剧", "韩国电视剧", "韩剧台词", "看韩剧学韩语", "韩剧推荐",
+                "韩剧名台词", "韩剧经典台词", "韩剧学韩语", "学韩语", "韩语对话",
+                "韩语短语", "韩语入门", "韩流", "K-POP韩语", "BTS韩语",
+                "BLACKPINK韩语", "防弹少年团", "韩语日常会话", "韩语听力",
+                "Netflix韩剧", "鱿鱼游戏", "한국어", "한국어 회화", "韩综",
+                "韩语表白", "韩语告白", "韩语情话", "韩语名言", "韩国明星",
+            ],
+            "VN": [
+                "phim Hàn", "Kdrama", "phim Hàn Quốc", "xem phim Hàn học tiếng Hàn",
+                "thoại phim Hàn", "câu thoại phim Hàn", "học tiếng Hàn qua phim",
+                "tiếng Hàn", "hội thoại tiếng Hàn", "tiếng Hàn giao tiếp",
+                "học tiếng Hàn", "tiếng Hàn cơ bản", "tiếng Hàn cho người mới",
+                "EPS tiếng Hàn", "K-pop tiếng Hàn", "BTS tiếng Hàn",
+                "BLACKPINK tiếng Hàn", "Kpop", "Hàn Quốc", "한국어",
+                "phim Hàn trên Netflix", "tiếng Hàn tỏ tình", "tiếng Hàn lãng mạn",
+                "tiếng Hàn yêu đương", "câu nói hay phim Hàn", "Squid Game",
+                "phim Hàn hay", "phim Hàn hot", "tiếng Hàn trong phim",
+            ],
+            "ES": [
+                "Kdrama", "K-drama", "doramas coreanos", "doramas", "aprender coreano con doramas",
+                "frases de K-drama", "frases de doramas", "aprender coreano",
+                "coreano conversación", "frases en coreano", "coreano básico",
+                "coreano para principiantes", "Kpop español", "Kdrama español",
+                "BTS español", "BLACKPINK español", "coreano kpop", "coreano kdrama",
+                "한국어", "Corea del Sur", "dramas coreanos", "Netflix doramas",
+                "squid game coreano", "frases románticas coreano", "coreano amor",
+                "coreano confesión", "coreano romántico", "coreano sentimental",
+                "doramas románticos", "frases icónicas kdrama",
+            ],
+        }
+        tags = _TAGS.get(lang, _TAGS["EN"])
+        theme_tags = [t for t in [search_title, local_title, ko_title, category] if t]
+        all_tags = tags + theme_tags
+        if fmt == "reels":
+            all_tags += ["Shorts", "K-drama Shorts", "shorts"]
+        selected, total = [], 0
+        for t in all_tags:
+            if not t: continue
+            if total + len(t) + 1 <= 490:
+                selected.append(t); total += len(t) + 1
+            if len(selected) >= 30:
+                break
+
+        metadata = {
+            "title": f"{emoji} {search_title}{num_str}{shorts_suffix}"[:100],
+            "description": description[:4900],
+            "tags": selected,
+            "category_id": "24",   # Entertainment (K-drama)
+            "categoryId": "24",
+            "default_language": "ko",
+            "privacyStatus": "public",
+        }
+
+        # 썸네일 (K-드라마 전용 폴더)
+        kdrama_thumb = _kdrama_thumb_path(theme_id, lang)
+        if not _conv_path_exists(kdrama_thumb):
+            try:
+                from make_thumbnail import make_conv_thumbnail as _mct
+                os.makedirs(os.path.dirname(kdrama_thumb), exist_ok=True)
+                _mct(theme, lang, kdrama_thumb)
+                print(f"  [thumb] K-드라마 썸네일 생성: {kdrama_thumb}")
+            except Exception as te:
+                print(f"  [thumb] K-드라마 썸네일 생성 실패 (무시): {te}")
+        thumb = kdrama_thumb if _conv_path_exists(kdrama_thumb) else None
+
+        youtube = get_youtube_client(lang=lang)
+        vid = upload_video(youtube, video_path, metadata, publish_at=None, thumbnail_path=thumb)
+        if not vid:
+            return None, "upload_video가 video_id를 반환하지 않음"
+
+        # 재생목록
+        try:
+            from upload_youtube import get_or_create_typed_playlist, add_to_playlist
+            ptype = "phrase_shorts" if fmt == "reels" else "phrase"
+            pl_id = get_or_create_typed_playlist(youtube, lang, ptype)
+            add_to_playlist(youtube, pl_id, vid)
+        except Exception as pe:
+            print(f"  [playlist] K드라마 추가 실패 (무시): {pe}")
+
+        klog = load_kdrama_log()
+        for e in klog:
+            if str(e.get("theme_id")) == str(theme_id) and e.get("lang") == lang and e.get("fmt", "youtube") == fmt:
+                e["uploaded"] = True
+                e["video_id"] = vid
+                break
+        else:
+            klog.append({"theme_id": str(theme_id), "lang": lang, "fmt": fmt,
+                         "video_path": video_path, "uploaded": True, "video_id": vid})
+        save_kdrama_log(klog)
+
+        up = load_json(UPLOADS_LOG, {"uploaded": [], "last_day": 0})
+        up.setdefault("uploaded", []).append({
+            "type": "kdrama",
+            "theme_id": str(theme_id),
+            "lang": lang,
+            "fmt": fmt,
+            "video_id": vid,
+            "youtube_url": f"https://youtube.com/watch?v={vid}",
+            "uploaded_at": datetime.now().isoformat(),
+        })
+        save_json(UPLOADS_LOG, up)
+
+        return vid, None
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return None, str(e)
+
 
 def _run_upload_batch(count: int, lang: str = "", fmt: str = "", tab: str = "word") -> dict:
     """스케줄에 따라 대기 중인 영상을 count개 업로드"""
@@ -1406,6 +2082,31 @@ def _run_upload_batch(count: int, lang: str = "", fmt: str = "", tab: str = "wor
                         done += 1
                     else:
                         errors.append(f"업로드 실패: {v['word_id']} ({_lang}/{_fmt})")
+                except Exception as e:
+                    errors.append(str(e)[:200])
+        elif tab == "kdrama":
+            # K-드라마 탭
+            klog = load_json(KDRAMA_LOG_F, [])
+            pending = []
+            for c in klog:
+                if c.get("uploaded"):
+                    continue
+                _lang = c.get("lang", "EN")
+                _fmt  = c.get("fmt", "youtube")
+                _path = c.get("video_path", "")
+                if lang and _lang != lang:
+                    continue
+                if fmt and _fmt != fmt:
+                    continue
+                if os.path.exists(_path):
+                    pending.append(c)
+            for c in pending[:count]:
+                try:
+                    vid, err = run_kdrama_upload(str(c.get("theme_id")), c.get("lang", "EN"), c.get("fmt", "youtube"))
+                    if vid:
+                        done += 1
+                    else:
+                        errors.append(f"K드라마 업로드 실패: {c.get('theme_id')} ({c.get('lang')}) — {err}")
                 except Exception as e:
                     errors.append(str(e)[:200])
         else:
@@ -1453,43 +2154,40 @@ def _next_sit_id(current_id: int) -> int:
     except Exception:
         return 1
 
-def _phrase_video_exists(sit_id: int) -> bool:
+def _phrase_video_exists(sit_id: int, lang: str = "EN") -> bool:
     """회화 영상 파일 존재 여부 확인"""
-    try:
-        vdir = Path(PHRASE_VIDEO_DIR)
-        for f in vdir.iterdir():
-            if f.name.startswith(f"phrases_sit{sit_id:03d}") and f.suffix == ".mp4":
-                return f.stat().st_size > 0
-    except Exception:
-        pass
+    for fmt in ("youtube", "reels"):
+        p = _phrase_video_path(sit_id, lang, fmt)
+        if _conv_path_exists(p):
+            return True
     return False
 
 _phrase_rendering = False
 _phrase_render_lock = threading.Lock()
 
-def _phrase_render_job(sit_id: int):
+def _phrase_render_job(sit_id: int, lang: str = "EN"):
     """회화 영상 렌더링 (NAS 직접)"""
     global _phrase_rendering
     try:
-        cmd = [sys.executable, "/app/make_video_phrases.py",
-               "--db", PHRASES_DB_PATH, "--id", str(sit_id),
-               "--output", PHRASE_VIDEO_DIR]
+        cmd = [sys.executable, "/app/make_conversation.py",
+               "--db", PHRASES_DB_PATH,
+               "--theme", str(sit_id),
+               "--lang", lang,
+               "--output", OUTPUT_DIR,
+               "--subdir", "phrases",
+               "--illust-dir", "phrase_illustrations",
+               "--filename-prefix", "phrases"]
         subprocess.run(cmd, check=True)
     except Exception as e:
         print(f"  [phrase_render] 오류: {e}")
     _phrase_rendering = False
 
-def _phrase_upload_job(sit_id: int):
-    """회화 영상 5개 언어 채널 업로드"""
+def _phrase_upload_job(sit_id: int, lang: str = "EN"):
+    """회화 영상 업로드"""
     try:
-        # 영상 파일 찾기
-        vdir = Path(PHRASE_VIDEO_DIR)
-        vpath = None
-        for f in vdir.iterdir():
-            if f.name.startswith(f"phrases_sit{sit_id:03d}") and f.suffix == ".mp4":
-                vpath = str(f); break
-        if not vpath:
-            print(f"  [phrase_upload] 영상 없음: sit_{sit_id}")
+        vpath = _phrase_video_path(sit_id, lang)
+        if not _conv_path_exists(vpath):
+            print(f"  [phrase_upload] 영상 없음: sit_{sit_id} lang={lang}")
             return
 
         from upload_youtube import (
@@ -1611,7 +2309,7 @@ def _daily_upload_job(word: dict, lang: str, fmt: str):
     if raw_pub:
         try: pub = datetime.fromisoformat(raw_pub.replace("Z", "+00:00"))
         except: pass
-    vid = run_upload(word, vpath, exam="TOPIK", lang=lang, publish_at=pub)
+    vid = run_upload(word, vpath, exam="TOPIK", lang=lang, publish_at=pub, fmt=fmt)
     s = load_json(DAILY_AUTO_F, {})
     ku = "youtube_uploaded" if fmt == "youtube" else "reels_uploaded"
     kv = "youtube_video_id"  if fmt == "youtube" else "reels_video_id"
@@ -1673,9 +2371,17 @@ def _daily_auto_tick():
         if s.get("today") != today:
             # 단어 오늘의 ID 목록
             last_id = s.get("current_word_id", 0)
-            if word_day:
+            # 현재 화수가 아직 업로드되지 않았으면 advance하지 않음
+            _prev_langs = s.get("langs", {})
+            _any_uploaded = any(
+                _prev_langs.get(lg, {}).get("youtube_uploaded") or
+                _prev_langs.get(lg, {}).get("reels_uploaded")
+                for lg in DAILY_LANGS
+            )
+            if word_day and _any_uploaded:
                 word_ids = _next_lv1_word_ids(last_id, word_count)
             else:
+                # 아직 업로드 안 됐거나 오늘이 배치일 아니면 현재 ID 유지
                 word_ids = s.get("current_word_ids", [last_id] if last_id else [])
             next_id  = word_ids[0] if word_ids else last_id
 
@@ -1722,7 +2428,10 @@ def _daily_auto_tick():
                  "phrase_last_date":   s.get("phrase_last_date", ""),
                  "phrase_due":         phrase_due,
                  "phrase_rendered":    False,
-                 "phrase_langs":       {lg: {"uploaded": False} for lg in DAILY_LANGS}
+                 "phrase_langs":       {lg: {"uploaded": False,
+                                            **({k: v for k, v in s.get("phrase_langs", {}).get(lg, {}).items()
+                                                if k == "conv_ep_override"})}
+                                        for lg in DAILY_LANGS}
                                        if phrase_due else s.get("phrase_langs", {}),
                  }
             save_json(DAILY_AUTO_F, s)
@@ -1859,20 +2568,18 @@ def _daily_auto_tick():
                     s["phrase_last_date"] = s.get("today", "")
                     save_json(DAILY_AUTO_F, s)
 
-        # ── 업로드 스케줄 체크 ────────────────────────────────
+        # ── 업로드 스케줄 체크 (4개 독립 타입) ───────────────────
         usched = load_json(UPLOAD_SCHED_F, {})
-        if usched.get("enabled"):
-            interval = int(usched.get("interval_days", 1))
-            last_run = usched.get("last_run") or "2000-01-01"
+        for stype, (tab, fmt) in _SCHED_TYPE_MAP.items():
+            cfg = usched.get(stype, {})
+            if not cfg.get("enabled"):
+                continue
+            interval = int(cfg.get("interval_days", 1))
+            last_run = cfg.get("last_run") or "2000-01-01"
             if _is_schedule_day(today, last_run, interval) and today != last_run:
-                _run_upload_batch(
-                    int(usched.get("count", 2)),
-                    usched.get("lang", ""),
-                    usched.get("fmt", ""),
-                    usched.get("tab", "word")
-                )
-                usched["last_run"] = today
-                save_json(UPLOAD_SCHED_F, usched)
+                _run_upload_batch(int(cfg.get("count", 2)), cfg.get("lang", ""), fmt, tab)
+                usched.setdefault(stype, {})["last_run"] = today
+        save_json(UPLOAD_SCHED_F, usched)
 
     except Exception as e:
         print(f"  [daily_tick] {e}")
@@ -2105,7 +2812,7 @@ def api_global_queue():
                         job["step"] = f"{done_count}/{total_items}"
                     except Exception:
                         pass
-            elif job["type"] in ("conv_video", "phrase_video"):
+            elif job["type"] in ("conv_video", "kdrama_video", "phrase_video"):
                 # progress.json 에서 실시간 진행률 주입
                 p = load_json(PROGRESS_F, {})
                 if p.get("status") == "running":
@@ -2187,6 +2894,9 @@ def api_open_folder():
     if jtype == "conv_video":
         lang   = params.get("lang", "EN")
         folder = f"/app/output/conversation/{lang}"
+    elif jtype == "kdrama_video":
+        lang   = params.get("lang", "EN")
+        folder = f"/app/output/kdrama/{lang}"
     elif jtype in ("video_batch",):
         folder = "/app/output"
     elif jtype == "illust":
@@ -2245,6 +2955,43 @@ def api_set_job_target(job_id):
 def api_youtube_channels():
     return jsonify(get_all_channel_stats())
 
+@app.route("/api/youtube/sync-playlists", methods=["POST"])
+def api_youtube_sync_playlists():
+    """각 채널의 플레이리스트를 스캔해 youtube_playlists.json 갱신."""
+    try:
+        import importlib.util, pickle as _pickle
+        spec = importlib.util.spec_from_file_location("upload_youtube",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "upload_youtube.py"))
+        uy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(uy)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    def _get_yt_ro(lang):
+        from google.oauth2.credentials import Credentials as _Creds
+        from google.auth.transport.requests import Request as _Req
+        from googleapiclient.discovery import build as _build
+        token_path = uy._token_path_for_lang(lang)
+        with open(token_path, "rb") as f:
+            creds = _pickle.load(f)
+        if creds and creds.expired and creds.refresh_token:
+            try: creds.refresh(_Req())
+            except Exception: pass
+        return _build("youtube", "v3", credentials=creds)
+
+    results = {}
+    for lang in ["EN", "JP", "CN", "VN", "ES"]:
+        token_path = uy._token_path_for_lang(lang)
+        if not os.path.exists(token_path):
+            continue
+        try:
+            yt = _get_yt_ro(lang)
+            found = _scan_and_save_playlists(yt, lang, uy)
+            results[lang] = found
+        except Exception as e:
+            results[lang] = {"error": str(e)}
+    return jsonify({"synced": results})
+
 @app.route("/api/youtube/debug/<lang>")
 def api_youtube_debug(lang):
     """채널 원시 통계 디버그 (viewCount, video stats 비교)"""
@@ -2291,11 +3038,28 @@ def api_yt_upload_status():
     uploads = load_json(UPLOADS_LOG, {"uploaded": []})
     vid_map = {}       # (word_id, lang, fmt) -> video_id
     uploaded_pairs = set()
+    conv_uploaded_set = set()  # (str(theme_id), lang, fmt)
+    conv_vid_from_uploads = {}  # (str(theme_id), lang, fmt) -> video_id
+    kdrama_uploaded_set = set()
+    kdrama_vid_from_uploads = {}
     for u in uploads.get("uploaded", []):
-        k = (u["word_id"], u.get("lang", "EN"), u.get("fmt", "youtube"))
-        uploaded_pairs.add(k)
-        if u.get("video_id"):
-            vid_map[k] = u["video_id"]
+        if u.get("type") == "kdrama":
+            ck = (str(u.get("theme_id", "")), u.get("lang", "EN"), u.get("fmt", "youtube"))
+            kdrama_uploaded_set.add(ck)
+            if u.get("video_id"):
+                kdrama_vid_from_uploads[ck] = u["video_id"]
+        elif u.get("type") == "conversation":
+            ck = (str(u.get("theme_id", "")), u.get("lang", "EN"), u.get("fmt", "youtube"))
+            conv_uploaded_set.add(ck)
+            if u.get("video_id"):
+                conv_vid_from_uploads[ck] = u["video_id"]
+        else:
+            if "word_id" not in u:
+                continue
+            k = (u["word_id"], u.get("lang", "EN"), u.get("fmt", "youtube"))
+            uploaded_pairs.add(k)
+            if u.get("video_id"):
+                vid_map[k] = u["video_id"]
 
     upload_all = load_json(f"{BASE}/logs/upload_all_done.json", {"uploaded_keys": []})
     for key in upload_all.get("uploaded_keys", []):
@@ -2315,34 +3079,95 @@ def api_yt_upload_status():
     for c in conv_log:
         if c.get("video_id"):
             conv_vid_map[(str(c.get("theme_id")), c.get("lang","EN"), c.get("fmt","youtube"))] = c["video_id"]
+    # uploads.json 기반 video_id도 병합
+    conv_vid_map.update(conv_vid_from_uploads)
+
+    # kdrama_log video_id 수집
+    kdrama_log = load_json(KDRAMA_LOG_F, [])
+    kdrama_vid_map = {}
+    for c in kdrama_log:
+        if c.get("video_id"):
+            kdrama_vid_map[(str(c.get("theme_id")), c.get("lang","EN"), c.get("fmt","youtube"))] = c["video_id"]
+    kdrama_vid_map.update(kdrama_vid_from_uploads)
 
     # YouTube 통계 배치 조회
     yt_stats = {}  # video_id -> {views, likes, comments}
-    all_vids = list(set(list(vid_map.values()) + list(conv_vid_map.values())))
-    yt_api_key = os.environ.get("YOUTUBE_API_KEY", "")
-    if all_vids and yt_api_key:
+    _stats_failed = False
+    all_vids = list({v for v in list(vid_map.values()) + list(conv_vid_map.values()) + list(kdrama_vid_map.values()) if v})
+
+    def _fetch_stats_with_key(vids, api_key):
+        from googleapiclient.discovery import build as _build
+        svc = _build("youtube", "v3", developerKey=api_key)
+        for i in range(0, len(vids), 50):
+            batch = vids[i:i+50]
+            resp = svc.videos().list(part="statistics", id=",".join(batch)).execute()
+            for item in resp.get("items", []):
+                s = item["statistics"]
+                yt_stats[item["id"]] = {
+                    "views":    int(s.get("viewCount", 0)),
+                    "likes":    int(s.get("likeCount", 0)),
+                    "comments": int(s.get("commentCount", 0)),
+                }
+
+    def _fetch_stats_with_oauth(vids):
+        import importlib.util as _ilu, pickle as _pk
+        spec = _ilu.spec_from_file_location("upload_youtube",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "upload_youtube.py"))
+        uy = _ilu.module_from_spec(spec); spec.loader.exec_module(uy)
+        from google.auth.transport.requests import Request as _Req
+        from googleapiclient.discovery import build as _build
+        used_langs = set()
+        for (wid, lang, fmt), vid in vid_map.items():
+            if vid in vids: used_langs.add(lang)
+        for (tid, lang, fmt), vid in conv_vid_map.items():
+            if vid in vids: used_langs.add(lang)
+        if not used_langs: used_langs = {"EN"}
+        fetched = set()
+        for lang in used_langs:
+            token_path = uy._token_path_for_lang(lang)
+            if not os.path.exists(token_path): continue
+            try:
+                with open(token_path, "rb") as f: creds = _pk.load(f)
+                if creds and creds.expired and creds.refresh_token:
+                    try: creds.refresh(_Req())
+                    except Exception: pass
+                svc = _build("youtube", "v3", credentials=creds)
+                remaining = [v for v in vids if v not in fetched]
+                for i in range(0, len(remaining), 50):
+                    batch = remaining[i:i+50]
+                    resp = svc.videos().list(part="statistics", id=",".join(batch)).execute()
+                    for item in resp.get("items", []):
+                        s = item["statistics"]
+                        yt_stats[item["id"]] = {
+                            "views":    int(s.get("viewCount", 0)),
+                            "likes":    int(s.get("likeCount", 0)),
+                            "comments": int(s.get("commentCount", 0)),
+                        }
+                        fetched.add(item["id"])
+            except Exception as e:
+                print(f"  [upload-status] OAuth stats 오류 ({lang}): {e}")
+            if fetched >= set(vids): break
+
+    if all_vids:
+        yt_api_key = os.environ.get("YOUTUBE_API_KEY", "")
         try:
-            from googleapiclient.discovery import build
-            yt_svc = build("youtube", "v3", developerKey=yt_api_key)
-            for i in range(0, len(all_vids), 50):
-                batch = [v for v in all_vids[i:i+50] if v]
-                if not batch:
-                    continue
-                resp = yt_svc.videos().list(part="statistics", id=",".join(batch)).execute()
-                for item in resp.get("items", []):
-                    s = item["statistics"]
-                    yt_stats[item["id"]] = {
-                        "views":    int(s.get("viewCount", 0)),
-                        "likes":    int(s.get("likeCount", 0)),
-                        "comments": int(s.get("commentCount", 0)),
-                    }
+            if yt_api_key:
+                _fetch_stats_with_key(all_vids, yt_api_key)
+            else:
+                _fetch_stats_with_oauth(all_vids)
         except Exception as e:
             print(f"  [upload-status] YouTube stats 오류: {e}")
+            _stats_failed = True
 
     def _stats(video_id):
         if not video_id:
             return {}
-        return yt_stats.get(video_id, {})
+        if video_id in yt_stats:
+            return yt_stats[video_id]
+        # stats 조회 실패(quota 등) + video_id 존재 → error 표시
+        if _stats_failed:
+            return {"error": True}
+        return {}
 
     # 단어 영상
     word_videos = []
@@ -2362,61 +3187,432 @@ def api_yt_upload_status():
             "exam": v.get("exam", "TOPIK"),
             "fmt": fmt,
             "file_exists": os.path.exists(_norm(v.get("output_path", ""))),
-            "uploaded": vid_key in uploaded_pairs,
+            "uploaded": (vid_key in uploaded_pairs) or bool(video_id),
             "generated_at": v.get("generated_at", ""),
             "video_id": video_id,
             "views":    st.get("views"),
             "likes":    st.get("likes"),
             "comments": st.get("comments"),
+            "stats_error": st.get("error", False),
         })
 
     # 회화 영상
     conv_videos = []
     for c in conv_log:
-        video_id = c.get("video_id") or conv_vid_map.get(
-            (str(c.get("theme_id")), c.get("lang","EN"), c.get("fmt","youtube")))
+        _ck = (str(c.get("theme_id")), c.get("lang","EN"), c.get("fmt","youtube"))
+        video_id = c.get("video_id") or conv_vid_map.get(_ck)
+        # uploads.json에 있으면 업로드됨으로 확정
+        _uploaded = c.get("uploaded", False) or (_ck in conv_uploaded_set)
         st = _stats(video_id)
         conv_videos.append({
             "theme_id": c.get("theme_id"),
             "lang": c.get("lang", "EN"),
             "fmt": c.get("fmt", "youtube"),
-            "uploaded": c.get("uploaded", False),
+            "uploaded": _uploaded,
             "file_exists": os.path.exists(_norm(c.get("video_path", ""))),
             "rendered_at": c.get("rendered_at", ""),
             "video_id": video_id,
             "views":    st.get("views"),
             "likes":    st.get("likes"),
             "comments": st.get("comments"),
+            "stats_error": st.get("error", False),
         })
 
-    return jsonify({"word_videos": word_videos, "conv_videos": conv_videos})
+    # K-드라마 영상
+    kdrama_videos = []
+    for c in kdrama_log:
+        _ck = (str(c.get("theme_id")), c.get("lang","EN"), c.get("fmt","youtube"))
+        video_id = c.get("video_id") or kdrama_vid_map.get(_ck)
+        _uploaded = c.get("uploaded", False) or (_ck in kdrama_uploaded_set)
+        st = _stats(video_id)
+        kdrama_videos.append({
+            "theme_id": c.get("theme_id"),
+            "lang": c.get("lang", "EN"),
+            "fmt": c.get("fmt", "youtube"),
+            "uploaded": _uploaded,
+            "file_exists": os.path.exists(_norm(c.get("video_path", ""))),
+            "rendered_at": c.get("rendered_at", ""),
+            "video_id": video_id,
+            "views":    st.get("views"),
+            "likes":    st.get("likes"),
+            "comments": st.get("comments"),
+            "stats_error": st.get("error", False),
+        })
+
+    return jsonify({"word_videos": word_videos, "conv_videos": conv_videos,
+                    "kdrama_videos": kdrama_videos,
+                    "stats_error": _stats_failed})
+
+_SCHED_DEFAULTS = {
+    "word-yt":      {"enabled": False, "interval_days": 1, "count": 2, "lang": ""},
+    "word-reels":   {"enabled": False, "interval_days": 1, "count": 2, "lang": ""},
+    "conv-yt":      {"enabled": False, "interval_days": 1, "count": 1, "lang": ""},
+    "conv-reels":   {"enabled": False, "interval_days": 1, "count": 1, "lang": ""},
+    "kdrama-yt":    {"enabled": False, "interval_days": 1, "count": 1, "lang": ""},
+    "kdrama-reels": {"enabled": False, "interval_days": 1, "count": 1, "lang": ""},
+}
+_SCHED_TYPE_MAP = {
+    "word-yt":      ("word",   "youtube"),
+    "word-reels":   ("word",   "reels"),
+    "conv-yt":      ("conv",   "youtube"),
+    "conv-reels":   ("conv",   "reels"),
+    "kdrama-yt":    ("kdrama", "youtube"),
+    "kdrama-reels": ("kdrama", "reels"),
+}
 
 @app.route("/api/youtube/upload-schedule", methods=["GET"])
 def api_get_upload_schedule():
-    return jsonify(load_json(UPLOAD_SCHED_F, {
-        "enabled": False, "interval_days": 1, "count": 2,
-        "lang": "", "fmt": "", "tab": "word", "last_run": None
-    }))
+    raw = load_json(UPLOAD_SCHED_F, {})
+    result = {}
+    for t, default in _SCHED_DEFAULTS.items():
+        result[t] = {**default, **raw.get(t, {})}
+    return jsonify(result)
 
 @app.route("/api/youtube/upload-schedule", methods=["POST"])
 def api_save_upload_schedule():
     data = request.get_json(silent=True) or {}
-    save_json(UPLOAD_SCHED_F, data)
+    stype = data.get("type")
+    raw = load_json(UPLOAD_SCHED_F, {})
+    if stype and stype in _SCHED_DEFAULTS:
+        raw.setdefault(stype, {}).update({
+            k: v for k, v in data.items()
+            if k in ("enabled", "interval_days", "count", "lang")
+        })
+    else:
+        # 레거시: 전체 저장
+        raw.update(data)
+    save_json(UPLOAD_SCHED_F, raw)
     return jsonify({"ok": True})
 
 @app.route("/api/youtube/upload-run", methods=["POST"])
 def api_upload_run():
     data = request.get_json(silent=True) or {}
-    cfg = load_json(UPLOAD_SCHED_F, {})
-    count = int(data.get("count", cfg.get("count", 2)))
-    lang  = data.get("lang", cfg.get("lang", ""))
-    fmt   = data.get("fmt",  cfg.get("fmt",  ""))
-    tab   = data.get("tab",  cfg.get("tab",  "word"))
+    stype = data.get("type", "word-yt")
+    tab, fmt = _SCHED_TYPE_MAP.get(stype, ("word", "youtube"))
+    count = int(data.get("count", 2))
+    lang  = data.get("lang", "")
     result = _run_upload_batch(count, lang, fmt, tab)
-    cfg_now = load_json(UPLOAD_SCHED_F, {})
-    cfg_now["last_run"] = datetime.now().strftime("%Y-%m-%d")
-    save_json(UPLOAD_SCHED_F, cfg_now)
+    raw = load_json(UPLOAD_SCHED_F, {})
+    raw.setdefault(stype, {})["last_run"] = datetime.now().strftime("%Y-%m-%d")
+    save_json(UPLOAD_SCHED_F, raw)
     return jsonify(result)
+
+
+# ─── YouTube 업로드 로그 복구 (Reconcile) ─────────────────────
+_WORD_TITLE_MARKERS = {
+    "EN": "Korean Word of the Day",
+    "JP": "今日の一語",
+    "CN": "每日韩语单词",
+    "VN": "Tiếng Hàn mỗi ngày",
+    "ES": "Coreano del día",
+}
+_TITLE_NUM_RE = __import__("re").compile(r"#(\d{2,4})")
+
+def _parse_iso8601_duration_to_sec(s: str) -> int:
+    """PT1M5S → 65, PT30S → 30"""
+    import re as _re
+    m = _re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", s or "")
+    if not m: return 0
+    h = int(m.group(1) or 0); mn = int(m.group(2) or 0); sc = int(m.group(3) or 0)
+    return h*3600 + mn*60 + sc
+
+
+def _fetch_channel_uploads(lang: str) -> list:
+    """해당 언어 채널의 모든 업로드 영상 메타데이터 리턴 (duration 포함)."""
+    sys.path.insert(0, os.path.dirname(__file__) or "/app")
+    from upload_youtube import get_youtube_client
+    yt = get_youtube_client(lang=lang)
+    resp = yt.channels().list(part="contentDetails", mine=True).execute()
+    items = resp.get("items", [])
+    if not items:
+        return []
+    uploads_pid = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+    # 1) 업로드 재생목록의 videoId/title 수집
+    videos, page_token = [], None
+    while True:
+        r = yt.playlistItems().list(
+            part="snippet", playlistId=uploads_pid,
+            maxResults=50, pageToken=page_token,
+        ).execute()
+        for it in r.get("items", []):
+            sn = it["snippet"]
+            videos.append({
+                "video_id": sn["resourceId"]["videoId"],
+                "title": sn.get("title", ""),
+                "published_at": sn.get("publishedAt", ""),
+                "duration_sec": 0,
+            })
+        page_token = r.get("nextPageToken")
+        if not page_token: break
+
+    # 2) videos.list batch — duration 조회 (쇼츠 여부 정확히 판정)
+    id_to_idx = {v["video_id"]: i for i, v in enumerate(videos)}
+    ids = list(id_to_idx.keys())
+    for i in range(0, len(ids), 50):
+        batch = ids[i:i+50]
+        try:
+            r = yt.videos().list(part="contentDetails",
+                                 id=",".join(batch)).execute()
+            for it in r.get("items", []):
+                vid = it["id"]
+                dur = _parse_iso8601_duration_to_sec(
+                    it.get("contentDetails", {}).get("duration", ""))
+                idx = id_to_idx.get(vid)
+                if idx is not None:
+                    videos[idx]["duration_sec"] = dur
+        except Exception:
+            pass
+    return videos
+
+
+def _build_theme_title_map(db, lang_key):
+    """테마 제목 → theme_id 역매핑. 쇼츠/번호 제거된 정규화 제목과도 매칭되도록."""
+    m = {}
+    for t in db.get("themes", []):
+        tid = str(t["id"])
+        for v in [
+            (t.get("search_title", {}) or {}).get(lang_key),
+            (t.get("title", {}) or {}).get(lang_key),
+            (t.get("title", {}) or {}).get("ko"),
+        ]:
+            if v:
+                m[v.strip()] = tid
+    return m
+
+
+def reconcile_youtube_uploads(lang: str = None) -> dict:
+    """YouTube 채널의 실제 업로드 상태를 스캔해 uploads.json / conv_log / kdrama_log 복구.
+    fmt 판별: 영상 duration 60초 이하 → reels, 초과 → youtube.
+    단어 매칭: 언어별 marker(있으면) OR (#NNN + 단어명/뜻이 제목에 포함) 이중 체크.
+    """
+    import re as _re
+    langs = [lang] if lang else ["EN", "JP", "CN", "VN", "ES"]
+    summary = {"per_lang": {}, "added_word": 0, "added_conv": 0,
+               "added_kdrama": 0, "unknown_total": 0,
+               "unknown_samples": {}, "errors": []}
+
+    up = load_json(UPLOADS_LOG, {"uploaded": [], "last_day": 0})
+    known_word, known_conv, known_kd = set(), set(), set()
+    for u in up.get("uploaded", []):
+        if u.get("type") == "conversation":
+            known_conv.add((str(u.get("theme_id")), u.get("lang", ""), u.get("fmt", "youtube")))
+        elif u.get("type") == "kdrama":
+            known_kd.add((str(u.get("theme_id")), u.get("lang", ""), u.get("fmt", "youtube")))
+        elif "word_id" in u:
+            try:
+                known_word.add((int(u["word_id"]), u.get("lang", ""), u.get("fmt", "youtube")))
+            except (ValueError, TypeError):
+                pass
+
+    conv_log = load_json(CONV_LOG_F, [])
+    conv_log_idx = {(str(c.get("theme_id")), c.get("lang", ""), c.get("fmt", "youtube")): c
+                    for c in conv_log}
+    kdrama_log = load_json(KDRAMA_LOG_F, [])
+    kdrama_log_idx = {(str(c.get("theme_id")), c.get("lang", ""), c.get("fmt", "youtube")): c
+                      for c in kdrama_log}
+
+    try:
+        conv_db = load_conv_db()
+    except Exception:
+        conv_db = {"themes": []}
+    try:
+        kdrama_db = load_kdrama_db()
+    except Exception:
+        kdrama_db = {"themes": []}
+
+    # 단어 DB: word_id → (ko, meaning[lang]) 역맵 — words_db.json 전역 id 기준
+    def _build_word_map(L):
+        m = {}
+        lang_key = L.lower()
+        lt = f"{DATA_ROOT}/LanguageTest"
+        # 언어별 words_db_{lang}.json 우선, 없으면 통합 words_db.json
+        lang_db_path = f"{lt}/words_db_{lang_key}.json"
+        base_db_path = f"{lt}/words_db.json"
+        db_path = lang_db_path if os.path.exists(lang_db_path) else base_db_path
+        raw = load_json(db_path, [])
+        words = raw if isinstance(raw, list) else raw.get("words", [])
+        for w in words:
+            wid = w.get("id")
+            if wid is None: continue
+            m[int(wid)] = {
+                "word": w.get("word", ""),
+                "meaning": w.get("meaning", ""),
+            }
+        return m
+
+    new_uploads = []
+    for L in langs:
+        lang_key = L.lower()
+        conv_title_map = _build_theme_title_map(conv_db, lang_key)
+        kd_title_map = _build_theme_title_map(kdrama_db, lang_key)
+        word_map = _build_word_map(L)
+        marker = _WORD_TITLE_MARKERS.get(L, "")
+
+        try:
+            videos = _fetch_channel_uploads(L)
+        except Exception as e:
+            summary["errors"].append(f"{L}: {str(e)[:200]}")
+            summary["per_lang"][L] = {"error": str(e)[:120]}
+            continue
+
+        lang_sum = {"scanned": len(videos), "word": 0, "conv": 0,
+                    "kdrama": 0, "already": 0, "unknown": 0}
+        unknown_list = []
+
+        for v in videos:
+            title = v["title"]
+            vid = v["video_id"]
+            published = v["published_at"]
+            dur = v.get("duration_sec", 0)
+            # fmt 판별 — duration 우선, 폴백으로 #Shorts 텍스트
+            if dur and dur <= 60:
+                fmt = "reels"
+            elif dur and dur > 60:
+                fmt = "youtube"
+            else:
+                fmt = "reels" if ("#Shorts" in title or "#shorts" in title) else "youtube"
+
+            # 1) 단어 매칭
+            nm = _TITLE_NUM_RE.search(title)
+            word_id = int(nm.group(1)) if nm else None
+            is_word = False
+            if word_id is not None:
+                if marker and marker in title:
+                    is_word = True
+                else:
+                    # marker 없어도 단어/뜻이 제목에 포함되면 단어로 확정
+                    w = word_map.get(word_id)
+                    if w and (w["word"] and w["word"] in title or
+                              w["meaning"] and w["meaning"].lower() in title.lower()):
+                        is_word = True
+
+            if is_word:
+                key = (word_id, L, fmt)
+                if key in known_word:
+                    lang_sum["already"] += 1
+                    continue
+                w = word_map.get(word_id, {})
+                new_uploads.append({
+                    "day": word_id, "word_id": word_id,
+                    "word": w.get("word", ""),
+                    "meaning": w.get("meaning", ""),
+                    "lang": L, "fmt": fmt,
+                    "video_id": vid,
+                    "uploaded_at": published,
+                    "reconciled": True,
+                })
+                known_word.add(key)
+                lang_sum["word"] += 1
+                summary["added_word"] += 1
+                continue
+
+            # 2) 회화/K-드라마 매칭 — 정규화된 제목
+            base = title.replace(" #Shorts", "").replace("#Shorts", "").strip()
+            num_m = _TITLE_NUM_RE.search(base)
+            if num_m:
+                base_no_num = base[:num_m.start()].strip().rstrip("|｜").strip()
+            else:
+                base_no_num = base
+            base_clean = _re.sub(r'^[^\w가-힣A-Za-z]+', '', base_no_num).strip()
+
+            theme_id, source = None, None
+            for tm, src in [(conv_title_map, "conv"), (kd_title_map, "kdrama")]:
+                for t_title, tid in tm.items():
+                    tt = t_title.strip()
+                    if tt and (tt == base_clean or tt == base_no_num or tt in base):
+                        theme_id, source = tid, src
+                        break
+                if theme_id:
+                    break
+
+            if theme_id:
+                key = (theme_id, L, fmt)
+                if source == "conv":
+                    if key in known_conv:
+                        lang_sum["already"] += 1
+                        continue
+                    new_uploads.append({
+                        "type": "conversation",
+                        "theme_id": theme_id, "lang": L, "fmt": fmt,
+                        "video_id": vid,
+                        "uploaded_at": published,
+                        "reconciled": True,
+                    })
+                    vp = _conv_video_path(theme_id, L, fmt)
+                    entry = conv_log_idx.get(key)
+                    if entry:
+                        entry["uploaded"] = True
+                        entry["video_id"] = vid
+                    else:
+                        new_entry = {
+                            "theme_id": theme_id, "lang": L, "fmt": fmt,
+                            "video_path": vp, "uploaded": True, "video_id": vid,
+                            "rendered_at": published, "reconciled": True,
+                        }
+                        conv_log.append(new_entry)
+                        conv_log_idx[key] = new_entry
+                    known_conv.add(key)
+                    lang_sum["conv"] += 1
+                    summary["added_conv"] += 1
+                else:
+                    if key in known_kd:
+                        lang_sum["already"] += 1
+                        continue
+                    new_uploads.append({
+                        "type": "kdrama",
+                        "theme_id": theme_id, "lang": L, "fmt": fmt,
+                        "video_id": vid,
+                        "uploaded_at": published,
+                        "reconciled": True,
+                    })
+                    vp = _kdrama_video_path(theme_id, L, fmt)
+                    entry = kdrama_log_idx.get(key)
+                    if entry:
+                        entry["uploaded"] = True
+                        entry["video_id"] = vid
+                    else:
+                        new_entry = {
+                            "theme_id": theme_id, "lang": L, "fmt": fmt,
+                            "video_path": vp, "uploaded": True, "video_id": vid,
+                            "rendered_at": published, "reconciled": True,
+                        }
+                        kdrama_log.append(new_entry)
+                        kdrama_log_idx[key] = new_entry
+                    known_kd.add(key)
+                    lang_sum["kdrama"] += 1
+                    summary["added_kdrama"] += 1
+                continue
+
+            lang_sum["unknown"] += 1
+            summary["unknown_total"] += 1
+            if len(unknown_list) < 8:
+                unknown_list.append({"title": title[:120], "dur": dur, "fmt": fmt})
+
+        lang_sum["unknown_samples"] = unknown_list
+        summary["per_lang"][L] = lang_sum
+        if unknown_list:
+            summary["unknown_samples"][L] = unknown_list
+
+    up["uploaded"].extend(new_uploads)
+    save_json(UPLOADS_LOG, up)
+    save_json(CONV_LOG_F, conv_log)
+    save_json(KDRAMA_LOG_F, kdrama_log)
+    return summary
+
+
+@app.route("/api/youtube/reconcile", methods=["POST"])
+def api_reconcile_uploads():
+    data = request.get_json(silent=True) or {}
+    lang = data.get("lang")
+    try:
+        summary = reconcile_youtube_uploads(lang)
+        return jsonify({"ok": True, **summary})
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": str(e),
+                        "trace": traceback.format_exc()[-800:]}), 500
+
 
 # ─── Instagram API ────────────────────────────────────────────
 IG_TOKEN_F = f"{BASE}/logs/instagram_token.json"
@@ -2526,6 +3722,10 @@ _DAILY_CONFIG_KEYS = {
     "phrase_illust":      str,  # auto | auto_if_missing | manual
     "phrase_prebuffer_h": int,  # hours before upload to pre-render phrase video
     "auto_start_date":    str,  # YYYY-MM-DD — schedule begins from this date
+    "ep_word_yt_start":    int,  # 기준일의 단어 본편 시작 화수
+    "ep_word_reels_start": int,  # 기준일의 단어 쇼츠 시작 화수
+    "ep_conv_yt_start":    int,  # 기준일의 회화 본편 시작 화수
+    "ep_conv_reels_start": int,  # 기준일의 회화 쇼츠 시작 화수
 }
 
 @app.route("/api/daily/config", methods=["GET","POST"])
@@ -2542,6 +3742,149 @@ def api_daily_config():
             threading.Thread(target=_daily_auto_tick, daemon=True).start()
         return jsonify({"ok": True})
     return jsonify(load_json(DAILY_AUTO_F, {}))
+
+@app.route("/api/daily/countdown")
+def api_daily_countdown():
+    """언어별 다음 업로드 시각(UTC) + 파일 준비 상태 (단어/회화 분리)"""
+    KST = timezone(timedelta(hours=9))
+    s   = load_json(DAILY_AUTO_F, {})
+    word_id = s.get("current_word_id")
+    word = None
+    if word_id:
+        try:
+            db = get_words_db()
+            word = next((w for w in db if w["id"] == word_id), None)
+        except Exception:
+            pass
+
+    result = {}
+    for lang in DAILY_LANGS:
+        next_ut = _next_publish_at(lang)
+        kst_fixed = next_ut.astimezone(KST).strftime("%H:%M")
+
+        # 현지 날짜 계산
+        if _HAS_TZ:
+            local_dt = next_ut.astimezone(_LANG_TZ.get(lang, _LANG_TZ["EN"]))
+        else:
+            off = _LANG_UTC_OFFSET_H.get(lang, -5)
+            local_dt = next_ut + timedelta(hours=off)
+        local_date = f"{local_dt.month}월 {local_dt.day}일"
+
+        lang_state   = s.get("langs", {}).get(lang, {})
+        phrase_state = s.get("phrase_langs", {}).get(lang, {})
+
+        yt_ok  = lang_state.get("youtube_rendered", False)
+        rl_ok  = lang_state.get("reels_rendered",  False)
+        yt_upl = lang_state.get("youtube_uploaded", False)
+        rl_upl = lang_state.get("reels_uploaded",  False)
+        conv_upl = phrase_state.get("uploaded", False)
+
+        file_yt = file_rl = file_il = False
+        if word:
+            lv  = word.get("level", 1)
+            wid = word["id"]
+            wrd = word["word"]
+            file_yt = os.path.exists(f"{OUTPUT_DIR}/TOPIK/{lang}/lv{lv}/video/topik_{wid:04d}_{wrd}_{lang}.mp4")
+            file_rl = os.path.exists(f"{OUTPUT_DIR}/TOPIK/{lang}/lv{lv}/reels/topik_{wid:04d}_{wrd}_{lang}_reels.mp4")
+            il_path = f"{ILLUST_DIR}/lv{lv}/{wid}_{wrd}/word.png"
+            file_il = illust_exists(il_path)
+
+        word_ep_num = lang_state.get("ep_override") or word_id or 0
+        conv_ep_num = phrase_state.get("conv_ep_override") or 0
+
+        result[lang] = {
+            "next_upload_utc": next_ut.isoformat(),
+            "kst_time":        kst_fixed,
+            "local_date":      local_date,
+            # 단어
+            "word_ep_num":     word_ep_num,
+            "video_ready":     yt_ok or file_yt,
+            "reels_ready":     rl_ok or file_rl,
+            "illust_ready":    file_il,
+            "video_uploaded":  yt_upl,
+            "reels_uploaded":  rl_upl,
+            # 회화
+            "conv_ep_num":     conv_ep_num,
+            "conv_uploaded":   conv_upl,
+        }
+    return jsonify(result)
+
+
+@app.route("/api/daily/set-episode", methods=["POST"])
+def api_daily_set_episode():
+    """언어별 업로드 화수 override 설정 (단어/회화 구분)"""
+    data  = request.get_json(silent=True) or {}
+    lang  = data.get("lang")
+    ep    = data.get("episode_num")
+    ctype = data.get("ctype", "word")   # "word" | "conv" | "kdrama"
+    if not lang or ep is None:
+        return jsonify({"error": "lang, episode_num 필요"}), 400
+    try:
+        ep = int(ep)
+    except (ValueError, TypeError):
+        return jsonify({"error": "episode_num은 정수여야 합니다"}), 400
+    s = load_json(DAILY_AUTO_F, {})
+    if ctype == "conv":
+        s.setdefault("phrase_langs", {}).setdefault(lang, {})["conv_ep_override"] = ep
+    elif ctype == "kdrama":
+        s.setdefault("kdrama_langs", {}).setdefault(lang, {})["kdrama_ep_override"] = ep
+    else:
+        s.setdefault("langs", {}).setdefault(lang, {})["ep_override"] = ep
+    save_json(DAILY_AUTO_F, s)
+    return jsonify({"ok": True, "lang": lang, "ctype": ctype, "episode_num": ep})
+
+
+@app.route("/api/daily/upload-now", methods=["POST"])
+def api_daily_upload_now():
+    """지금 바로 업로드 (예약 없이 즉시 공개). 다음 주기 자동 세팅."""
+    data = request.get_json(silent=True) or {}
+    lang = data.get("lang", "EN")
+    fmt  = data.get("fmt", "youtube")   # youtube | reels
+
+    s = load_json(DAILY_AUTO_F, {})
+    # 언어별 override → global current_word_id 순으로 확인
+    word_id = s.get("langs", {}).get(lang, {}).get("ep_override") or s.get("current_word_id")
+    if not word_id:
+        return jsonify({"error": "업로드할 화수가 설정되지 않았습니다"}), 400
+
+    db   = get_words_db()
+    word = next((w for w in db if w["id"] == word_id), None)
+    if not word:
+        return jsonify({"error": f"단어 없음: id={word_id}"}), 404
+
+    lv  = word.get("level", 1)
+    wid = word["id"]
+    wrd = word["word"]
+    sub = "reels" if fmt == "reels" else "video"
+    suf = "_reels" if fmt == "reels" else ""
+    vpath = f"{OUTPUT_DIR}/TOPIK/{lang}/lv{lv}/{sub}/topik_{wid:04d}_{wrd}_{lang}{suf}.mp4"
+
+    if not os.path.exists(vpath):
+        return jsonify({"error": f"영상 파일 없음: {vpath}"}), 404
+
+    # publish_at=None → 즉시 공개
+    try:
+        vid = run_upload(word, vpath, exam="TOPIK", lang=lang, publish_at=None, fmt=fmt)
+    except Exception as _e:
+        import traceback
+        return jsonify({"error": f"업로드 예외: {_e}", "trace": traceback.format_exc()[-800:]}), 500
+    if not vid:
+        # run_upload 내부 로그에서 원인 확인 (print로 출력됨)
+        return jsonify({"error": "업로드 실패 — 서버 로그 확인 필요"}), 500
+
+    # daily_auto 상태 업데이트
+    s = load_json(DAILY_AUTO_F, {})
+    ku = "youtube_uploaded" if fmt == "youtube" else "reels_uploaded"
+    kv = "youtube_video_id"  if fmt == "youtube" else "reels_video_id"
+    s.setdefault("langs", {}).setdefault(lang, {})[ku] = True
+    s["langs"][lang][kv] = vid
+    # 다음 주기 publish_at 갱신 (내일 현지 07:30)
+    next_pub = _next_publish_at(lang)
+    s["langs"][lang]["publish_at"] = next_pub.isoformat()
+    save_json(DAILY_AUTO_F, s)
+
+    return jsonify({"ok": True, "video_id": vid,
+                    "next_publish_at": next_pub.isoformat()})
 
 @app.route("/api/daily/status")
 def api_daily_status():
@@ -2590,6 +3933,37 @@ def api_batch_today():
     batch = get_batch_today()
     bq    = load_json(BATCH_QUEUE_F, {})
     return jsonify({"batch": batch, "queue": bq})
+
+@app.route("/api/batch/history")
+def api_batch_history():
+    date = request.args.get("date", datetime.now().strftime("%Y-%m-%d"))
+    items = []
+    videos = get_videos_log()
+    for v in videos:
+        ts = (v.get("generated_at") or "")[:10]
+        if ts == date:
+            items.append({
+                "word": v.get("word", ""),
+                "lang": v.get("language", ""),
+                "format": "youtube",
+                "status": "done",
+                "rendered_at": v.get("generated_at", ""),
+                "exam": v.get("exam", "TOPIK"),
+                "level": v.get("level", ""),
+            })
+    uploaded, _ = get_uploads()
+    for u in uploaded:
+        ts = (u.get("uploaded_at") or u.get("date") or "")[:10]
+        if ts == date:
+            items.append({
+                "word": u.get("word", u.get("title", "")),
+                "lang": u.get("lang") or u.get("language", ""),
+                "format": u.get("format", "youtube"),
+                "status": "uploaded",
+                "rendered_at": u.get("uploaded_at", ""),
+            })
+    items.sort(key=lambda x: x.get("rendered_at", ""), reverse=True)
+    return jsonify({"items": items})
 
 @app.route("/api/batch/clear", methods=["POST"])
 def api_batch_clear():
@@ -2672,12 +4046,14 @@ def api_render_batch():
     langs_str  = "+".join(sorted(set(it[1] for it in job_items)))
     word_count = len(word_ids_set)
     desc = f"배치 {word_count}단어 ({langs_str})"
+    thumb_style = data.get("thumb_style", "portrait")
     job_id = enqueue_job("video_batch", desc, target=target, params={
         "job_items":   [list(j) for j in job_items],
         "queue_items": queue_items,
         "words_map":   {str(k): v for k, v in words_map.items()},
         "auto_upload": auto_upload,
         "exam": "TOPIK", "lang": langs_str,
+        "thumb_style": thumb_style,
     })
     return jsonify({"status": "queued", "job_id": job_id, "count": len(job_items),
                     "target": target, "auto_upload": auto_upload})
@@ -2716,17 +4092,38 @@ def api_render_upload():
             vpath = f"{OUTPUT_DIR}/{exam}/{lang}/lv{lv}/video/{exam.lower()}_{word_id:04d}_{word['word']}_{lang}.mp4"
     if not os.path.exists(vpath):
         return jsonify({"error": f"영상 파일 없음: {vpath}"}), 404
-    def _do_upload():
+    try:
         vid = run_upload(word, vpath, exam=exam, lang=lang, fmt=fmt)
-        if vid:
-            bq = load_json(BATCH_QUEUE_F, {})
-            for it in bq.get("items", []):
-                if it.get("word_id") == word_id and it.get("lang", "EN") == lang:
-                    it["status"] = "uploaded"
-                    it["video_id"] = vid
-            save_json(BATCH_QUEUE_F, bq)
-    threading.Thread(target=_do_upload, daemon=True).start()
-    return jsonify({"ok": True, "video_path": vpath})
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()[-800:]}), 500
+    if vid:
+        bq = load_json(BATCH_QUEUE_F, {})
+        for it in bq.get("items", []):
+            if it.get("word_id") == word_id and it.get("lang", "EN") == lang:
+                it["status"] = "uploaded"
+                it["video_id"] = vid
+        save_json(BATCH_QUEUE_F, bq)
+    return jsonify({"ok": True, "video_path": vpath, "video_id": vid})
+
+@app.route("/api/update-descriptions", methods=["POST"])
+def api_update_descriptions():
+    """이미 업로드된 YouTube 본편 영상의 설명란을 10개 예문으로 일괄 업데이트"""
+    data = request.get_json(silent=True) or {}
+    lang = data.get("lang", None)  # None=전체
+
+    def _run():
+        import subprocess
+        cmd = [sys.executable, "/app/update_video_descriptions.py"]
+        if lang:
+            cmd += ["--lang", lang]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out, _ = proc.communicate()
+        print("[update-desc]", (out or b"").decode("utf-8", errors="replace")[-1000:])
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "lang": lang})
+
 
 @app.route("/api/daily/upload-lang", methods=["POST"])
 def api_daily_upload_lang():
@@ -2792,11 +4189,21 @@ def api_conv_delete():
     lang     = data.get("lang", "EN")
     if not theme_id:
         return jsonify({"error": "theme_id 필요"}), 400
-    vp = f"{OUTPUT_DIR}/conversation/{lang}/conv_{theme_id}_{lang}.mp4"
     deleted_file = False
-    if os.path.exists(vp):
-        try: os.remove(vp); deleted_file = True
-        except Exception: pass
+    for fmt in ("youtube", "reels"):
+        vp = _conv_video_path(theme_id, lang, fmt)
+        local_vp = vp.replace("/app/", BASE.rstrip("/") + "/", 1) if vp.startswith("/app/") else vp
+        for p in (vp, local_vp):
+            if os.path.exists(p):
+                try: os.remove(p); deleted_file = True
+                except Exception: pass
+    # 썸네일도 삭제
+    tp = _conv_thumb_path(theme_id, lang)
+    local_tp = tp.replace("/app/", BASE.rstrip("/") + "/", 1) if tp.startswith("/app/") else tp
+    for p in (tp, local_tp):
+        if os.path.exists(p):
+            try: os.remove(p)
+            except Exception: pass
     clog = load_conv_log()
     clog = [x for x in clog
             if not (str(x.get("theme_id")) == theme_id and x.get("lang") == lang)]
@@ -2967,12 +4374,14 @@ def api_render_custom():
     if len(all_words) > 3: words_label += f" 외 {len(all_words)-3}개"
     desc = f"{first_exam}-{first_level}급-{words_label}-{fmt_label} ({langs_str})"
     all_words_map = {str(w["id"]): w for w in all_words}
+    thumb_only = bool(data.get("thumb_only", False))
     job_id = enqueue_job("video_batch", desc, target=target, params={
         "job_items":   [list(j) for j in job_items],
         "queue_items": queue_items,
         "words_map":   all_words_map,
         "auto_upload": False,
         "exam": first_exam, "lang": base_lang,
+        "thumb_only":  thumb_only,
     })
     return jsonify({"status":"queued","job_id":job_id,"count":len(job_items),"target":target,
                     "words":[{"id":w["id"],"word":w["word"]} for w in all_words],
@@ -2990,8 +4399,7 @@ def api_illust_word(word_id):
     korean = word["word"]
     folder = f"{word_id}_{korean}"
     base = f"{ILLUST_DIR}/lv{lv}/{folder}"
-    # 최신 예문은 topik_{level}.json 우선, fallback: words_db sentences
-    sents = get_topik_examples(lv, word_id) or word.get("sentences", [])
+    sents = get_topik_examples(lv, word_id)
     items = []
     # word.png
     wp = f"{base}/word.png"
@@ -3210,16 +4618,25 @@ def api_audit_regen_status():
 def api_conv_themes():
     db = load_conv_db()
     clog = load_conv_log()
-    log_map = {(str(e["theme_id"]), e["lang"]): e for e in clog}
+    log_map = {}
+    for e in clog:
+        key = (str(e["theme_id"]), e["lang"], e.get("fmt", "youtube"))
+        log_map[key] = e
     themes = []
     for t in db.get("themes", []):
         langs = {}
         for lang in ["EN", "JP", "CN", "VN", "ES"]:
-            entry = log_map.get((str(t["id"]), lang))
+            yt_e = log_map.get((str(t["id"]), lang, "youtube"))
+            rl_e = log_map.get((str(t["id"]), lang, "reels"))
+            # 로그 경로 우선, 없으면 표준 경로로 fallback 확인
+            yt_path = (yt_e.get("video_path") if yt_e else None) or _conv_video_path(str(t["id"]), lang, "youtube")
+            rl_path = (rl_e.get("video_path") if rl_e else None) or _conv_video_path(str(t["id"]), lang, "reels")
             langs[lang] = {
-                "rendered": bool(entry and os.path.exists(entry.get("video_path", ""))),
-                "uploaded": bool(entry and entry.get("uploaded")),
-                "video_id": entry.get("video_id") if entry else None,
+                "rendered":       bool(yt_e and _conv_path_exists(yt_path)),
+                "uploaded":       bool(yt_e and yt_e.get("uploaded")),
+                "video_id":       yt_e.get("video_id") if yt_e else None,
+                "reels_rendered": bool(rl_e and _conv_path_exists(rl_path)),
+                "reels_uploaded": bool(rl_e and rl_e.get("uploaded")),
             }
         themes.append({
             "id": t["id"], "emoji": t.get("emoji", "💬"),
@@ -3265,6 +4682,245 @@ def api_conv_upload():
                     "youtube_url": f"https://youtube.com/watch?v={video_id}"})
 
 # ─── 회화 일러스트·영상 API ───────────────────────────────────
+# ─── K-드라마 API ────────────────────────────────────────────
+@app.route("/api/kdrama/themes")
+def api_kdrama_themes():
+    db = load_kdrama_db()
+    klog = load_kdrama_log()
+    log_map = {}
+    for e in klog:
+        key = (str(e["theme_id"]), e["lang"], e.get("fmt", "youtube"))
+        log_map[key] = e
+    themes = []
+    for t in db.get("themes", []):
+        langs = {}
+        for lang in ["EN", "JP", "CN", "VN", "ES"]:
+            yt_e = log_map.get((str(t["id"]), lang, "youtube"))
+            rl_e = log_map.get((str(t["id"]), lang, "reels"))
+            yt_path = (yt_e.get("video_path") if yt_e else None) or _kdrama_video_path(str(t["id"]), lang, "youtube")
+            rl_path = (rl_e.get("video_path") if rl_e else None) or _kdrama_video_path(str(t["id"]), lang, "reels")
+            langs[lang] = {
+                "rendered":       bool(yt_e and _conv_path_exists(yt_path)),
+                "uploaded":       bool(yt_e and yt_e.get("uploaded")),
+                "video_id":       yt_e.get("video_id") if yt_e else None,
+                "reels_rendered": bool(rl_e and _conv_path_exists(rl_path)),
+                "reels_uploaded": bool(rl_e and rl_e.get("uploaded")),
+            }
+        themes.append({
+            "id": t["id"], "emoji": t.get("emoji", "🎬"),
+            "title": t.get("title", {}),
+            "category": t.get("category", ""),
+            "phrase_count": len(t.get("phrases", [])),
+            "color": t.get("color", "#FF6B9D"),
+            "langs": langs,
+        })
+    return jsonify({"themes": themes})
+
+
+@app.route("/api/kdrama/render", methods=["POST"])
+def api_kdrama_render():
+    data = request.get_json(silent=True) or {}
+    theme_id = data.get("theme_id")
+    lang = data.get("lang", "EN")
+    if not theme_id:
+        return jsonify({"error": "theme_id 필요"}), 400
+    fmt = data.get("fmt", "youtube")
+    fmt_label = " [쇼츠]" if fmt == "reels" else ""
+    desc = f"K드라마 {theme_id} [{lang}]{fmt_label}"
+    job_id = enqueue_job("kdrama_video", desc, target=data.get("target", "nas"),
+                         params={"theme_id": theme_id, "lang": lang, "fmt": fmt})
+    return jsonify({"status": "queued", "job_id": job_id, "theme_id": theme_id, "lang": lang})
+
+
+@app.route("/api/kdrama/upload", methods=["POST"])
+def api_kdrama_upload():
+    data = request.get_json(silent=True) or {}
+    theme_id = str(data.get("theme_id", ""))
+    lang = data.get("lang", "EN")
+    fmt = data.get("fmt", "youtube")
+    if not theme_id:
+        return jsonify({"error": "theme_id 필요"}), 400
+    vid, err = run_kdrama_upload(theme_id, lang, fmt)
+    if not vid:
+        return jsonify({"error": err or "업로드 실패"}), 500
+    return jsonify({"status": "ok", "video_id": vid,
+                    "youtube_url": f"https://youtube.com/watch?v={vid}"})
+
+
+# ─── K-드라마 일러스트 API ───────────────────────────────────
+@app.route("/api/kdrama/illust/start", methods=["POST"])
+def api_kdrama_illust_start():
+    """K-드라마 인트로 일러스트 생성 작업 큐에 추가."""
+    data = request.get_json(silent=True) or {}
+    theme_id = data.get("theme_id")
+    start    = data.get("start")
+    end      = data.get("end")
+    overwrite    = bool(data.get("overwrite"))
+    intro_only   = bool(data.get("intro_only"))
+    phrases_only = bool(data.get("phrases_only"))
+
+    params = {"overwrite": overwrite,
+              "intro_only": intro_only,
+              "phrases_only": phrases_only}
+    mode_label = "Phrase만" if phrases_only else ("인트로만" if intro_only else "인트로+Phrase")
+    if theme_id is not None:
+        params["theme_id"] = int(theme_id)
+        desc = f"K드라마 일러스트 #{theme_id} ({mode_label})"
+    elif start is not None and end is not None:
+        params["start"] = int(start)
+        params["end"]   = int(end)
+        desc = f"K드라마 일러스트 {start}~{end} ({mode_label})"
+    else:
+        desc = f"K드라마 일러스트 전체 100개 ({mode_label})"
+
+    job_id = enqueue_job("kdrama_illust", desc,
+                         target=data.get("target", "nas"), params=params)
+    return jsonify({"status": "queued", "job_id": job_id})
+
+
+@app.route("/api/kdrama/illust/status")
+def api_kdrama_illust_status():
+    """K-드라마 일러스트 생성 진행 상황 + 테마별 완성 여부."""
+    prog = load_json(KDRAMA_ILLUST_PROG, {})
+    try:
+        with open(KDRAMA_DB_PATH, encoding="utf-8") as f:
+            db_raw = json.load(f)
+    except Exception:
+        db_raw = []
+    themes = db_raw if isinstance(db_raw, list) else db_raw.get("themes", [])
+    items = []
+    intro_done_total = 0
+    phrase_done_total = 0
+    for t in themes:
+        tid = t["id"]
+        theme_dir = os.path.join(KDRAMA_ILLUST_DIR, f"sit_{tid}")
+        intro_p = os.path.join(theme_dir, "intro.png")
+        intro_done = os.path.exists(intro_p) and os.path.getsize(intro_p) > 0
+        phrases_done = 0
+        for i in range(1, 11):
+            pp = os.path.join(theme_dir, f"phrase_{i}.png")
+            if os.path.exists(pp) and os.path.getsize(pp) > 0:
+                phrases_done += 1
+        if intro_done: intro_done_total += 1
+        phrase_done_total += phrases_done
+        items.append({
+            "id": tid,
+            "situation": t.get("situation", ""),
+            "category": t.get("category", ""),
+            "done": intro_done,                 # intro 기준 (기존 호환)
+            "intro_done": intro_done,
+            "phrases_done": phrases_done,        # 0-10
+            "all_done": intro_done and phrases_done == 10,
+            "path": intro_p if intro_done else None,
+        })
+    return jsonify({
+        "total": len(items),
+        "done": intro_done_total,                # intro 완료 수 (기존 호환)
+        "intro_done": intro_done_total,
+        "phrases_done": phrase_done_total,       # 전체 phrase 이미지 합계
+        "phrases_total": len(items) * 10,
+        "all_done": sum(1 for x in items if x["all_done"]),
+        "items": items,
+        "progress": prog,
+    })
+
+
+@app.route("/api/kdrama/illust/image/<int:tid>")
+def api_kdrama_illust_image(tid):
+    """썸네일 미리보기용 — 해당 테마의 intro.png 반환."""
+    p = os.path.join(KDRAMA_ILLUST_DIR, f"sit_{tid}", "intro.png")
+    if not os.path.exists(p):
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(os.path.dirname(p), os.path.basename(p))
+
+
+@app.route("/api/kdrama/illust/panel/<int:tid>/<key>")
+def api_kdrama_illust_panel(tid, key):
+    """패널 단일 이미지 반환 — key: intro | phrase_1..phrase_10"""
+    if key != "intro" and not (key.startswith("phrase_") and key[7:].isdigit()):
+        return jsonify({"error": "invalid key"}), 400
+    p = os.path.join(KDRAMA_ILLUST_DIR, f"sit_{tid}", f"{key}.png")
+    if not os.path.exists(p):
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(os.path.dirname(p), os.path.basename(p))
+
+
+@app.route("/api/kdrama/illust/delete", methods=["POST"])
+def api_kdrama_illust_delete():
+    """단일 패널 이미지 삭제 — body: {theme_id, key}"""
+    data = request.get_json(silent=True) or {}
+    tid = data.get("theme_id")
+    key = data.get("key", "")
+    if not tid:
+        return jsonify({"error": "theme_id 필요"}), 400
+    if key != "intro" and not (key.startswith("phrase_") and key[7:].isdigit()):
+        return jsonify({"error": "invalid key"}), 400
+    p = os.path.join(KDRAMA_ILLUST_DIR, f"sit_{int(tid)}", f"{key}.png")
+    deleted = False
+    if os.path.exists(p):
+        try:
+            os.remove(p)
+            deleted = True
+        except Exception as e:
+            return jsonify({"error": f"삭제 실패: {e}"}), 500
+    # .txt 캐시도 함께 삭제
+    txt_p = p + ".txt"
+    if os.path.exists(txt_p):
+        try: os.remove(txt_p)
+        except Exception: pass
+    return jsonify({"ok": True, "deleted": deleted, "path": p})
+
+
+@app.route("/api/kdrama/illust/browse/<int:tid>")
+def api_kdrama_illust_browse(tid):
+    """테마의 11개 패널(intro + phrase 1~10)을 대화 텍스트와 함께 반환"""
+    try:
+        with open(KDRAMA_DB_PATH, encoding="utf-8") as f:
+            db_raw = json.load(f)
+    except Exception:
+        return jsonify({"error": "DB load failed"}), 500
+    themes = db_raw if isinstance(db_raw, list) else db_raw.get("themes", [])
+    theme = next((t for t in themes if t["id"] == tid), None)
+    if not theme:
+        return jsonify({"error": f"theme {tid} not found"}), 404
+    theme_dir = os.path.join(KDRAMA_ILLUST_DIR, f"sit_{tid}")
+    items = []
+    # intro
+    intro_p = os.path.join(theme_dir, "intro.png")
+    items.append({
+        "key": "intro",
+        "label": "Intro",
+        "exists": os.path.exists(intro_p) and os.path.getsize(intro_p) > 0,
+        "url": f"/api/kdrama/illust/panel/{tid}/intro",
+        "ko": theme.get("situation", ""),
+        "en": theme.get("situation_en", ""),
+    })
+    # phrases
+    phrases = theme.get("phrases", []) or []
+    for i, phrase in enumerate(phrases[:10]):
+        key = f"phrase_{i+1}"
+        pp = os.path.join(theme_dir, f"{key}.png")
+        my = phrase.get("my_line", {}) or {}
+        resp = phrase.get("response", {}) or {}
+        items.append({
+            "key": key,
+            "label": f"P{i+1}",
+            "exists": os.path.exists(pp) and os.path.getsize(pp) > 0,
+            "url": f"/api/kdrama/illust/panel/{tid}/{key}",
+            "ko": my.get("ko", ""),
+            "en": my.get("en", ""),
+            "resp_ko": resp.get("ko", ""),
+            "resp_en": resp.get("en", ""),
+        })
+    return jsonify({
+        "id": tid,
+        "situation": theme.get("situation", ""),
+        "situation_en": theme.get("situation_en", ""),
+        "category": theme.get("category", ""),
+        "items": items,
+    })
+
+
 @app.route("/api/phrase/situations")
 def api_phrase_situations():
     db = load_phrase_db()
@@ -3373,13 +5029,15 @@ def api_phrase_video_generate():
     sit_id = data.get("sit_id")
     start  = data.get("start")
     end    = data.get("end")
+    lang   = data.get("lang", "EN")
     target = data.get("target", "nas")
+    fmt    = data.get("fmt", "youtube")
     if sit_id is not None:
-        desc = f"회화영상 상황#{sit_id}"
+        desc = f"회화영상 상황#{sit_id} [{lang}]"
     else:
-        desc = f"회화영상 {start}~{end}"
+        desc = f"회화영상 {start}~{end} [{lang}]"
     job_id = enqueue_job("phrase_video", desc, target=target,
-                         params={"sit_id": sit_id, "start": start, "end": end})
+                         params={"sit_id": sit_id, "start": start, "end": end, "lang": lang, "fmt": fmt})
     return jsonify({"status": "queued", "job_id": job_id})
 
 @app.route("/api/phrase/video/progress")
@@ -3738,6 +5396,19 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     </div>
   </div>
 
+  <!-- K-드라마 -->
+  <div class="s-group tog" onclick="toggleSGroup('kdrama')">
+    <span>🎬 K-드라마</span><span class="s-arr" id="s-arr-kdrama">▾</span>
+  </div>
+  <div class="s-ch open" id="s-ch-kdrama">
+    <div class="s-item l2" data-view="kdrama-video" onclick="navKdramaTab(this,'video')" style="--c:#C77DFF;">
+      <span>🎬</span><span>영상</span>
+    </div>
+    <div class="s-item l2" data-view="kdrama-illust" onclick="navKdramaTab(this,'illust')" style="--c:#9d4edd;">
+      <span>🎨</span><span>일러스트</span>
+    </div>
+  </div>
+
   <!-- 영상 작업 -->
   <div class="s-group tog" onclick="toggleSGroup('work')">
     <span>🎬 영상 작업</span><span id="sb-render-badge" style="font-size:.6rem;margin-left:6px;"></span><span class="s-arr" id="s-arr-work">▾</span>
@@ -3883,6 +5554,20 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   <!-- ═══ [오늘 작업] 탭 ════════════════════════════════ -->
   <div id="wt-panel-today">
 
+    <!-- ── 언어별 업로드 타임 & 카운트다운 ─────────────── -->
+    <div class="card" style="padding:12px 14px;margin-bottom:14px;">
+      <div style="font-size:.74rem;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+        <span>⏰</span><span>언어별 업로드 타임</span>
+        <span id="cd-upload-date" style="font-size:.62rem;color:var(--amber);font-weight:600;margin-left:4px;"></span>
+        <span style="font-size:.62rem;color:var(--muted);font-weight:400;">현지 07:30 기준</span>
+        <button onclick="loadCountdown()" style="margin-left:auto;background:transparent;border:1px solid var(--border2);color:var(--muted);border-radius:5px;padding:2px 8px;font-size:.62rem;cursor:pointer;">새로고침</button>
+      </div>
+      <div id="countdown-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;">
+        <!-- JS로 채워짐 -->
+        <div style="grid-column:1/-1;text-align:center;font-size:.7rem;color:var(--muted2);padding:10px;">로딩 중…</div>
+      </div>
+    </div>
+
     <!-- 4개 콘텐츠 상태 카드 (2×2 그리드) -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
 
@@ -3942,7 +5627,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
 
     <!-- 통합 실행 버튼 -->
     <div style="display:flex;gap:7px;margin-bottom:14px;">
-      <button onclick="renderBatchBoth()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.75rem;">▶ 단어+회화 렌더링 (YT+릴스)</button>
+      <button onclick="renderBatchBoth()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.75rem;">▶ 단어+회화+K드라마 렌더링 (YT+릴스)</button>
       <button onclick="dailyTrigger()" class="btn btn-m" style="font-size:.75rem;padding:0 14px;">▶ 오늘</button>
     </div>
 
@@ -3965,6 +5650,50 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
             onchange="saveBatchConfig({auto_start_date:this.value});_updateScheduleStatus()">
           <span style="font-size:.65rem;color:var(--muted2);">이 날짜부터 자동으로 렌더링·업로드 시작</span>
         </div>
+
+        <!-- 기준 화수 설정 -->
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:10px 12px;margin-bottom:10px;">
+          <div style="font-size:.68rem;font-weight:700;margin-bottom:8px;color:var(--text);">📌 기준일의 시작 화수</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+            <!-- 단어 본편 -->
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:.65rem;color:var(--muted);white-space:nowrap;">📹 단어 본편</span>
+              <input type="number" id="wc-ep-word-yt" min="1" value="1" class="inp"
+                style="width:58px;font-size:.72rem;padding:2px 6px;"
+                onchange="saveEpStart()">
+              <span style="font-size:.62rem;color:var(--muted);">화</span>
+              <span id="wc-ep-word-yt-today" style="font-size:.65rem;color:var(--blue);font-weight:700;margin-left:2px;"></span>
+            </div>
+            <!-- 단어 쇼츠 -->
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:.65rem;color:var(--muted);white-space:nowrap;">📱 단어 쇼츠</span>
+              <input type="number" id="wc-ep-word-reels" min="1" value="1" class="inp"
+                style="width:58px;font-size:.72rem;padding:2px 6px;"
+                onchange="saveEpStart()">
+              <span style="font-size:.62rem;color:var(--muted);">화</span>
+              <span id="wc-ep-word-reels-today" style="font-size:.65rem;color:var(--blue);font-weight:700;margin-left:2px;"></span>
+            </div>
+            <!-- 회화 본편 -->
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:.65rem;color:var(--muted);white-space:nowrap;">💬 회화 본편</span>
+              <input type="number" id="wc-ep-conv-yt" min="1" value="1" class="inp"
+                style="width:58px;font-size:.72rem;padding:2px 6px;"
+                onchange="saveEpStart()">
+              <span style="font-size:.62rem;color:var(--muted);">화</span>
+              <span id="wc-ep-conv-yt-today" style="font-size:.65rem;color:var(--green);font-weight:700;margin-left:2px;"></span>
+            </div>
+            <!-- 회화 쇼츠 -->
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:.65rem;color:var(--muted);white-space:nowrap;">📱 회화 쇼츠</span>
+              <input type="number" id="wc-ep-conv-reels" min="1" value="1" class="inp"
+                style="width:58px;font-size:.72rem;padding:2px 6px;"
+                onchange="saveEpStart()">
+              <span style="font-size:.62rem;color:var(--muted);">화</span>
+              <span id="wc-ep-conv-reels-today" style="font-size:.65rem;color:var(--green);font-weight:700;margin-left:2px;"></span>
+            </div>
+          </div>
+        </div>
+
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
           <span style="font-size:.68rem;color:var(--muted);">단어 주기:</span>
           <div class="pill-group" id="wc-word-freq-group">
@@ -4002,50 +5731,107 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
         </label>
       </div>
 
-      <!-- 업로드 스케줄 설정 (ytu-sched-panel에서 이동) -->
+      <!-- 업로드 스케줄 (4개 독립 설정) -->
       <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;">
-        <div style="font-size:.72rem;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-          <span>⏱</span><span>업로드 스케줄</span>
-          <!-- ON/OFF 토글 -->
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:auto;">
-            <div id="wc-sched-toggle-wrap" onclick="ytSchedToggle()" style="width:44px;height:22px;border-radius:11px;background:#333;position:relative;cursor:pointer;transition:background .2s;">
-              <div id="wc-sched-knob" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+        <div style="font-size:.72rem;font-weight:700;margin-bottom:10px;">⏱ 업로드 스케줄</div>
+        <div style="display:flex;flex-direction:column;gap:8px;" id="sched-rows-wrap">
+          <!-- 공통 헬퍼: sched-{type}-* -->
+          <!-- 단어 본편 -->
+          <div class="sched-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border);">
+            <span style="font-size:.7rem;min-width:72px;">📹 단어 본편</span>
+            <div id="sched-word-yt-tog" onclick="schedToggle('word-yt')" style="width:38px;height:20px;border-radius:10px;background:#333;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;">
+              <div id="sched-word-yt-knob" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
             </div>
-            <span id="wc-sched-status" style="font-size:.72rem;color:var(--muted);">OFF</span>
-          </label>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <!-- 간격 -->
-          <select id="wc-sched-interval" class="inp" style="width:110px;">
-            <option value="1">매일</option>
-            <option value="2">격일</option>
-            <option value="3">3일마다</option>
-          </select>
-          <!-- 개수 -->
-          <label style="font-size:.75rem;color:var(--muted);">회당</label>
-          <input id="wc-sched-count" type="number" min="1" max="10" value="2" class="inp" style="width:60px;">
-          <label style="font-size:.75rem;color:var(--muted);">개</label>
-          <!-- 언어 -->
-          <select id="wc-sched-lang" class="inp" style="width:90px;">
-            <option value="">전체 언어</option>
-            <option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option>
-            <option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option>
-          </select>
-          <!-- 포맷 -->
-          <select id="wc-sched-fmt" class="inp" style="width:100px;">
-            <option value="">전체 포맷</option>
-            <option value="youtube">▶ YouTube</option>
-            <option value="reels">📱 쇼츠</option>
-          </select>
-          <!-- 탭 -->
-          <select id="wc-sched-tab" class="inp" style="width:80px;">
-            <option value="word">단어</option>
-            <option value="conv">회화</option>
-          </select>
-          <!-- 버튼 -->
-          <button onclick="wcSchedSave()" class="btn btn-m" style="font-size:.72rem;">저장</button>
-          <button id="wc-sched-run-btn" onclick="wcSchedRun()" class="btn btn-g" style="font-size:.72rem;">▶ 지금 실행</button>
-          <span id="wc-sched-last" style="font-size:.66rem;color:var(--muted);margin-left:auto;"></span>
+            <span id="sched-word-yt-lbl" style="font-size:.65rem;color:var(--muted);width:22px;">OFF</span>
+            <select id="sched-word-yt-interval" class="inp" style="width:78px;font-size:.7rem;"><option value="1">매일</option><option value="2">격일</option><option value="3">3일마다</option></select>
+            <span style="font-size:.65rem;color:var(--muted);">회당</span>
+            <input id="sched-word-yt-count" type="number" min="1" max="20" value="2" class="inp" style="width:50px;font-size:.7rem;">
+            <span style="font-size:.65rem;color:var(--muted);">개</span>
+            <select id="sched-word-yt-lang" class="inp" style="width:80px;font-size:.7rem;"><option value="">전체</option><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select>
+            <button onclick="saveSchedType('word-yt')" class="btn btn-m" style="font-size:.66rem;padding:3px 8px;">저장</button>
+            <button id="sched-word-yt-run" onclick="runSchedType('word-yt',this)" class="btn btn-g" style="font-size:.66rem;padding:3px 8px;">▶ 실행</button>
+            <span id="sched-word-yt-last" style="font-size:.6rem;color:var(--muted2);margin-left:auto;"></span>
+          </div>
+          <!-- 단어 쇼츠 -->
+          <div class="sched-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border);">
+            <span style="font-size:.7rem;min-width:72px;">📱 단어 쇼츠</span>
+            <div id="sched-word-reels-tog" onclick="schedToggle('word-reels')" style="width:38px;height:20px;border-radius:10px;background:#333;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;">
+              <div id="sched-word-reels-knob" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+            </div>
+            <span id="sched-word-reels-lbl" style="font-size:.65rem;color:var(--muted);width:22px;">OFF</span>
+            <select id="sched-word-reels-interval" class="inp" style="width:78px;font-size:.7rem;"><option value="1">매일</option><option value="2">격일</option><option value="3">3일마다</option></select>
+            <span style="font-size:.65rem;color:var(--muted);">회당</span>
+            <input id="sched-word-reels-count" type="number" min="1" max="20" value="2" class="inp" style="width:50px;font-size:.7rem;">
+            <span style="font-size:.65rem;color:var(--muted);">개</span>
+            <select id="sched-word-reels-lang" class="inp" style="width:80px;font-size:.7rem;"><option value="">전체</option><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select>
+            <button onclick="saveSchedType('word-reels')" class="btn btn-m" style="font-size:.66rem;padding:3px 8px;">저장</button>
+            <button id="sched-word-reels-run" onclick="runSchedType('word-reels',this)" class="btn btn-g" style="font-size:.66rem;padding:3px 8px;">▶ 실행</button>
+            <span id="sched-word-reels-last" style="font-size:.6rem;color:var(--muted2);margin-left:auto;"></span>
+          </div>
+          <!-- 회화 본편 -->
+          <div class="sched-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border);">
+            <span style="font-size:.7rem;min-width:72px;">💬 회화 본편</span>
+            <div id="sched-conv-yt-tog" onclick="schedToggle('conv-yt')" style="width:38px;height:20px;border-radius:10px;background:#333;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;">
+              <div id="sched-conv-yt-knob" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+            </div>
+            <span id="sched-conv-yt-lbl" style="font-size:.65rem;color:var(--muted);width:22px;">OFF</span>
+            <select id="sched-conv-yt-interval" class="inp" style="width:78px;font-size:.7rem;"><option value="1">매일</option><option value="2">격일</option><option value="3">3일마다</option></select>
+            <span style="font-size:.65rem;color:var(--muted);">회당</span>
+            <input id="sched-conv-yt-count" type="number" min="1" max="20" value="1" class="inp" style="width:50px;font-size:.7rem;">
+            <span style="font-size:.65rem;color:var(--muted);">개</span>
+            <select id="sched-conv-yt-lang" class="inp" style="width:80px;font-size:.7rem;"><option value="">전체</option><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select>
+            <button onclick="saveSchedType('conv-yt')" class="btn btn-m" style="font-size:.66rem;padding:3px 8px;">저장</button>
+            <button id="sched-conv-yt-run" onclick="runSchedType('conv-yt',this)" class="btn btn-g" style="font-size:.66rem;padding:3px 8px;">▶ 실행</button>
+            <span id="sched-conv-yt-last" style="font-size:.6rem;color:var(--muted2);margin-left:auto;"></span>
+          </div>
+          <!-- 회화 쇼츠 -->
+          <div class="sched-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border);">
+            <span style="font-size:.7rem;min-width:72px;">📱 회화 쇼츠</span>
+            <div id="sched-conv-reels-tog" onclick="schedToggle('conv-reels')" style="width:38px;height:20px;border-radius:10px;background:#333;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;">
+              <div id="sched-conv-reels-knob" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+            </div>
+            <span id="sched-conv-reels-lbl" style="font-size:.65rem;color:var(--muted);width:22px;">OFF</span>
+            <select id="sched-conv-reels-interval" class="inp" style="width:78px;font-size:.7rem;"><option value="1">매일</option><option value="2">격일</option><option value="3">3일마다</option></select>
+            <span style="font-size:.65rem;color:var(--muted);">회당</span>
+            <input id="sched-conv-reels-count" type="number" min="1" max="20" value="1" class="inp" style="width:50px;font-size:.7rem;">
+            <span style="font-size:.65rem;color:var(--muted);">개</span>
+            <select id="sched-conv-reels-lang" class="inp" style="width:80px;font-size:.7rem;"><option value="">전체</option><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select>
+            <button onclick="saveSchedType('conv-reels')" class="btn btn-m" style="font-size:.66rem;padding:3px 8px;">저장</button>
+            <button id="sched-conv-reels-run" onclick="runSchedType('conv-reels',this)" class="btn btn-g" style="font-size:.66rem;padding:3px 8px;">▶ 실행</button>
+            <span id="sched-conv-reels-last" style="font-size:.6rem;color:var(--muted2);margin-left:auto;"></span>
+          </div>
+          <!-- K-드라마 본편 -->
+          <div class="sched-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border);">
+            <span style="font-size:.7rem;min-width:72px;color:#C77DFF;">🎬 K드라마 본편</span>
+            <div id="sched-kdrama-yt-tog" onclick="schedToggle('kdrama-yt')" style="width:38px;height:20px;border-radius:10px;background:#333;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;">
+              <div id="sched-kdrama-yt-knob" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+            </div>
+            <span id="sched-kdrama-yt-lbl" style="font-size:.65rem;color:var(--muted);width:22px;">OFF</span>
+            <select id="sched-kdrama-yt-interval" class="inp" style="width:78px;font-size:.7rem;"><option value="1">매일</option><option value="2">격일</option><option value="3">3일마다</option></select>
+            <span style="font-size:.65rem;color:var(--muted);">회당</span>
+            <input id="sched-kdrama-yt-count" type="number" min="1" max="20" value="1" class="inp" style="width:50px;font-size:.7rem;">
+            <span style="font-size:.65rem;color:var(--muted);">개</span>
+            <select id="sched-kdrama-yt-lang" class="inp" style="width:80px;font-size:.7rem;"><option value="">전체</option><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select>
+            <button onclick="saveSchedType('kdrama-yt')" class="btn btn-m" style="font-size:.66rem;padding:3px 8px;">저장</button>
+            <button id="sched-kdrama-yt-run" onclick="runSchedType('kdrama-yt',this)" class="btn btn-g" style="font-size:.66rem;padding:3px 8px;">▶ 실행</button>
+            <span id="sched-kdrama-yt-last" style="font-size:.6rem;color:var(--muted2);margin-left:auto;"></span>
+          </div>
+          <!-- K-드라마 쇼츠 -->
+          <div class="sched-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border);">
+            <span style="font-size:.7rem;min-width:72px;color:#C77DFF;">📱 K드라마 쇼츠</span>
+            <div id="sched-kdrama-reels-tog" onclick="schedToggle('kdrama-reels')" style="width:38px;height:20px;border-radius:10px;background:#333;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;">
+              <div id="sched-kdrama-reels-knob" style="width:16px;height:16px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s;"></div>
+            </div>
+            <span id="sched-kdrama-reels-lbl" style="font-size:.65rem;color:var(--muted);width:22px;">OFF</span>
+            <select id="sched-kdrama-reels-interval" class="inp" style="width:78px;font-size:.7rem;"><option value="1">매일</option><option value="2">격일</option><option value="3">3일마다</option></select>
+            <span style="font-size:.65rem;color:var(--muted);">회당</span>
+            <input id="sched-kdrama-reels-count" type="number" min="1" max="20" value="1" class="inp" style="width:50px;font-size:.7rem;">
+            <span style="font-size:.65rem;color:var(--muted);">개</span>
+            <select id="sched-kdrama-reels-lang" class="inp" style="width:80px;font-size:.7rem;"><option value="">전체</option><option value="EN">🇺🇸 EN</option><option value="JP">🇯🇵 JP</option><option value="CN">🇨🇳 CN</option><option value="VN">🇻🇳 VN</option><option value="ES">🇪🇸 ES</option></select>
+            <button onclick="saveSchedType('kdrama-reels')" class="btn btn-m" style="font-size:.66rem;padding:3px 8px;">저장</button>
+            <button id="sched-kdrama-reels-run" onclick="runSchedType('kdrama-reels',this)" class="btn btn-g" style="font-size:.66rem;padding:3px 8px;">▶ 실행</button>
+            <span id="sched-kdrama-reels-last" style="font-size:.6rem;color:var(--muted2);margin-left:auto;"></span>
+          </div>
         </div>
       </div>
 
@@ -4099,6 +5885,11 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <span id="wc-rc-remaining" style="font-size:.62rem;color:var(--muted2);"></span>
     </div>
     <div id="wc-rc-preview" style="margin-bottom:12px;max-height:300px;overflow-y:auto;"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <label style="font-size:.72rem;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer;">
+        <input type="checkbox" id="wc-rc-thumb-only"> 썸네일만 재생성
+      </label>
+    </div>
     <div style="display:flex;gap:8px;">
       <button id="wc-rc-start" onclick="startCustomRender()" class="btn btn-g" style="flex:1;justify-content:center;">▶ 렌더링 시작</button>
       <button id="wc-rc-cancel" onclick="cancelRender()" class="btn btn-d" style="display:none;padding:0 16px;">✕ 취소</button>
@@ -4237,6 +6028,12 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
         <button onclick="dailySetWord()" class="btn btn-m" style="font-size:.68rem;padding:3px 8px;">변경</button>
       </div>
 
+      <!-- 썸네일 스타일 선택 -->
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+        <span style="font-size:.63rem;color:var(--muted2);">썸네일:</span>
+        <button id="thumb-style-portrait" onclick="setThumbStyle('portrait')" class="btn btn-g" style="font-size:.66rem;padding:2px 9px;">☰ 세로형</button>
+        <button id="thumb-style-landscape" onclick="setThumbStyle('landscape')" class="btn btn-m" style="font-size:.66rem;padding:2px 9px;">⊟ 가로형</button>
+      </div>
       <!-- 단어 실행 버튼 -->
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
         <label style="display:flex;align-items:center;gap:5px;font-size:.74rem;cursor:pointer;">
@@ -4326,7 +6123,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <!-- ═══ 통합 실행 ════════════════════════════════════════ -->
     <div class="batch-footer">
       <div style="display:flex;gap:7px;margin-bottom:10px;">
-        <button id="rp-render-both" onclick="renderBatchBoth()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.75rem;">▶ 단어+회화 렌더링 (YT+릴스)</button>
+        <button id="rp-render-both" onclick="renderBatchBoth()" class="btn btn-g" style="flex:1;justify-content:center;font-size:.75rem;">▶ 단어+회화+K드라마 렌더링 (YT+릴스)</button>
         <button onclick="dailyTrigger()" class="btn btn-m" style="font-size:.75rem;padding:0 14px;">▶ 오늘</button>
       </div>
 
@@ -4410,6 +6207,11 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <span id="rc-remaining" style="font-size:.62rem;color:var(--muted2);"></span>
     </div>
     <div id="rc-preview" style="margin-bottom:12px;max-height:300px;overflow-y:auto;"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <label style="font-size:.72rem;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer;">
+        <input type="checkbox" id="rc-thumb-only"> 썸네일만 재생성
+      </label>
+    </div>
     <div style="display:flex;gap:8px;">
       <button id="rc-start" onclick="startCustomRender()" class="btn btn-g" style="flex:1;justify-content:center;">▶ 렌더링 시작</button>
       <button id="rc-cancel" onclick="cancelRender()" class="btn btn-d" style="display:none;padding:0 16px;">✕ 취소</button>
@@ -4577,6 +6379,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
     <select id="vf-music" onchange="filterVids()" class="inp"><option value="">전체 음악</option></select>
     <select id="vf-status" onchange="filterVids()" class="inp"><option value="">전체 상태</option><option value="uploaded">업로드됨</option><option value="generated">생성됨</option><option value="missing">파일 없음</option></select>
     <span id="vf-count" style="font-size:.72rem;color:var(--muted);margin-left:auto;"></span>
+    <button class="btn btn-g" onclick="updateAllDescriptions(document.getElementById('vf-lang').value||null)" style="font-size:.7rem;padding:4px 10px;" title="업로드된 YouTube 본편 설명란을 10개 예문으로 업데이트">📝 설명란 업데이트(10개)</button>
   </div>
   <div class="card" style="overflow-x:auto;padding:0;">
     <table>
@@ -4615,12 +6418,14 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       <option value="uploaded">업로드 완료</option>
     </select>
     <button onclick="loadYtUpload()" class="btn btn-m">새로고침</button>
+    <button onclick="reconcileUploads()" class="btn btn-m" style="font-size:.7rem;" title="YouTube 채널 스캔해서 누락된 업로드 기록 복구">🔄 로그 복구</button>
     <span id="ytu-count" style="font-size:.72rem;color:var(--muted);margin-left:auto;"></span>
   </div>
   <!-- 탭 -->
   <div style="display:flex;gap:4px;margin-bottom:10px;">
     <button id="ytu-tab-word" class="btn btn-g" style="font-size:.72rem;" onclick="ytUploadTab('word')">단어/쇼츠</button>
     <button id="ytu-tab-conv" class="btn btn-m" style="font-size:.72rem;" onclick="ytUploadTab('conv')">회화</button>
+    <button id="ytu-tab-kdrama" class="btn btn-m" style="font-size:.72rem;" onclick="ytUploadTab('kdrama')">K-드라마</button>
   </div>
   <!-- 단어 영상 테이블 -->
   <div id="ytu-word-section">
@@ -4641,6 +6446,17 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
           <th>언어</th><th>테마 ID</th><th>포맷</th><th>파일</th><th>상태</th><th>렌더링일</th><th style="text-align:right;">👁 조회</th><th style="text-align:right;">👍 좋아요</th><th style="text-align:right;">💬 댓글</th><th>액션</th>
         </tr></thead>
         <tbody id="ytu-conv-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <!-- K-드라마 영상 테이블 -->
+  <div id="ytu-kdrama-section" style="display:none;">
+    <div class="card" style="overflow-x:auto;padding:0;">
+      <table>
+        <thead><tr>
+          <th>언어</th><th>테마 ID</th><th>포맷</th><th>파일</th><th>상태</th><th>렌더링일</th><th style="text-align:right;">👁 조회</th><th style="text-align:right;">👍 좋아요</th><th style="text-align:right;">💬 댓글</th><th>액션</th>
+        </tr></thead>
+        <tbody id="ytu-kdrama-tbody"></tbody>
       </table>
     </div>
   </div>
@@ -4713,7 +6529,7 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
 
 <!-- ══ 회화 영상 (기본 회화 + 일러스트 + 영상 통합) ════════════ -->
 <div id="view-conv" class="view">
-  <div class="bc"><span class="cur">💬 회화 영상</span></div>
+  <div class="bc"><span id="cv-bc-label" class="cur">💬 회화 영상</span></div>
 
   <!-- 기본 회화 영상 패널 -->
   <div id="cv-panel-basic">
@@ -4728,8 +6544,10 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
       </select>
       <select id="cv-filter-status" onchange="renderConvThemes()" class="inp">
         <option value="">전체 상태</option>
-        <option value="rendered">렌더됨</option>
-        <option value="uploaded">업로드됨</option>
+        <option value="rendered">YT 렌더됨</option>
+        <option value="uploaded">YT 업로드됨</option>
+        <option value="reels_rendered">쇼츠 렌더됨</option>
+        <option value="reels_uploaded">쇼츠 업로드됨</option>
         <option value="pending">미렌더</option>
       </select>
       <div style="display:flex;gap:4px;margin-left:auto;align-items:center;">
@@ -4747,9 +6565,9 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
           <th>상황명</th>
           <th style="text-align:center;">구문</th>
           <th style="text-align:center;">언어</th>
-          <th style="text-align:center;">렌더됨</th>
-          <th style="text-align:center;">업로드됨</th>
-          <th style="text-align:center;">YouTube</th>
+          <th style="text-align:center;">▶ YouTube</th>
+          <th style="text-align:center;">📱 쇼츠</th>
+          <th style="text-align:center;">링크</th>
           <th style="text-align:right;padding-right:12px;">액션</th>
         </tr></thead>
         <tbody id="conv-themes-tbody"></tbody>
@@ -4862,6 +6680,123 @@ input.inp{background:var(--border);color:var(--text);border:1px solid var(--bord
   </div>
 </div>
 
+<!-- ══ K-드라마 view (영상 + 일러스트, 회화와 동일 구조) ═══════════ -->
+<div id="view-kdrama" class="view">
+  <div class="bc">
+    <span onclick="nav(document.querySelector('[data-view=overview]'),'overview')">대시보드</span>
+    <span style="color:var(--muted2);">›</span>
+    <span class="cur" id="kd-bc-label">🎬 K-드라마</span>
+  </div>
+
+  <!-- K-드라마 일러스트 -->
+  <div id="kd-panel-illust" style="display:none;">
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div class="sec" style="margin:0;">🎨 일러스트 생성 (인트로 1장 + Phrase 10장 = 테마당 11장)</div>
+        <span id="kd-illust-badge" class="badge badge-m">–</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+        <span style="font-size:.74rem;color:var(--muted);">ID 범위:</span>
+        <input id="kd-illust-start" type="number" placeholder="시작" min="1" max="100" class="num-input" style="width:80px;">
+        <span style="color:var(--muted);">~</span>
+        <input id="kd-illust-end" type="number" placeholder="끝" min="1" max="100" class="num-input" style="width:80px;">
+        <select id="kd-illust-mode" class="inp" style="font-size:.72rem;">
+          <option value="all">전체 (인트로+Phrase)</option>
+          <option value="intro_only">인트로만</option>
+          <option value="phrases_only">Phrase만</option>
+        </select>
+        <button class="btn btn-a" onclick="kdStartIllust()">🎨 생성 시작</button>
+        <button class="btn btn-m" onclick="loadKdramaIllustStatus()">↺ 새로고침</button>
+        <label style="font-size:.7rem;color:var(--muted);display:flex;align-items:center;gap:3px;">
+          <input type="checkbox" id="kd-illust-overwrite"> 기존 파일 덮어쓰기
+        </label>
+      </div>
+      <div style="font-size:.64rem;color:var(--muted2);margin-bottom:8px;">
+        범위 비워두면 전체 100개 / 비용: 인트로만 100장 ~$4 / 전체(11장×100) ~$44 (Gemini 3.1 Flash Image)<br>
+        스타일: 단어 일러스트와 동일 (watercolor + chibi red panda)
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.74rem;color:var(--muted);margin-bottom:3px;">
+        <span>완성된 테마</span><span id="kd-illust-done-txt">–</span>
+      </div>
+      <div class="pbar-bg" style="height:6px;margin-bottom:10px;">
+        <div id="kd-illust-done-bar" class="pbar" style="height:6px;width:0%;background:linear-gradient(90deg,#C77DFF,#9d4edd);"></div>
+      </div>
+    </div>
+
+    <!-- 패널 뷰어 (intro + phrase 1~10) — 생성 카드 바로 아래 -->
+    <div class="card" id="kd-browse-card" style="margin-bottom:14px;">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+        <span style="font-size:.78rem;font-weight:700;color:var(--fg);flex:1;min-width:80px;">패널 뷰어</span>
+        <button class="btn btn-m" onclick="kdBrowseNav(-1)" style="font-size:.7rem;padding:4px 9px;">◀</button>
+        <input id="kd-browse-id" type="number" min="1" max="100" value="1" onchange="loadKdramaIllustBrowse()" class="num-input" style="width:64px;">
+        <button class="btn btn-m" onclick="kdBrowseNav(1)" style="font-size:.7rem;padding:4px 9px;">▶</button>
+        <button class="btn btn-m" onclick="loadKdramaIllustBrowse()" style="font-size:.7rem;padding:4px 9px;">↺</button>
+      </div>
+      <div id="kd-browse-info-bar" style="display:none;padding:8px 10px;background:var(--bg);border-radius:6px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span id="kd-browse-cat-chip" style="font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:99px;color:#fff;">–</span>
+          <span id="kd-browse-sit-ko" style="font-size:.85rem;font-weight:700;"></span>
+          <span id="kd-browse-sit-en" style="font-size:.7rem;color:var(--muted);"></span>
+          <span id="kd-browse-count" style="margin-left:auto;font-size:.7rem;color:var(--muted);"></span>
+        </div>
+      </div>
+      <div id="kd-browse-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;"></div>
+    </div>
+
+    <!-- 테마 카드 리스트 (회화 일러스트와 동일 패턴) -->
+    <div id="kd-illust-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-bottom:14px;"></div>
+  </div>
+
+  <!-- K-드라마 영상 -->
+  <div id="kd-panel-video" style="display:none;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+      <select id="kd-filter-lang" onchange="renderKdramaThemes()" class="inp">
+        <option value="">전체 언어</option>
+        <option value="EN">🇺🇸 English</option>
+        <option value="JP">🇯🇵 日本語</option>
+        <option value="CN">🇨🇳 中文</option>
+        <option value="VN">🇻🇳 Tiếng Việt</option>
+        <option value="ES">🇪🇸 Español</option>
+      </select>
+      <select id="kd-filter-status" onchange="renderKdramaThemes()" class="inp">
+        <option value="">전체 상태</option>
+        <option value="rendered">YT 렌더됨</option>
+        <option value="uploaded">YT 업로드됨</option>
+        <option value="reels_rendered">쇼츠 렌더됨</option>
+        <option value="reels_uploaded">쇼츠 업로드됨</option>
+        <option value="pending">미렌더</option>
+      </select>
+      <div style="display:flex;gap:4px;margin-left:auto;align-items:center;">
+        <span style="font-size:.7rem;color:var(--muted);">렌더:</span>
+        <button id="kd-btn-nas" class="btn btn-g" onclick="kdSetTarget('nas')" style="font-size:.7rem;padding:3px 8px;">🖥 NAS</button>
+        <button id="kd-btn-desktop" class="btn btn-m" onclick="kdSetTarget('desktop')" style="font-size:.7rem;padding:3px 8px;">💻 GPU</button>
+        <button class="btn btn-m" onclick="loadKdramaThemes()" style="font-size:.7rem;padding:3px 8px;">↺</button>
+        <span id="kd-vcount" style="font-size:.72rem;color:var(--muted);margin-left:8px;"></span>
+      </div>
+    </div>
+    <div class="card" style="overflow-x:auto;padding:0;margin-bottom:12px;">
+      <table>
+        <thead><tr>
+          <th style="width:36px;">#</th>
+          <th>테마명</th>
+          <th style="text-align:center;">카테고리</th>
+          <th style="text-align:center;">구문</th>
+          <th style="text-align:center;">언어</th>
+          <th style="text-align:center;">▶ YouTube</th>
+          <th style="text-align:center;">📱 쇼츠</th>
+          <th style="text-align:center;">링크</th>
+          <th style="text-align:right;padding-right:12px;">액션</th>
+        </tr></thead>
+        <tbody id="kd-themes-tbody"></tbody>
+      </table>
+    </div>
+    <div id="kd-empty" style="display:none;text-align:center;padding:48px;color:var(--muted);">
+      <div style="font-size:2rem;margin-bottom:10px;">🎬</div>
+      <div>kdrama_db.json 파일이 없거나 비어 있습니다</div>
+    </div>
+  </div>
+</div>
+
 </div><!-- /main -->
 </div><!-- /body -->
 
@@ -4952,6 +6887,28 @@ function navConvTab(el,tab){
   loadConvThemes();loadPhraseSituations();cvTab(tab);
 }
 
+// ── K-드라마 메뉴 (영상/일러스트 분리) ─────────────────────────
+function navKdramaTab(el,tab){
+  document.querySelectorAll('.s-item').forEach(i=>i.classList.remove('active'));
+  if(el) el.classList.add('active');
+  document.querySelectorAll('.view').forEach(v=>v.style.display='none');
+  const target=document.getElementById('view-kdrama');
+  if(target) target.style.display='block';
+  _currentView='kdrama';
+  kdTab(tab);
+}
+
+function kdTab(t){
+  ['video','illust'].forEach(x=>{
+    const pan=document.getElementById('kd-panel-'+x);
+    if(pan) pan.style.display=(x===t?'block':'none');
+  });
+  if(t==='video'){ loadKdramaThemes(); }
+  if(t==='illust'){ loadKdramaIllustStatus(); loadKdramaIllustBrowse(); }
+  const bc=document.getElementById('kd-bc-label');
+  if(bc) bc.textContent = t==='illust' ? '🎨 K-드라마 일러스트' : '🎬 K-드라마 영상';
+}
+
 function toggleSGroup(name){
   const ch=document.getElementById('s-ch-'+name);
   const arr=document.getElementById('s-arr-'+name);
@@ -4967,8 +6924,218 @@ function loadWorkCenter(){
   loadLiveStatus();
   loadPhraseSituations();
   loadYtSched();
+  loadDailyStatus();
+  loadCountdown();
   workTab('today');
   _syncWorkCenterFromBatch();
+}
+
+// ── 언어별 카운트다운 ──────────────────────────────────────────
+let _cdData = {};
+let _cdTimer = null;
+
+async function loadCountdown(){
+  try{
+    const r = await fetch('/api/daily/countdown');
+    if(!r.ok) return;
+    _cdData = await r.json();
+    _renderCountdown();
+    if(_cdTimer) clearInterval(_cdTimer);
+    _cdTimer = setInterval(_tickCountdown, 1000);
+  }catch(e){}
+}
+
+const _CD_FLAGS  = {EN:'🇺🇸',JP:'🇯🇵',CN:'🇨🇳',VN:'🇻🇳',ES:'🇲🇽'};
+const _CD_NAMES  = {EN:'English',JP:'日本語',CN:'中文',VN:'Tiếng Việt',ES:'Español'};
+
+function _renderCountdown(){
+  const el = document.getElementById('countdown-grid');
+  if(!el) return;
+  const langs = ['EN','JP','CN','VN','ES'];
+
+  // 날짜 헤더 업데이트 (첫 언어 기준 — 대표로 EN 날짜 사용)
+  const firstLang = langs.find(l => _cdData[l]?.local_date);
+  if(firstLang){
+    const dateEl = document.getElementById('cd-upload-date');
+    if(dateEl) dateEl.textContent = _cdData[firstLang].local_date + ' ·';
+  }
+
+  const ic=(ok,upl,label)=>{
+    const color = upl?'var(--blue)':ok?'var(--green)':'var(--muted2)';
+    const icon  = upl?'⬆':ok?'✓':'○';
+    return `<span style="color:${color};font-size:.63rem;" title="${label}${upl?' (업로드됨)':ok?' (준비됨)':' (미준비)'}">${icon}${label}</span>`;
+  };
+
+  const epInput=(lang,ctype,ep,color)=>`
+    <div style="display:flex;align-items:center;justify-content:center;gap:2px;">
+      <span style="font-size:.55rem;color:var(--muted);">#</span>
+      <input id="cd-ep-${lang}-${ctype}" type="number" min="1" value="${ep||''}"
+        placeholder="−"
+        style="width:44px;font-size:.72rem;font-weight:800;color:${color};
+               background:transparent;border:none;border-bottom:1px solid var(--border2);
+               text-align:center;padding:1px 0;outline:none;"
+        onchange="setEpisode('${lang}','${ctype}',this)"
+        title="${ctype==='word'?'단어':'회화'} 화수 직접 입력">
+      <span style="font-size:.55rem;color:var(--muted2);">화</span>
+    </div>`;
+
+  el.innerHTML = langs.map(lang=>{
+    const d    = _cdData[lang]||{};
+    const vOk  = d.video_ready,  rlOk = d.reels_ready, ilOk = d.illust_ready;
+    const vUp  = d.video_uploaded, rlUp = d.reels_uploaded;
+    const cvUp = d.conv_uploaded;
+    const wordReady = vOk || rlOk;
+    const convReady = !cvUp;
+
+    return `<div id="cd-card-${lang}"
+      style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+             padding:8px 7px;text-align:center;display:flex;flex-direction:column;gap:3px;">
+
+      <!-- 헤더: 국기 + 언어 -->
+      <div style="font-size:.95rem;line-height:1;">${_CD_FLAGS[lang]||''}</div>
+      <div style="font-size:.65rem;font-weight:700;color:var(--text2);">${lang}</div>
+
+      <!-- KST 시간 -->
+      <div style="font-size:.55rem;color:var(--muted);">
+        =${d.kst_time||'--:--'} KST
+      </div>
+      <!-- 카운트다운 -->
+      <div id="cd-timer-${lang}"
+        style="font-size:.78rem;font-weight:700;font-family:monospace;color:var(--amber);
+               border-bottom:1px solid var(--border2);padding-bottom:5px;margin-bottom:2px;">
+        --:--:--
+      </div>
+
+      <!-- 단어 섹션 -->
+      <div style="background:var(--bg2);border-radius:5px;padding:4px 3px;">
+        <div style="font-size:.55rem;color:var(--blue);font-weight:700;margin-bottom:2px;">📚 단어</div>
+        ${epInput(lang,'word', d.word_ep_num, 'var(--blue)')}
+        <div style="display:flex;gap:3px;justify-content:center;margin-top:2px;">
+          ${ic(vOk,vUp,'📹')}
+          ${ic(rlOk,rlUp,'📱')}
+          ${ic(ilOk,false,'🎨')}
+        </div>
+        <button onclick="uploadNow('${lang}','word',this)"
+          style="margin-top:3px;width:100%;padding:3px 0;font-size:.55rem;font-weight:700;
+                 background:${wordReady?'#0d2b0d':'var(--bg3)'};
+                 color:${wordReady?'var(--green)':'var(--muted2)'};
+                 border:1px solid ${wordReady?'var(--green)':'var(--border)'};
+                 border-radius:4px;cursor:pointer;"
+          ${wordReady?'':'disabled'}>
+          ⚡ 올리기
+        </button>
+      </div>
+
+      <!-- 회화 섹션 -->
+      <div style="background:var(--bg2);border-radius:5px;padding:4px 3px;">
+        <div style="font-size:.55rem;color:var(--purple,#a78bfa);font-weight:700;margin-bottom:2px;">💬 회화</div>
+        ${epInput(lang,'conv', d.conv_ep_num, 'var(--purple,#a78bfa)')}
+        <div style="display:flex;gap:3px;justify-content:center;margin-top:2px;">
+          ${ic(!cvUp, cvUp, '📹')}
+        </div>
+        <button onclick="uploadNow('${lang}','conv',this)"
+          style="margin-top:3px;width:100%;padding:3px 0;font-size:.55rem;font-weight:700;
+                 background:${!cvUp?'#1a0d2b':'var(--bg3)'};
+                 color:${!cvUp?'var(--purple,#a78bfa)':'var(--muted2)'};
+                 border:1px solid ${!cvUp?'var(--purple,#a78bfa)':'var(--border)'};
+                 border-radius:4px;cursor:pointer;"
+          ${!cvUp?'':'disabled'}>
+          ⚡ 올리기
+        </button>
+      </div>
+
+    </div>`;
+  }).join('');
+  _tickCountdown();
+}
+
+async function uploadNow(lang, ctype, btn){
+  const d = _cdData[lang]||{};
+  let fmts = [];
+
+  if(ctype === 'word'){
+    if(d.video_ready  && !d.video_uploaded)  fmts.push('youtube');
+    if(d.reels_ready  && !d.reels_uploaded)  fmts.push('reels');
+    if(!fmts.length){ alert('업로드할 준비된 단어 영상이 없습니다.'); return; }
+    if(!confirm(`[${lang}] 단어 ${fmts.join('+')} 지금 바로 업로드할까요?`)) return;
+
+    btn.disabled=true; btn.textContent='⏳...';
+    let done=0, errors=[];
+    for(const fmt of fmts){
+      try{
+        const r=await fetch('/api/daily/upload-now',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({lang,fmt})});
+        const rd=await r.json();
+        if(r.ok) done++;
+        else errors.push(rd.error||fmt);
+      }catch(e){ errors.push(e.toString()); }
+    }
+    if(errors.length) alert(`오류: ${errors.join(', ')}`);
+    else alert(`✅ [${lang}] 단어 ${done}개 업로드 완료!`);
+
+  } else {
+    // 회화 업로드
+    const ep = d.conv_ep_num;
+    if(!ep){ alert('회화 화수를 먼저 설정하세요.'); return; }
+    if(!confirm(`[${lang}] 회화 #${ep}화 지금 바로 업로드할까요?`)) return;
+
+    btn.disabled=true; btn.textContent='⏳...';
+    try{
+      const r=await fetch('/api/conv/upload',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({theme_id:String(ep),lang,fmt:'youtube'})});
+      const rd=await r.json();
+      if(!r.ok){ alert('오류: '+(rd.error||'')); }
+      else alert(`✅ [${lang}] 회화 #${ep}화 업로드 완료!`);
+    }catch(e){ alert('오류: '+e); }
+  }
+
+  btn.textContent='✅ 완료';
+  setTimeout(()=>loadCountdown(), 5000);
+}
+
+async function setEpisode(lang, ctype, input){
+  const ep = parseInt(input.value);
+  if(!ep || ep < 1){
+    const key = ctype==='conv' ? 'conv_ep_num' : 'word_ep_num';
+    input.value = _cdData[lang]?.[key] || '';
+    return;
+  }
+  try{
+    const r=await fetch('/api/daily/set-episode',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lang, ctype, episode_num:ep})});
+    const d=await r.json();
+    if(!r.ok){ alert('저장 실패: '+(d.error||'')); return; }
+    if(_cdData[lang]){
+      if(ctype==='conv') _cdData[lang].conv_ep_num = ep;
+      else               _cdData[lang].word_ep_num = ep;
+    }
+  }catch(e){ alert('오류: '+e); }
+}
+
+function _tickCountdown(){
+  const langs = ['EN','JP','CN','VN','ES'];
+  const now = Date.now();
+  langs.forEach(lang=>{
+    const d = _cdData[lang];
+    if(!d) return;
+    const target = new Date(d.next_upload_utc).getTime();
+    let diff = Math.max(0, Math.floor((target - now)/1000));
+    const h = Math.floor(diff/3600);
+    diff -= h*3600;
+    const m = Math.floor(diff/60);
+    const s = diff%60;
+    const txt = diff===0&&h===0?'🔔 업로드 시간!'
+      :`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    const el = document.getElementById(`cd-timer-${lang}`);
+    if(el){
+      el.textContent = txt;
+      const isNear = (h===0 && m<30);
+      el.style.color = h===0&&m===0&&s===0?'var(--green)':isNear?'var(--red)':'var(--amber)';
+    }
+  });
 }
 
 // ── 영상 작업 센터 탭 전환 ─────────────────────────────────
@@ -5078,6 +7245,13 @@ function cvTab(t){
   });
   if(t==='illust') loadPhraseSituations();
   if(t==='video')  loadPhraseSituations();
+  // breadcrumb 업데이트
+  const bc = document.getElementById('cv-bc-label');
+  if(bc){
+    bc.textContent = t==='illust' ? '🖼 회화 일러스트'
+                    : t==='video'  ? '🎬 회화 영상 (배치)'
+                    : '💬 회화 영상';
+  }
 }
 
 // ── 큐 정리 (완료/실패/취소 작업 제거) ─────────────────────
@@ -5153,27 +7327,36 @@ async function loadJobQueue(){
 function renderJobQueue(d){
   const jobs=(d.jobs||[]).filter(j=>j.status!=='done'||(_recentCutoff(j)));
   const list=document.getElementById('global-queue-list');
+  const wcList=document.getElementById('wc-global-queue-list');
   const badge=document.getElementById('gq-count-badge');
+  const wcBadge=document.getElementById('wc-gq-count-badge');
   const cfg=d.render_config||{};
   const desktopEnabled=cfg.desktop_enabled!==false;
   const desktopBusy=d.desktop_busy;
 
-  // 기본 렌더링 위치 버튼 업데이트
-  const btnD=document.getElementById('ql-btn-desktop');
-  const btnN=document.getElementById('ql-btn-nas');
-  if(btnD){btnD.className='btn '+(desktopEnabled?'btn-p':'btn-m');}
-  if(btnN){btnN.className='btn '+(desktopEnabled?'btn-m':'btn-p');}
-  const dSt=document.getElementById('ql-desktop-status');
-  if(dSt) dSt.textContent=desktopBusy?'💻 GPU 렌더링 중':'💻 GPU 대기 중';
-  if(dSt) dSt.style.color=desktopBusy?'var(--amber)':'var(--green)';
+  // 기본 렌더링 위치 버튼 업데이트 (양쪽 패널)
+  for(const [dId,nId,stId] of [['ql-btn-desktop','ql-btn-nas','ql-desktop-status'],
+                                 ['wc-ql-btn-desktop','wc-ql-btn-nas','wc-ql-desktop-status']]){
+    const btnD=document.getElementById(dId);
+    const btnN=document.getElementById(nId);
+    const dSt=document.getElementById(stId);
+    if(btnD) btnD.className='btn '+(desktopEnabled?'btn-p':'btn-m');
+    if(btnN) btnN.className='btn '+(desktopEnabled?'btn-m':'btn-p');
+    if(dSt){ dSt.textContent=desktopBusy?'💻 GPU 렌더링 중':'💻 GPU 대기 중';
+             dSt.style.color=desktopBusy?'var(--amber)':'var(--green)'; }
+  }
 
   const active=jobs.filter(j=>['queued','running'].includes(j.status));
   const finished=jobs.filter(j=>['done','failed','cancelled'].includes(j.status)).slice(-5);
   const visible=[...active,...finished];
-  if(badge) badge.textContent=active.length?`${active.length}개 진행중`:'';
+  const badgeTxt=active.length?`${active.length}개 진행중`:'';
+  if(badge) badge.textContent=badgeTxt;
+  if(wcBadge) wcBadge.textContent=badgeTxt;
 
+  const emptyHtml='<div style="font-size:.72rem;color:var(--muted2);text-align:center;padding:10px 0;">대기 중인 작업이 없습니다</div>';
   if(!visible.length){
-    list.innerHTML='<div style="font-size:.72rem;color:var(--muted2);text-align:center;padding:10px 0;">대기 중인 작업이 없습니다</div>';
+    if(list) list.innerHTML=emptyHtml;
+    if(wcList) wcList.innerHTML=emptyHtml;
     return;
   }
 
@@ -5181,6 +7364,8 @@ function renderJobQueue(d){
     video_batch:        {label:'단어영상',  color:'var(--accent)', icon:'🎬'},
     illust:             {label:'일러스트',  color:'var(--amber)',  icon:'🎨'},
     conv_video:         {label:'회화영상',  color:'var(--green)',  icon:'💬'},
+    kdrama_video:       {label:'K드라마',   color:'#C77DFF',       icon:'🎬'},
+    kdrama_illust:      {label:'K드라마일러', color:'#C77DFF',      icon:'🎨'},
     phrase_video:       {label:'회화영상',  color:'var(--green)',  icon:'💬'},
     phrase_illust:      {label:'회화일러',  color:'#a855f7',       icon:'🖼'},
     phrase_illust_regen:{label:'일러재생성',color:'#f97316',       icon:'🔄'},
@@ -5194,7 +7379,7 @@ function renderJobQueue(d){
   };
   const targetLabel=t=>t==='desktop'?'💻 GPU':t==='nas'?'🖥 NAS':'⚡ auto';
 
-  list.innerHTML=visible.map(job=>{
+  const queueHtml=visible.map(job=>{
     const ti=typeInfo[job.type]||{label:job.type,color:'var(--muted)',icon:'⚙️'};
     const si=statusInfo[job.status]||{text:job.status,color:'var(--muted)'};
     const isActive=['queued','running'].includes(job.status);
@@ -5238,7 +7423,7 @@ function renderJobQueue(d){
       const label = typeLabel ? `${typeLabel} · ${job.step}` : job.step;
       batchProgress=`<div style="margin-top:3px;font-size:.62rem;color:var(--amber);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>`;
     }
-    if(job.type==='conv_video'&&job.status==='running'&&job.step){
+    if((job.type==='conv_video'||job.type==='kdrama_video')&&job.status==='running'&&job.step){
       const frameInfo = (job.frame!=null&&job.total_frames)
         ? `<span style="color:var(--cyan,#22d3ee);margin-left:6px;">🎞 ${job.frame}/${job.total_frames}f</span>` : '';
       batchProgress=`<div style="margin-top:3px;font-size:.62rem;color:var(--amber);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${job.step}${frameInfo}</div>`;
@@ -5265,6 +7450,8 @@ function renderJobQueue(d){
       ${cancelBtn}
     </div>`;
   }).join('');
+  if(list) list.innerHTML=queueHtml;
+  if(wcList) wcList.innerHTML=queueHtml;
 }
 
 async function openJobFolder(jobId){
@@ -5754,6 +7941,18 @@ async function vidDelete(wordId, lang, exam, fmt='youtube'){
   }catch(e){alert('실패: '+e);}
 }
 
+async function updateAllDescriptions(lang){
+  const label = lang ? `[${lang}] ` : '전체 ';
+  if(!confirm(`${label}업로드된 YouTube 본편 설명란을 10개 예문으로 업데이트할까요?\n(YouTube API 할당량을 사용합니다)`)) return;
+  try{
+    const r=await fetch('/api/update-descriptions',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({lang:lang||null})});
+    const d=await r.json();
+    if(!r.ok){alert('오류: '+(d.error||'')); return;}
+    alert('설명란 업데이트 시작됨. 잠시 후 YouTube에서 확인하세요.');
+  }catch(e){alert('실패: '+e);}
+}
+
 // ── YouTube ──────────────────────────────────────────────────
 function renderYoutube(d){ /* overview poll에서 호출 — 다중채널은 loadYoutubeChannels 사용 */ }
 
@@ -5774,7 +7973,12 @@ async function loadYoutubeChannels(){
     const totSubs=ok.reduce((s,c)=>s+c.subscribers,0);
     const totViews=ok.reduce((s,c)=>s+c.views,0);
     const totVids=ok.reduce((s,c)=>s+c.video_count,0);
-    let html=`<div class="g3" style="margin-bottom:14px;">
+    const hasPl=ok.some(c=>(c.bonpyeon||0)+(c.reels||0)+(c.phrase||0)>0);
+    let html=`<div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+      <button class="btn btn-a" onclick="syncPlaylists(this)" style="font-size:.72rem;padding:4px 12px;">🔄 플레이리스트 스캔</button>
+      ${!hasPl?'<span style="font-size:.68rem;color:var(--amber);margin-left:10px;align-self:center;">⚠ 플레이리스트 정보 없음 — 스캔 후 본편/쇼츠/회화 표시</span>':''}
+    </div>
+    <div class="g3" style="margin-bottom:14px;">
       <div class="card-sm kpi"><div class="num" style="color:var(--red);">${fmt(totSubs)}</div><div class="label">총 구독자</div></div>
       <div class="card-sm kpi"><div class="num" style="color:var(--amber);">${fmt(totViews)}</div><div class="label">총 조회수</div></div>
       <div class="card-sm kpi"><div class="num" style="color:var(--blue);">${fmt(totVids)}</div><div class="label">총 영상 수</div></div>
@@ -5812,96 +8016,113 @@ async function loadYoutubeChannels(){
   }
 }
 
+async function syncPlaylists(btn){
+  const orig=btn.textContent;
+  btn.disabled=true; btn.textContent='스캔 중...';
+  try{
+    const r=await fetch('/api/youtube/sync-playlists',{method:'POST'});
+    const d=await r.json();
+    btn.textContent=orig; btn.disabled=false;
+    if(d.error){alert('오류: '+d.error); return;}
+    const lines=Object.entries(d.synced||{}).map(([l,v])=>{
+      if(v.error) return `${l}: 오류 — ${v.error}`;
+      const keys=Object.keys(v);
+      return `${l}: ${keys.length}개 (${keys.join(', ')})`;
+    });
+    alert('스캔 완료:\n'+lines.join('\n'));
+    loadYoutubeChannels();
+  }catch(e){btn.textContent=orig; btn.disabled=false; alert('실패: '+e);}
+}
+
 // ── YouTube 업로드 관리 ──────────────────────────────────────
-let _ytuData = {word_videos:[], conv_videos:[]};
+let _ytuData = {word_videos:[], conv_videos:[], kdrama_videos:[]};
 let _ytuTab = 'word';
 
-let _ytSchedEnabled = false;
+// ── 업로드 스케줄 (4개 독립 설정) ──────────────────────────────
+const _SCHED_TYPES=['word-yt','word-reels','conv-yt','conv-reels','kdrama-yt','kdrama-reels'];
+let _schedStates={};  // {type: {enabled, interval_days, count, lang, last_run}}
 
-// ── ytu-sched-* → wc-sched-* 엘리먼트 호환 헬퍼 ─────────────
-// ytu-sched-panel 제거 후 wc-sched-* 엘리먼트를 우선 사용
-function _getSchedEl(suffix){
-  return document.getElementById('wc-sched-'+suffix)||document.getElementById('ytu-sched-'+suffix);
+function _schedEl(type, suffix){ return document.getElementById(`sched-${type}-${suffix}`); }
+
+function _renderSchedToggle(type){
+  const on=!!(_schedStates[type]||{}).enabled;
+  const tog=_schedEl(type,'tog'), knob=_schedEl(type,'knob'), lbl=_schedEl(type,'lbl');
+  if(tog) tog.style.background=on?'var(--green)':'#333';
+  if(knob) knob.style.left=on?'20px':'2px';
+  if(lbl){lbl.textContent=on?'ON':'OFF'; lbl.style.color=on?'var(--green)':'var(--muted)';}
+}
+
+function schedToggle(type){
+  if(!_schedStates[type]) _schedStates[type]={};
+  _schedStates[type].enabled=!_schedStates[type].enabled;
+  _renderSchedToggle(type);
 }
 
 async function loadYtSched(){
   try{
     const r=await fetch('/api/youtube/upload-schedule');
-    const s=await r.json();
-    _ytSchedEnabled=!!s.enabled;
-    const setVal=(suffix,v)=>{const e=_getSchedEl(suffix);if(e)e.value=String(v);};
-    setVal('interval',s.interval_days||1);
-    setVal('count',s.count||2);
-    setVal('lang',s.lang||'');
-    setVal('fmt',s.fmt||'');
-    setVal('tab',s.tab||'word');
-    const last=s.last_run?`마지막 실행: ${s.last_run}`:'';
-    const lastEl=_getSchedEl('last');
-    if(lastEl) lastEl.textContent=last;
-    _ytSchedRenderToggle();
+    const d=await r.json();
+    _SCHED_TYPES.forEach(t=>{
+      const s=d[t]||{};
+      _schedStates[t]={enabled:!!s.enabled,interval_days:s.interval_days||1,count:s.count||2,lang:s.lang||''};
+      const setV=(sfx,v)=>{const e=_schedEl(t,sfx);if(e)e.value=String(v);};
+      setV('interval',s.interval_days||1);
+      setV('count',s.count||(t.startsWith('conv')||t.startsWith('kdrama')?1:2));
+      setV('lang',s.lang||'');
+      const lastEl=_schedEl(t,'last');
+      if(lastEl) lastEl.textContent=s.last_run?`마지막: ${s.last_run}`:'';
+      _renderSchedToggle(t);
+    });
   }catch(e){}
 }
 
-function _ytSchedRenderToggle(){
-  const wrap=_getSchedEl('toggle-wrap');
-  const knob=_getSchedEl('knob');
-  const status=_getSchedEl('status');
-  if(!wrap) return;
-  wrap.style.background=_ytSchedEnabled?'var(--green)':'#333';
-  if(knob) knob.style.left=_ytSchedEnabled?'24px':'2px';
-  if(status){status.textContent=_ytSchedEnabled?'ON':'OFF';status.style.color=_ytSchedEnabled?'var(--green)':'var(--muted)';}
-}
-
-function ytSchedToggle(){
-  _ytSchedEnabled=!_ytSchedEnabled;
-  _ytSchedRenderToggle();
-}
-
-async function ytSchedSave(){
-  const getVal=(suffix)=>{const e=_getSchedEl(suffix);return e?e.value:'';};
-  const body={
-    enabled:_ytSchedEnabled,
-    interval_days:parseInt(getVal('interval'))||1,
-    count:parseInt(getVal('count'))||2,
-    lang:getVal('lang'),
-    fmt:getVal('fmt'),
-    tab:getVal('tab'),
+async function saveSchedType(type){
+  const getV=(sfx)=>{const e=_schedEl(type,sfx);return e?e.value:'';};
+  const cfg={
+    enabled:!!(_schedStates[type]||{}).enabled,
+    interval_days:parseInt(getV('interval'))||1,
+    count:parseInt(getV('count'))||1,
+    lang:getV('lang'),
   };
+  _schedStates[type]={...(_schedStates[type]||{}), ...cfg};
   try{
     await fetch('/api/youtube/upload-schedule',{method:'POST',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    alert('저장됨');
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({type, ...cfg})});
   }catch(e){alert('저장 실패: '+e);}
 }
 
-async function ytSchedRun(){
-  const btn=_getSchedEl('run-btn');
-  const getVal=(suffix)=>{const e=_getSchedEl(suffix);return e?e.value:'';};
-  const count=parseInt(getVal('count'))||2;
-  const lang=getVal('lang');
-  const fmt=getVal('fmt');
-  const tab=getVal('tab');
-  if(!confirm(`지금 ${count}개 업로드 실행할까요?`)) return;
-  if(btn){btn.disabled=true; btn.textContent='업로드 중...';}
+async function runSchedType(type, btn){
+  const getV=(sfx)=>{const e=_schedEl(type,sfx);return e?e.value:'';};
+  const count=parseInt(getV('count'))||1;
+  const lang=getV('lang');
+  const labels={'word-yt':'단어 본편','word-reels':'단어 쇼츠','conv-yt':'회화 본편','conv-reels':'회화 쇼츠','kdrama-yt':'K드라마 본편','kdrama-reels':'K드라마 쇼츠'};
+  if(!confirm(`[${labels[type]||type}] ${count}개 업로드 실행할까요?`)) return;
+  if(btn){btn.disabled=true;btn.textContent='업로드 중...';}
   try{
     const r=await fetch('/api/youtube/upload-run',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({count,lang,fmt,tab})});
+      body:JSON.stringify({type,count,lang})});
     const d=await r.json();
     if(!r.ok){alert('오류: '+(d.error||''));return;}
     alert(`완료: ${d.done}개 업로드됨${d.errors?.length?' / 오류: '+d.errors.length+'건':''}`);
-    const lastEl=_getSchedEl('last');
-    if(lastEl) lastEl.textContent=`마지막 실행: ${new Date().toISOString().slice(0,10)}`;
+    const lastEl=_schedEl(type,'last');
+    if(lastEl) lastEl.textContent=`마지막: ${new Date().toISOString().slice(0,10)}`;
     loadYtUpload();
   }catch(e){alert('실패: '+e);}
-  finally{if(btn){btn.disabled=false; btn.textContent='▶ 지금 실행';}}
+  finally{if(btn){btn.disabled=false;btn.textContent='▶ 실행';}}
 }
+
+// 하위 호환 래퍼 (기존 코드에서 호출되는 경우)
+function ytSchedToggle(){}
+async function ytSchedSave(){}
+async function ytSchedRun(){}
 
 async function loadYtUpload(){
   const ld=document.getElementById('ytu-loading');
   if(ld) ld.style.display='block';
   try{
-    const r=await fetch('/api/youtube/upload-status');
+    const r=await fetch(`/api/youtube/upload-status?t=${Date.now()}`);
     const d=await r.json();
     _ytuData=d;
     ytUploadFilter();
@@ -5916,9 +8137,12 @@ function ytUploadTab(tab){
   _ytuTab=tab;
   document.getElementById('ytu-word-section').style.display=tab==='word'?'block':'none';
   document.getElementById('ytu-conv-section').style.display=tab==='conv'?'block':'none';
+  const kdSec=document.getElementById('ytu-kdrama-section');
+  if(kdSec) kdSec.style.display=tab==='kdrama'?'block':'none';
   document.getElementById('ytu-tab-word').className=tab==='word'?'btn btn-g':'btn btn-m';
   document.getElementById('ytu-tab-conv').className=tab==='conv'?'btn btn-g':'btn btn-m';
-  // fmt 필터 숨김/표시 (회화탭엔 무의미하지 않음)
+  const kdBtn=document.getElementById('ytu-tab-kdrama');
+  if(kdBtn) kdBtn.className=tab==='kdrama'?'btn btn-g':'btn btn-m';
   ytUploadFilter();
 }
 
@@ -5928,7 +8152,11 @@ function ytUploadFilter(){
   const status=document.getElementById('ytu-status')?.value||'pending';
   const ld=document.getElementById('ytu-loading');
   const _LANG_FLAGS={'EN':'🇺🇸','JP':'🇯🇵','CN':'🇨🇳','VN':'🇻🇳','ES':'🇪🇸'};
-  const _fmtN=n=>(n==null?'<span style="color:#484f58;">—</span>':`<span style="color:var(--fg);">${n.toLocaleString()}</span>`);
+  const _statsErr=(_ytuData||{}).stats_error;
+  const _fmtN=(n,err)=>{
+    if(err||_statsErr) return '<span style="color:#f87171;font-size:.6rem;" title="API 한도 초과">quota</span>';
+    return n==null?'<span style="color:#484f58;">—</span>':`<span style="color:var(--fg);">${n.toLocaleString()}</span>`;
+  };
 
   if(_ytuTab==='word'){
     let rows=(_ytuData.word_videos||[]);
@@ -5944,10 +8172,10 @@ function ytUploadFilter(){
       const fileIcon=v.file_exists?'<span style="color:var(--green)">●</span>':'<span style="color:var(--red)">✗</span>';
       const statusBadge=v.uploaded?'<span class="badge badge-g" style="font-size:.65rem;">완료</span>':'<span class="badge badge-m" style="font-size:.65rem;">대기</span>';
       const vidLink=v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:var(--muted);font-size:.6rem;margin-left:3px;">↗</a>`:'';
-      const btn=v.uploaded
-        ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
-        :v.file_exists
-          ?`<button class="btn btn-g" style="font-size:.65rem;padding:2px 8px;" onclick="ytUploadWord(${v.word_id},'${v.lang}','${v.exam}','${v.fmt}',this)">업로드</button>`
+      const btn=v.file_exists
+        ?`<button class="btn ${v.uploaded?'btn-r':'btn-g'}" style="font-size:.65rem;padding:2px 8px;" onclick="ytUploadWord(${v.word_id},'${v.lang}','${v.exam}','${v.fmt}',this)">${v.uploaded?'재업로드':'업로드'}</button>`
+        :v.uploaded
+          ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
           :`<span style="font-size:.65rem;color:var(--red);">파일없음</span>`;
       return `<tr>
         <td>${flag} ${v.lang}</td>
@@ -5958,9 +8186,42 @@ function ytUploadFilter(){
         <td>${fmtLabel}</td>
         <td>${fileIcon}</td>
         <td>${statusBadge}</td>
-        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.views)}</td>
-        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.likes)}</td>
-        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.comments)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.views,v.stats_error)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.likes,v.stats_error)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.comments,v.stats_error)}</td>
+        <td>${btn}</td>
+      </tr>`;
+    }).join('');
+  } else if(_ytuTab==='kdrama'){
+    let rows=(_ytuData.kdrama_videos||[]);
+    if(lang) rows=rows.filter(v=>v.lang===lang);
+    if(fmt)  rows=rows.filter(v=>v.fmt===fmt);
+    if(status==='pending')  rows=rows.filter(v=>!v.uploaded&&v.file_exists);
+    if(status==='uploaded') rows=rows.filter(v=>v.uploaded);
+    document.getElementById('ytu-count').textContent=rows.length+'개';
+    const tbody=document.getElementById('ytu-kdrama-tbody');
+    tbody.innerHTML=rows.map(v=>{
+      const flag=_LANG_FLAGS[v.lang]||'';
+      const fmtLabel=v.fmt==='reels'?'<span style="color:var(--purple,#a78bfa)">📱 쇼츠</span>':'<span style="color:var(--red)">▶ YouTube</span>';
+      const fileIcon=v.file_exists?'<span style="color:var(--green)">●</span>':'<span style="color:var(--red)">✗</span>';
+      const statusBadge=v.uploaded?'<span class="badge badge-g" style="font-size:.65rem;">완료</span>':'<span class="badge badge-m" style="font-size:.65rem;">대기</span>';
+      const dt=v.rendered_at?v.rendered_at.substring(0,10):'';
+      const vidLink=v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:var(--muted);font-size:.6rem;margin-left:3px;">↗</a>`:'';
+      const btn=v.file_exists
+        ?`<button class="btn ${v.uploaded?'btn-r':'btn-g'}" style="font-size:.65rem;padding:2px 8px;" onclick="ytUploadKdrama('${v.theme_id}','${v.lang}','${v.fmt}',this)">${v.uploaded?'재업로드':'업로드'}</button>`
+        :v.uploaded
+          ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
+          :`<span style="font-size:.65rem;color:var(--red);">파일없음</span>`;
+      return `<tr>
+        <td>${flag} ${v.lang}</td>
+        <td style="font-weight:700;">${v.theme_id}${vidLink}</td>
+        <td>${fmtLabel}</td>
+        <td>${fileIcon}</td>
+        <td>${statusBadge}</td>
+        <td style="color:var(--muted);font-size:.72rem;">${dt}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.views,v.stats_error)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.likes,v.stats_error)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.comments,v.stats_error)}</td>
         <td>${btn}</td>
       </tr>`;
     }).join('');
@@ -5979,10 +8240,10 @@ function ytUploadFilter(){
       const statusBadge=v.uploaded?'<span class="badge badge-g" style="font-size:.65rem;">완료</span>':'<span class="badge badge-m" style="font-size:.65rem;">대기</span>';
       const dt=v.rendered_at?v.rendered_at.substring(0,10):'';
       const vidLink=v.video_id?`<a href="https://youtube.com/watch?v=${v.video_id}" target="_blank" style="color:var(--muted);font-size:.6rem;margin-left:3px;">↗</a>`:'';
-      const btn=v.uploaded
-        ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
-        :v.file_exists
-          ?`<button class="btn btn-g" style="font-size:.65rem;padding:2px 8px;" onclick="ytUploadConv('${v.theme_id}','${v.lang}','${v.fmt}',this)">업로드</button>`
+      const btn=v.file_exists
+        ?`<button class="btn ${v.uploaded?'btn-r':'btn-g'}" style="font-size:.65rem;padding:2px 8px;" onclick="ytUploadConv('${v.theme_id}','${v.lang}','${v.fmt}',this)">${v.uploaded?'재업로드':'업로드'}</button>`
+        :v.uploaded
+          ?`<span style="font-size:.65rem;color:var(--muted);">업로드됨</span>`
           :`<span style="font-size:.65rem;color:var(--red);">파일없음</span>`;
       return `<tr>
         <td>${flag} ${v.lang}</td>
@@ -5991,9 +8252,9 @@ function ytUploadFilter(){
         <td>${fileIcon}</td>
         <td>${statusBadge}</td>
         <td style="color:var(--muted);font-size:.72rem;">${dt}</td>
-        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.views)}</td>
-        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.likes)}</td>
-        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.comments)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.views,v.stats_error)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.likes,v.stats_error)}</td>
+        <td style="text-align:right;font-size:.75rem;">${_fmtN(v.comments,v.stats_error)}</td>
         <td>${btn}</td>
       </tr>`;
     }).join('');
@@ -6020,6 +8281,51 @@ async function ytUploadConv(themeId, lang, fmt, btnEl){
   btnEl.disabled=true; btnEl.textContent='업로드 중...';
   try{
     const r=await fetch('/api/conv/upload',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({theme_id:themeId,lang,fmt})});
+    const d=await r.json();
+    if(!r.ok){btnEl.textContent='실패';btnEl.style.color='var(--red)';alert('오류: '+(d.error||''));return;}
+    btnEl.textContent='완료';btnEl.style.color='var(--green)';
+    setTimeout(()=>loadYtUpload(),1500);
+  }catch(e){btnEl.textContent='오류';alert('실패: '+e);}
+}
+
+async function reconcileUploads(){
+  if(!confirm('YouTube 채널(5개 언어)을 스캔해 업로드 기록을 복구합니다.\n(읽기 전용, quota ~200 units)\n\n계속할까요?')) return;
+  try{
+    const r = await fetch('/api/youtube/reconcile',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    if(!r.ok||!d.ok){ alert('실패: '+(d.error||'')); return; }
+    let lines = [`✅ 복구 완료`,
+      `단어: +${d.added_word}`,
+      `회화: +${d.added_conv}`,
+      `K드라마: +${d.added_kdrama}`,
+      `미매칭: ${d.unknown_total}`, ''];
+    for(const L of Object.keys(d.per_lang||{})){
+      const s = d.per_lang[L];
+      if(s.error){ lines.push(`${L}: ❌ ${s.error}`); continue; }
+      lines.push(`${L}: 스캔 ${s.scanned} / 단어 +${s.word} / 회화 +${s.conv} / K +${s.kdrama} / 이미기록 ${s.already} / 미매칭 ${s.unknown}`);
+    }
+    if(d.unknown_samples && Object.keys(d.unknown_samples).length){
+      lines.push('', '⚠ 매칭 실패 샘플:');
+      for(const L of Object.keys(d.unknown_samples)){
+        for(const u of d.unknown_samples[L].slice(0,3)){
+          lines.push(`  [${L}/${u.fmt}/${u.dur}s] ${u.title}`);
+        }
+      }
+    }
+    if(d.errors?.length) lines.push('', '⚠ 오류: '+d.errors.join(' | '));
+    alert(lines.join('\n'));
+    loadYtUpload();
+  }catch(e){ alert('실패: '+e); }
+}
+
+async function ytUploadKdrama(themeId, lang, fmt, btnEl){
+  if(!confirm(`[${lang}] K-드라마 ${themeId} (${fmt==='reels'?'쇼츠':'YouTube'}) 업로드할까요?`)) return;
+  btnEl.disabled=true; btnEl.textContent='업로드 중...';
+  try{
+    const r=await fetch('/api/kdrama/upload',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({theme_id:themeId,lang,fmt})});
     const d=await r.json();
@@ -6478,15 +8784,40 @@ async function saveBatchConfig(patch){
     body:JSON.stringify(patch)});
 }
 
+async function saveEpStart(){
+  const g=id=>{ const e=document.getElementById(id); return e?parseInt(e.value)||1:1; };
+  await saveBatchConfig({
+    ep_word_yt_start:    g('wc-ep-word-yt'),
+    ep_word_reels_start: g('wc-ep-word-reels'),
+    ep_conv_yt_start:    g('wc-ep-conv-yt'),
+    ep_conv_reels_start: g('wc-ep-conv-reels'),
+  });
+  _updateScheduleStatus();
+}
+
+// 기준일·주기·시작화수로 오늘의 화수 계산
+function calcTodayEp(startDate, startEp, freqKey, today){
+  if(!startDate||!startEp) return null;
+  const _int={'daily':1,'every2days':2,'every3days':3,'2perday':1,'3perday':1};
+  const _cnt={'daily':1,'every2days':1,'every3days':1,'2perday':2,'3perday':3};
+  const interval=_int[freqKey]||1, perDay=_cnt[freqKey]||1;
+  const d0=new Date(startDate), dt=new Date(today||new Date().toISOString().slice(0,10));
+  const diff=Math.round((dt-d0)/(1000*86400));
+  if(diff<0) return startEp;
+  const episodes=Math.floor(diff/interval)*perDay;
+  return startEp+episodes;
+}
+
 // ── 자동 설명 텍스트 업데이트 ─────────────────────────────────
 const _FREQ_LABEL={'daily':'매일','every2days':'이틀에 1개','every3days':'삼일에 1개',
                    '2perday':'하루 2개','3perday':'하루 3개'};
 function _updateAutoDesc(s){
-  const el=document.getElementById('daily-auto-desc');
-  if(!el)return;
   const wf=_FREQ_LABEL[s.word_freq||'daily']||'매일';
   const pf=_FREQ_LABEL[s.phrase_freq||'every2days']||'이틀에 1개';
-  el.textContent=`단어 ${wf} · 회화 ${pf} · 5개 언어 · 현지 아침 7:30`;
+  const txt=`단어 ${wf} · 회화 ${pf} · 5개 언어 · 현지 아침 7:30`;
+  ['daily-auto-desc','wc-auto-desc'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.textContent=txt;
+  });
 }
 
 function _updateScheduleStatus(s){
@@ -6523,6 +8854,19 @@ function _updateScheduleStatus(s){
     descEl.innerHTML=`단어: <b style="color:var(--blue);">${_FREQ_LABEL[wf]||wf}</b> ${wc>1?wc+'개':'1개'}/일 — 다음 실행 <b>${wNext}</b><br>`+
       `회화: <b style="color:var(--green);">${_FREQ_LABEL[pf]||pf}</b> — 다음 실행 <b>${pNext}</b>`;
   }
+  // 오늘 화수 표시
+  const getEpVal=(domId, stateKey)=>{
+    const e=document.getElementById(domId); const fromDom=e?parseInt(e.value):NaN;
+    return isNaN(fromDom)?((s&&s[stateKey])||1):fromDom;
+  };
+  const setEpLabel=(labelId, ep)=>{
+    const el=document.getElementById(labelId);
+    if(el) el.textContent = (ep!=null&&startDate) ? `→ 오늘 #${String(ep).padStart(3,'0')}` : '';
+  };
+  setEpLabel('wc-ep-word-yt-today',    calcTodayEp(startDate, getEpVal('wc-ep-word-yt','ep_word_yt_start'),       wf, today));
+  setEpLabel('wc-ep-word-reels-today', calcTodayEp(startDate, getEpVal('wc-ep-word-reels','ep_word_reels_start'), wf, today));
+  setEpLabel('wc-ep-conv-yt-today',    calcTodayEp(startDate, getEpVal('wc-ep-conv-yt','ep_conv_yt_start'),       pf, today));
+  setEpLabel('wc-ep-conv-reels-today', calcTodayEp(startDate, getEpVal('wc-ep-conv-reels','ep_conv_reels_start'), pf, today));
 }
 
 function _nextRunDate(startDate, interval, today){
@@ -6544,15 +8888,17 @@ async function loadDailyStatus(){
   const s=d.state||{};
   const w=d.word;
 
-  // 토글 상태
-  const tog=document.getElementById('daily-auto-toggle');
-  const slider=document.getElementById('daily-toggle-slider');
-  const knob=document.getElementById('daily-toggle-knob');
-  if(tog){
-    tog.checked=!!s.auto_upload;
-    slider.style.background=s.auto_upload?'var(--green)':'#444';
-    knob.style.left=s.auto_upload?'27px':'3px';
-  }
+  // 토글 상태 (daily- 및 wc- 두 패널 동기화)
+  const _syncToggle=(togId,sliderId,knobId)=>{
+    const tog=document.getElementById(togId);
+    const slider=document.getElementById(sliderId);
+    const knob=document.getElementById(knobId);
+    if(tog){ tog.checked=!!s.auto_upload; }
+    if(slider) slider.style.background=s.auto_upload?'var(--green)':'#444';
+    if(knob) knob.style.left=s.auto_upload?'27px':'3px';
+  };
+  _syncToggle('daily-auto-toggle','daily-toggle-slider','daily-toggle-knob');
+  _syncToggle('wc-auto-toggle','wc-toggle-slider','wc-toggle-knob');
 
   // 오늘의 단어
   document.getElementById('daily-word-ko').textContent=w?w.word:'—';
@@ -6630,6 +8976,18 @@ async function loadDailyStatus(){
     if(wb&&s.word_prebuffer_h) wb.value=s.word_prebuffer_h;
     const sd=document.getElementById('auto-start-date');
     if(sd&&s.auto_start_date) sd.value=s.auto_start_date;
+    // wc- 패널 기준일 동기화
+    const wsd=document.getElementById('wc-start-date');
+    if(wsd&&s.auto_start_date) wsd.value=s.auto_start_date;
+    // 기준 화수 동기화
+    const setEpInp=(id,val)=>{const e=document.getElementById(id);if(e&&val)e.value=val;};
+    setEpInp('wc-ep-word-yt',    s.ep_word_yt_start);
+    setEpInp('wc-ep-word-reels', s.ep_word_reels_start);
+    setEpInp('wc-ep-conv-yt',    s.ep_conv_yt_start);
+    setEpInp('wc-ep-conv-reels', s.ep_conv_reels_start);
+    // wc- pill 동기화
+    _activatePill('wc-word-freq-group',   s.word_freq||'daily');
+    _activatePill('wc-phrase-freq-group', s.phrase_freq||'every2days');
     _updateScheduleStatus(s);
   }
 
@@ -6884,6 +9242,15 @@ let _batchChecked=new Set();
 let _batchTarget='desktop', _customTarget='desktop';
 let _rpContent=new Set(['word','conv']); // 콘텐츠 선택: word, conv
 let _rpFmt=new Set(['youtube','reels']); // 포맷 선택: youtube, reels
+let _thumbStyle='portrait'; // 썸네일 스타일: portrait | landscape
+
+function setThumbStyle(style){
+  _thumbStyle=style;
+  const p=document.getElementById('thumb-style-portrait');
+  const l=document.getElementById('thumb-style-landscape');
+  if(p){p.className='btn '+(style==='portrait'?'btn-g':'btn-m');}
+  if(l){l.className='btn '+(style==='landscape'?'btn-p':'btn-m');}
+}
 
 let _livePollTimer=null;
 
@@ -7046,6 +9413,7 @@ async function loadBatchData(){
 
 // ── 오늘의 회화 ───────────────────────────────────────────────
 let _todayConvId = null;
+let _todayKdramaId = null;
 let _convThemesAll = [];
 const CONV_LANGS = ['EN','JP','CN','VN','ES'];
 
@@ -7099,8 +9467,10 @@ async function renderConvOnly(){
   btn.disabled=true;btn.textContent='⏳ 큐잉 중...';
   try{
     for(const lang of CONV_LANGS){
-      await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({theme_id:String(_todayConvId),lang,target:_batchTarget||'nas'})});
+      for(const fmt of ['youtube','reels']){
+        await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({theme_id:String(_todayConvId),lang,fmt,target:_batchTarget||'nas'})});
+      }
     }
     loadJobQueue();navRenderTab(null,'live');
   }catch(e){alert('실패: '+e);}
@@ -7120,16 +9490,27 @@ async function renderBatchBoth(){
       const body={items:pending.map(b=>({word_id:b.word_id,exam:b.exam,lang:b.lang,level:b.level,formats:['youtube','reels']})),target:_batchTarget||'nas'};
       await fetch('/api/render/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     }
-    // 회화 렌더링
+    // 회화 렌더링 (youtube + reels)
     if(_todayConvId){
       for(const lang of CONV_LANGS){
-        await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({theme_id:String(_todayConvId),lang,target:_batchTarget||'nas'})});
+        for(const fmt of ['youtube','reels']){
+          await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({theme_id:String(_todayConvId),lang,fmt,target:_batchTarget||'nas'})});
+        }
+      }
+    }
+    // K-드라마 렌더링 (youtube + reels)
+    if(_todayKdramaId){
+      for(const lang of CONV_LANGS){
+        for(const fmt of ['youtube','reels']){
+          await fetch('/api/kdrama/render',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({theme_id:String(_todayKdramaId),lang,fmt,target:_batchTarget||'nas'})});
+        }
       }
     }
     loadJobQueue();navRenderTab(null,'live');
   }catch(e){alert('실패: '+e);}
-  finally{btn.disabled=false;btn.textContent='▶ 단어 + 회화 모두 렌더링';}
+  finally{btn.disabled=false;btn.textContent='▶ 단어+회화+K드라마 모두 렌더링';}
 }
 
 const _STATUS_HTML={
@@ -7319,7 +9700,7 @@ async function renderBatchAll(){
           return {word_id:b.word.id,exam:b.exam,lang:b.lang,level:b.level,formats:fmts.length?fmts:fmtList};
         });
         const r=await fetch('/api/render/batch',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({items,target:_batchTarget,auto_upload:autoUpload})});
+          body:JSON.stringify({items,target:_batchTarget,auto_upload:autoUpload,thumb_style:_thumbStyle})});
         const d=await r.json();
         if(!r.ok){alert('단어 렌더 오류: '+(d.error||''));return;}
         started=true;
@@ -7401,11 +9782,20 @@ async function renderSingle(wordId,exam,lang,btnEl){
 }
 
 // ── 커스텀 렌더링 ─────────────────────────────────────────
+// 활성 패널 감지: 영상 작업 센터 커스텀 탭이면 wc-rc-* 사용, 아니면 rc-* 사용
+function _activeRcPrefix(){
+  const wcPanel=document.getElementById('wt-panel-custom');
+  return (wcPanel&&wcPanel.style.display!=='none')?'wc-rc-':'rc-';
+}
 function getSelectedLangs(){
-  return [...document.querySelectorAll('.rc-lang-btn.active')].map(b=>b.dataset.lang);
+  const pfx=_activeRcPrefix();
+  const container=document.getElementById(pfx+'lang-btns')||document;
+  return [...container.querySelectorAll('.rc-lang-btn.active')].map(b=>b.dataset.lang);
 }
 function getSelectedFmts(){
-  return [...document.querySelectorAll('.rc-fmt-btn.active')].map(b=>b.dataset.fmt);
+  const pfx=_activeRcPrefix();
+  const container=document.getElementById(pfx+'lang-btns')||document;
+  return [...container.querySelectorAll('.rc-fmt-btn.active')].map(b=>b.dataset.fmt);
 }
 function toggleRowFmt(btn){
   const row=btn.closest('.rc-target-row');
@@ -7502,7 +9892,8 @@ function parseIds(str){
 }
 
 function getTargetRows(){
-  return [...document.querySelectorAll('#rc-targets .rc-target-row')].map(row=>{
+  const pfx=_activeRcPrefix();
+  return [...document.querySelectorAll(`#${pfx}targets .rc-target-row`)].map(row=>{
     const exam=row.querySelector('.rc-exam').value;
     const level=row.querySelector('.rc-level').value;
     const ids_str=(row.querySelector('.rc-ids')||{value:''}).value.trim();
@@ -7530,7 +9921,8 @@ function addTargetRow(){
 }
 
 function removeTargetRow(el){
-  const rows=document.querySelectorAll('#rc-targets .rc-target-row');
+  const pfxR=_activeRcPrefix();
+  const rows=document.querySelectorAll(`#${pfxR}targets .rc-target-row`);
   if(rows.length<=1)return;
   el.closest('.rc-target-row').remove();
   updateCustomPreview();
@@ -7561,10 +9953,11 @@ function getConvIds(){
 }
 
 async function _doCustomPreview(){
+  const pfx=_activeRcPrefix();
   const targets=getTargetRows();
   const langs=getSelectedLangs();
-  const el=document.getElementById('rc-preview');
-  const remEl=document.getElementById('rc-remaining');
+  const el=document.getElementById(pfx+'preview')||document.getElementById('rc-preview');
+  const remEl=document.getElementById(pfx+'remaining')||document.getElementById('rc-remaining');
 
   // 회화 / 단어 분리
   const convTargets=targets.filter(t=>t.is_conv);
@@ -7590,8 +9983,8 @@ async function _doCustomPreview(){
     el.innerHTML=rows||'<div style="color:#484f58;text-align:center;padding:16px;font-size:.78rem;">화수 범위를 입력하세요 (예: 3~10)</div>';
     const totalFmts=convTargets.reduce((s,t)=>s+t.fmts.length,0)/Math.max(convTargets.length,1);
     const total=Math.round(totalEp*langs.length*totalFmts);
-    document.getElementById('rc-start').disabled=total===0||totalEp===0;
-    document.getElementById('rc-start').textContent=`▶ 렌더링 시작 (${totalEp}화 × ${langs.length}개 언어 = ${total}개 · ${_customTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;
+    const startEl=document.getElementById(pfx+'start')||document.getElementById('rc-start');
+    if(startEl){startEl.disabled=total===0||totalEp===0;startEl.textContent=`▶ 렌더링 시작 (${totalEp}화 × ${langs.length}개 언어 = ${total}개 · ${_customTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;}
     updateCustomTimeEst();return;
   }
 
@@ -7605,12 +9998,13 @@ async function _doCustomPreview(){
     const r=await fetch(url);
     const d=await r.json();
     if(remEl) remEl.textContent=`남은 단어: ${d.remaining||0}개`;
+    const startEl2=document.getElementById(pfx+'start')||document.getElementById('rc-start');
     if(!d.words||!d.words.length){
       el.innerHTML='<div style="color:#484f58;text-align:center;padding:16px;font-size:.78rem;">렌더링할 단어가 없습니다</div>';
-      document.getElementById('rc-start').disabled=true;
+      if(startEl2) startEl2.disabled=true;
       return;
     }
-    document.getElementById('rc-start').disabled=false;
+    if(startEl2) startEl2.disabled=false;
     const lvC={'1':'#3fb950','2':'#58a6ff','3':'#d29922','4':'#f78166','5':'#bc8cff','6':'#f87171'};
     const langBadges=langs.map(l=>`<span style="font-size:.58rem;background:var(--blue)22;color:var(--blue);border-radius:4px;padding:1px 5px;margin-left:2px;">${l}</span>`).join('');
     el.innerHTML=d.words.map((w,i)=>{
@@ -7630,7 +10024,8 @@ async function _doCustomPreview(){
     const fmtLabel=allFmts.has('youtube')&&allFmts.has('reels')?'본편+쇼츠':allFmts.has('youtube')?'본편':'쇼츠';
     const totalFmtCnt=wordTargets.reduce((s,t)=>s+t.fmts.length,0)/Math.max(wordTargets.length,1);
     const total=Math.round(totalWords*langs.length*totalFmtCnt);
-    document.getElementById('rc-start').textContent=`▶ 렌더링 시작 (${d.words.length}개 × ${wordTargets.length}개 시험 × ${langs.length}개 언어 × ${fmtLabel} = ${total}개 · ${_customTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;
+    const startEl3=document.getElementById(pfx+'start')||document.getElementById('rc-start');
+    if(startEl3) startEl3.textContent=`▶ 렌더링 시작 (${d.words.length}개 × ${wordTargets.length}개 시험 × ${langs.length}개 언어 × ${fmtLabel} = ${total}개 · ${_customTarget==='desktop'?'💻 GPU':'🖥 NAS'})`;
     updateCustomTimeEst();
   }catch(e){}
 }
@@ -7646,7 +10041,8 @@ function updateCustomTimeEst(){
   },0);
   const fmtCnt=targets.length?Math.round(targets.reduce((s,t)=>s+(t.fmts?t.fmts.length:1),0)/targets.length):1;
   const total=totalWords*langs.length*fmtCnt*perMin;
-  const el=document.getElementById('rc-time-est');
+  const pfxT=_activeRcPrefix();
+  const el=document.getElementById(pfxT+'time-est')||document.getElementById('rc-time-est');
   if(el) el.textContent=`예상 소요: ~${total}분 (${totalWords}개 × ${langs.length}개 언어 × ${fmtCnt}개 포맷 × ${perMin}분)`;
 }
 
@@ -7682,13 +10078,17 @@ async function startCustomRender(){
   }
   const msg=`${descParts.join('\n')}\n위치: ${renderTarget==='desktop'?'💻 GPU':'🖥 NAS CPU'}\n\n시작할까요?`;
   if(!confirm(msg)) return;
-  const btn=document.getElementById('rc-start');
-  const cancelBtn=document.getElementById('rc-cancel');
+  const pfxS=_activeRcPrefix();
+  const btn=document.getElementById(pfxS+'start')||document.getElementById('rc-start');
+  const cancelBtn=document.getElementById(pfxS+'cancel')||document.getElementById('rc-cancel');
   btn.disabled=true;btn.textContent='⏳ 요청 중...';
   try{
     // 단어 렌더링 (per-row formats 포함)
+    const pfxCheck=_activeRcPrefix();
+    const thumbOnlyEl=document.getElementById(pfxCheck+'thumb-only')||document.getElementById('rc-thumb-only');
+    const thumbOnly=thumbOnlyEl?thumbOnlyEl.checked:false;
     if(wordTargets.length){
-      const body={targets:wordTargets,langs,target:renderTarget};
+      const body={targets:wordTargets,langs,target:renderTarget,thumb_only:thumbOnly};
       const r=await fetch('/api/render/custom',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify(body)});
       const d=await r.json();
@@ -7796,7 +10196,10 @@ loadOverview();
   if(hint) hint.textContent=`(${min}~${max})`;
 })();
 setInterval(loadOverview,5000);
-setInterval(()=>{if(_currentView==='render'){loadJobQueue();if(_rpTab==='batch')loadBatchData();loadLiveStatus();}},3000);
+setInterval(()=>{
+  if(_currentView==='render'){loadJobQueue();if(_rpTab==='batch')loadBatchData();loadLiveStatus();}
+  if(_currentView==='work'){loadJobQueue();loadLiveStatus();}
+},3000);
 setInterval(()=>{if(_currentView==='conv')pollConvProgress();},3000);
 
 // ── 기본 회화 ────────────────────────────────────────────────
@@ -7843,10 +10246,20 @@ function renderConvThemes(){
     for(const lang of LANGS){
       if(filterLang && lang !== filterLang) continue;
       const ls = t.langs[lang] || {};
-      if(filterStatus==='rendered'  && !ls.rendered) continue;
-      if(filterStatus==='uploaded'  && !ls.uploaded) continue;
-      if(filterStatus==='pending'   &&  ls.rendered) continue;
+      if(filterStatus==='rendered'       && !ls.rendered)       continue;
+      if(filterStatus==='uploaded'       && !ls.uploaded)       continue;
+      if(filterStatus==='reels_rendered' && !ls.reels_rendered) continue;
+      if(filterStatus==='reels_uploaded' && !ls.reels_uploaded) continue;
+      if(filterStatus==='pending'        && (ls.rendered||ls.reels_rendered)) continue;
       const vid = ls.video_id;
+      const ytSt = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.62rem;">
+        <span class="badge ${ls.rendered?'badge-g':'badge-m'}" title="렌더됨">${ls.rendered?'렌더✓':'렌더○'}</span>
+        <span class="badge ${ls.uploaded?'badge-done':'badge-m'}" title="업로드됨">${ls.uploaded?'업로드✓':'업로드○'}</span>
+      </div>`;
+      const rlSt = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.62rem;">
+        <span class="badge ${ls.reels_rendered?'badge-g':'badge-m'}" title="렌더됨">${ls.reels_rendered?'렌더✓':'렌더○'}</span>
+        <span class="badge ${ls.reels_uploaded?'badge-done':'badge-m'}" title="업로드됨">${ls.reels_uploaded?'업로드✓':'업로드○'}</span>
+      </div>`;
       rows.push(`<tr>
         <td style="color:var(--muted2);font-size:.7rem;">${t.id}</td>
         <td>
@@ -7855,29 +10268,18 @@ function renderConvThemes(){
         </td>
         <td style="text-align:center;color:var(--muted);">${t.phrase_count}</td>
         <td style="text-align:center;">${LANG_FLAGS[lang]} <span style="font-size:.72rem;color:var(--muted);">${lang}</span></td>
-        <td style="text-align:center;">
-          <span class="badge ${ls.rendered?'badge-g':'badge-m'}" style="font-size:.65rem;">${ls.rendered?'✓':'○'}</span>
-        </td>
-        <td style="text-align:center;">
-          <span class="badge ${ls.uploaded?'badge-g':'badge-m'}" style="font-size:.65rem;">${ls.uploaded?'✓':'○'}</span>
-        </td>
+        <td style="text-align:center;">${ytSt}</td>
+        <td style="text-align:center;">${rlSt}</td>
         <td style="text-align:center;">
           ${vid?`<a href="https://youtube.com/watch?v=${vid}" target="_blank" style="color:var(--red);font-size:.72rem;">▶</a>`:'–'}
         </td>
         <td style="text-align:right;padding-right:8px;">
-          <div style="display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap;">
-            <button class="btn btn-a" onclick="convRenderLang('${t.id}','${lang}')" style="font-size:.68rem;padding:3px 8px;">
-              🎬 ${ls.rendered?'재렌더':'렌더링'}
-            </button>
-            <button class="btn btn-g" onclick="convUploadLang('${t.id}','${lang}')" style="font-size:.68rem;padding:3px 8px;" ${!ls.rendered?'disabled':''}>
-              ⬆ 업로드
-            </button>
-            <button class="btn btn-p" onclick="convRenderLang('${t.id}','${lang}')" style="font-size:.68rem;padding:3px 8px;">
-              ↺ 재생성
-            </button>
-            <button class="btn" onclick="convDelete('${t.id}','${lang}')" style="font-size:.68rem;padding:3px 8px;background:#2d1515;color:#f87171;border:1px solid #7f1d1d;" ${!ls.rendered?'disabled':''}>
-              🗑 삭제
-            </button>
+          <div style="display:flex;gap:3px;justify-content:flex-end;flex-wrap:wrap;">
+            <button class="btn btn-a" onclick="convRenderLang('${t.id}','${lang}','youtube')" style="font-size:.62rem;padding:2px 7px;" title="YouTube 렌더링">▶ ${ls.rendered?'재렌더':'렌더'}</button>
+            <button class="btn btn-g" onclick="convUploadLang('${t.id}','${lang}','youtube')" style="font-size:.62rem;padding:2px 7px;" ${!ls.rendered?'disabled':''} title="YouTube 업로드">▶ 업로드</button>
+            <button class="btn" onclick="convRenderLang('${t.id}','${lang}','reels')" style="font-size:.62rem;padding:2px 7px;background:#4a1942;color:#f0abfc;border:1px solid #6b21a8;" title="쇼츠 렌더링">📱 ${ls.reels_rendered?'재렌더':'렌더'}</button>
+            <button class="btn" onclick="convUploadLang('${t.id}','${lang}','reels')" style="font-size:.62rem;padding:2px 7px;background:#1a2d3a;color:#67e8f9;border:1px solid #0e7490;" ${!ls.reels_rendered?'disabled':''} title="쇼츠 업로드">📱 업로드</button>
+            <button class="btn" onclick="convDelete('${t.id}','${lang}')" style="font-size:.62rem;padding:2px 7px;background:#2d1515;color:#f87171;border:1px solid #7f1d1d;" ${(!ls.rendered&&!ls.reels_rendered)?'disabled':''} title="삭제">🗑</button>
           </div>
         </td>
       </tr>`);
@@ -7905,11 +10307,12 @@ function convSetTarget(t){
 async function convRender(themeId){
   await convRenderLang(themeId, _convLang);
 }
-async function convRenderLang(themeId, lang){
-  if(!confirm(`[${lang}] "${themeId}" 테마를 렌더링할까요? (${_convTarget==='desktop'?'💻 GPU':'🖥 NAS'})`)) return;
+async function convRenderLang(themeId, lang, fmt='youtube'){
+  const label = fmt==='reels'?'📱 쇼츠':'▶ YouTube';
+  if(!confirm(`[${lang}] "${themeId}" ${label} 렌더링할까요? (${_convTarget==='desktop'?'💻 GPU':'🖥 NAS'})`)) return;
   try{
     const r = await fetch('/api/conv/render',{method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({theme_id:themeId, lang:lang, target:_convTarget})});
+      body: JSON.stringify({theme_id:themeId, lang:lang, fmt:fmt, target:_convTarget})});
     const d = await r.json();
     if(!r.ok){ alert('오류: '+(d.error||'')); return; }
     loadJobQueue();
@@ -7919,11 +10322,12 @@ async function convRenderLang(themeId, lang){
 async function convUpload(themeId){
   await convUploadLang(themeId, _convLang);
 }
-async function convUploadLang(themeId, lang){
-  if(!confirm(`[${lang}] "${themeId}" 영상을 YouTube에 업로드할까요?`)) return;
+async function convUploadLang(themeId, lang, fmt='youtube'){
+  const label = fmt==='reels'?'📱 쇼츠':'▶ YouTube';
+  if(!confirm(`[${lang}] "${themeId}" ${label} 업로드할까요?`)) return;
   try{
     const r = await fetch('/api/conv/upload',{method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({theme_id:themeId, lang:lang})});
+      body: JSON.stringify({theme_id:themeId, lang:lang, fmt:fmt})});
     const d = await r.json();
     if(!r.ok){ alert('오류: '+(d.error||'')); return; }
     alert(`업로드 완료!\nhttps://youtube.com/watch?v=${d.video_id}`);
@@ -7938,6 +10342,322 @@ async function convDelete(themeId, lang){
     const d = await r.json();
     if(!r.ok){ alert('오류: '+(d.error||'')); return; }
     loadConvThemes();
+  }catch(e){ alert('실패: '+e); }
+}
+
+// ── K-드라마 ─────────────────────────────────────────────
+let _kdramaThemes = [];
+let _kdTarget = 'nas';
+
+function kdSetTarget(t){
+  _kdTarget=t;
+  document.getElementById('kd-btn-nas').className='btn '+(t==='nas'?'btn-g':'btn-m');
+  document.getElementById('kd-btn-desktop').className='btn '+(t==='desktop'?'btn-p':'btn-m');
+}
+
+async function loadKdramaThemes(){
+  try{
+    const r = await fetch('/api/kdrama/themes');
+    const d = await r.json();
+    _kdramaThemes = d.themes || [];
+    renderKdramaThemes();
+  }catch(e){
+    document.getElementById('kd-empty').style.display='block';
+  }
+  // 일러스트 상태도 같이 로드
+  loadKdramaIllustStatus();
+}
+
+// ── K-드라마 일러스트 상태/생성 ────────────────────────────
+let _kdItems = [];
+
+async function loadKdramaIllustStatus(){
+  try{
+    const r = await fetch('/api/kdrama/illust/status');
+    const d = await r.json();
+    _kdItems = d.items||[];
+    const total = d.total||0, intro = d.intro_done||0;
+    const phrasesTotal = d.phrases_total||(total*10);
+    const phrasesDone = d.phrases_done||0;
+    const allDone = d.all_done||0;
+    const introPct = total ? Math.round(intro/total*100) : 0;
+    const phrasePct = phrasesTotal ? Math.round(phrasesDone/phrasesTotal*100) : 0;
+    const badge = document.getElementById('kd-illust-badge');
+    const doneTxt = document.getElementById('kd-illust-done-txt');
+    const bar  = document.getElementById('kd-illust-done-bar');
+    if(badge) badge.textContent = `완성 ${allDone}/${total}`;
+    if(doneTxt) doneTxt.textContent = `인트로 ${intro}/${total} (${introPct}%) · Phrase ${phrasesDone}/${phrasesTotal} (${phrasePct}%)`;
+    if(bar) bar.style.width = introPct+'%';
+    // 테마 카드 리스트 (회화 일러스트와 동일 패턴)
+    const list = document.getElementById('kd-illust-list');
+    if(list){
+      list.innerHTML = _kdItems.map(it=>{
+        const total11 = 11;
+        const done = (it.intro_done?1:0) + (it.phrases_done||0);
+        const pct = Math.round(done/total11*100);
+        const allDone = it.all_done;
+        const barCol = allDone ? 'var(--green)' : pct>50 ? 'var(--amber)' : 'var(--accent)';
+        const col = '#C77DFF';
+        return `<div style="background:var(--bg3);border-radius:10px;border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column;">
+          <div style="height:3px;background:${col};"></div>
+          <div style="padding:10px 12px;flex:1;">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:8px;">
+              <div style="min-width:0;flex:1;">
+                <span style="font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:${col};display:block;margin-bottom:3px;">${it.category||''}</span>
+                <div style="font-size:.85rem;font-weight:700;line-height:1.3;overflow-wrap:break-word;word-break:keep-all;">${it.situation||''}</div>
+              </div>
+              <span style="font-size:.6rem;background:var(--bg);border:1px solid var(--border);padding:2px 7px;border-radius:99px;white-space:nowrap;flex-shrink:0;color:var(--muted);font-weight:600;">ID ${it.id}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:.65rem;color:var(--muted);margin-bottom:4px;">
+              <span>일러스트</span>
+              <span style="font-weight:700;color:${allDone?'var(--green)':'var(--fg)'};">${done}<span style="color:var(--muted);font-weight:400;">/${total11}</span></span>
+            </div>
+            <div style="height:4px;background:var(--bg);border-radius:2px;margin-bottom:10px;overflow:hidden;">
+              <div style="height:100%;width:${pct}%;background:${barCol};border-radius:2px;transition:width .3s;"></div>
+            </div>
+            <div style="display:flex;gap:5px;">
+              <button class="btn btn-p" style="flex:1;font-size:.72rem;padding:5px 0;" onclick="kdStartIllustOne(${it.id})">
+                ${allDone?'↺ 재생성':'▶ 생성'}
+              </button>
+              <button class="btn btn-m" style="font-size:.72rem;padding:5px 10px;" onclick="kdBrowseTheme(${it.id})" title="패널 뷰어">&#9654;</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }catch(e){}
+}
+
+function kdBrowseTheme(tid){
+  const inp=document.getElementById('kd-browse-id');
+  if(inp) inp.value=tid;
+  loadKdramaIllustBrowse();
+  setTimeout(()=>{
+    const card=document.getElementById('kd-browse-card');
+    if(card) card.scrollIntoView({behavior:'smooth',block:'start'});
+  },120);
+}
+
+function kdBrowseNav(dir){
+  const inp=document.getElementById('kd-browse-id');
+  if(!inp) return;
+  const ids=_kdItems.map(i=>i.id);
+  const min=ids.length?Math.min(...ids):1;
+  const max=ids.length?Math.max(...ids):100;
+  inp.value=Math.min(max,Math.max(min,(+inp.value||1)+dir));
+  loadKdramaIllustBrowse();
+}
+
+async function kdStartIllustOne(tid){
+  if(!confirm(`테마 #${tid} 일러스트 11장(인트로+Phrase 10) 생성/재생성?`)) return;
+  try{
+    const r=await fetch('/api/kdrama/illust/start',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({theme_id:tid, overwrite:true})});
+    const d=await r.json();
+    if(!r.ok){ alert('오류: '+(d.error||'')); return; }
+    alert(`큐에 추가됨 (job ${d.job_id})`);
+    loadJobQueue();
+  }catch(e){ alert('실패: '+e); }
+}
+
+async function loadKdramaIllustBrowse(){
+  const id=+(document.getElementById('kd-browse-id')||{}).value||1;
+  const r=await fetch('/api/kdrama/illust/browse/'+id);
+  const grid=document.getElementById('kd-browse-grid');
+  const infoBar=document.getElementById('kd-browse-info-bar');
+  if(!grid) return;
+  if(!r.ok){
+    if(infoBar) infoBar.style.display='none';
+    grid.innerHTML=`<div style="grid-column:1/-1;text-align:center;padding:32px;color:var(--muted);font-size:.8rem;">테마를 찾을 수 없습니다.</div>`;
+    return;
+  }
+  const d=await r.json();
+  const col='#C77DFF';
+  if(infoBar){
+    infoBar.style.display='block';
+    document.getElementById('kd-browse-cat-chip').textContent=d.category||'';
+    document.getElementById('kd-browse-cat-chip').style.background=col;
+    document.getElementById('kd-browse-sit-ko').textContent=d.situation||'';
+    document.getElementById('kd-browse-sit-en').textContent=d.situation_en||'';
+    const existCount=(d.items||[]).filter(i=>i.exists).length;
+    document.getElementById('kd-browse-count').textContent=`${existCount} / ${(d.items||[]).length} 패널`;
+  }
+  const ts=Date.now();
+  grid.innerHTML=(d.items||[]).map((it,i)=>{
+    const img=it.exists
+      ?`<img src="${it.url}?t=${ts}" loading="lazy"
+           style="width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;cursor:pointer;display:block;"
+           onclick="window.open('${it.url}?t=${ts}','_blank')">`
+      :`<div style="width:100%;aspect-ratio:1/1;background:var(--bg);border-radius:8px;
+               display:flex;flex-direction:column;align-items:center;justify-content:center;
+               gap:6px;color:var(--muted);">
+          <span style="font-size:1.6rem;">🎬</span>
+          <span style="font-size:.65rem;">미생성</span>
+        </div>`;
+    const labelKo = it.ko ? `<div style="font-size:.7rem;font-weight:600;line-height:1.35;margin-top:5px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;" title="${(it.ko||'').replace(/"/g,'&quot;')}">${it.ko}</div>` : '';
+    const labelEn = it.en ? `<div style="font-size:.6rem;color:var(--muted);margin-top:1px;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;">${it.en}</div>` : '';
+    const delBtn = it.exists
+      ? `<button class="btn" style="font-size:.6rem;padding:2px 6px;background:#2d1515;color:#f87171;border:1px solid #7f1d1d;" onclick="kdDeletePanel(${d.id},'${it.key}')" title="이 패널 삭제">🗑</button>`
+      : '';
+    return `<div style="background:var(--bg3);border-radius:10px;border:1px solid var(--border);padding:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:4px;">
+        <span style="font-size:.62rem;font-weight:700;color:${it.exists?'var(--green)':'var(--muted)'};">${it.label||it.key}</span>
+        <div style="display:flex;gap:3px;">
+          <button class="btn btn-m" style="font-size:.6rem;padding:2px 6px;" onclick="kdRegenPanel(${d.id},'${it.key}')" title="이 패널만 재생성">↺</button>
+          ${delBtn}
+        </div>
+      </div>
+      ${img}
+      ${labelKo}
+      ${labelEn}
+    </div>`;
+  }).join('');
+}
+
+async function kdDeletePanel(tid, key){
+  if(!confirm(`테마 #${tid} 의 ${key} 패널 이미지를 삭제할까요?`)) return;
+  try{
+    const r=await fetch('/api/kdrama/illust/delete',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({theme_id:tid, key:key})});
+    const d=await r.json();
+    if(!r.ok){ alert('오류: '+(d.error||'')); return; }
+    // 뷰어와 상태 새로고침
+    loadKdramaIllustBrowse();
+    loadKdramaIllustStatus();
+  }catch(e){ alert('실패: '+e); }
+}
+
+async function kdRegenPanel(tid, key){
+  // intro / phrase_1~10 단일 재생성 — 백엔드는 전체 재생성 기반이므로 overwrite=true로 단일 idx 호출
+  if(!confirm(`테마 #${tid} 의 ${key} 패널 재생성?`)) return;
+  try{
+    const body={theme_id:tid, overwrite:true};
+    if(key==='intro') body.intro_only=true;
+    else if(key.startsWith('phrase_')) body.phrases_only=true;  // (백엔드가 단일 phrase 미지원이면 전체 phrase 재생성)
+    const r=await fetch('/api/kdrama/illust/start',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){ alert('오류: '+(d.error||'')); return; }
+    alert(`큐에 추가됨 (job ${d.job_id})`);
+    loadJobQueue();
+  }catch(e){ alert('실패: '+e); }
+}
+
+async function kdStartIllust(){
+  const s = document.getElementById('kd-illust-start').value;
+  const e = document.getElementById('kd-illust-end').value;
+  const overwrite = document.getElementById('kd-illust-overwrite').checked;
+  const mode = document.getElementById('kd-illust-mode').value || 'all';
+  let body = {overwrite};
+  if(s && e){ body.start = parseInt(s); body.end = parseInt(e); }
+  if(mode === 'intro_only')  body.intro_only = true;
+  if(mode === 'phrases_only') body.phrases_only = true;
+  const scope = (s&&e) ? `#${s}~${e}` : '전체 100개';
+  const modeLabel = {all:'인트로+Phrase 11장씩', intro_only:'인트로만 1장씩', phrases_only:'Phrase 10장씩'}[mode];
+  const perTheme = mode==='all'?11 : (mode==='intro_only'?1 : 10);
+  const themes = (s&&e) ? (parseInt(e)-parseInt(s)+1) : 100;
+  const cost = (themes * perTheme * 0.04).toFixed(2);
+  if(!confirm(`K-드라마 일러스트 ${scope} ${modeLabel} 생성.\n총 ${themes*perTheme}장, 예상 비용 ~$${cost}\n\n계속할까요?`)) return;
+  try{
+    const r = await fetch('/api/kdrama/illust/start',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const d = await r.json();
+    if(!r.ok){ alert('오류: '+(d.error||'')); return; }
+    alert(`큐에 추가됨 (job ${d.job_id})\n작업 센터에서 진행률 확인 가능합니다.`);
+    loadJobQueue();
+  }catch(e){ alert('실패: '+e); }
+}
+
+const KD_CAT_COLOR={
+  '연애/고백/이별':'#FF6B9D','감탄/반응':'#FFB347','드라마 클리셰':'#C77DFF',
+  '싸움/갈등/화해':'#FF6B6B','감정 표현':'#74B9FF','일상 구어체':'#55EFC4',
+  '직장/학교':'#636E72','가족/관계':'#FDCB6E','속어/유행어':'#00CEC9'
+};
+
+function renderKdramaThemes(){
+  const tbody = document.getElementById('kd-themes-tbody');
+  const empty = document.getElementById('kd-empty');
+  if(!tbody) return;
+  const LANGS = ['EN','JP','CN','VN','ES'];
+  const filterLang   = (document.getElementById('kd-filter-lang')  ||{}).value || '';
+  const filterStatus = (document.getElementById('kd-filter-status')||{}).value || '';
+  let rows = [];
+  for(const t of _kdramaThemes){
+    for(const lang of LANGS){
+      if(filterLang && lang !== filterLang) continue;
+      const ls = (t.langs && t.langs[lang]) || {};
+      if(filterStatus==='rendered'       && !ls.rendered)       continue;
+      if(filterStatus==='uploaded'       && !ls.uploaded)       continue;
+      if(filterStatus==='reels_rendered' && !ls.reels_rendered) continue;
+      if(filterStatus==='reels_uploaded' && !ls.reels_uploaded) continue;
+      if(filterStatus==='pending'        && (ls.rendered||ls.reels_rendered)) continue;
+      const vid = ls.video_id;
+      const titleKo = (t.title && (t.title.ko || t.title.KR)) || t.situation || t.id;
+      const catColor = KD_CAT_COLOR[t.category] || '#888';
+      const catChip = `<span style="font-size:.58rem;padding:1px 6px;border-radius:99px;background:${catColor}22;color:${catColor};border:1px solid ${catColor}55;white-space:nowrap;">${t.category||''}</span>`;
+      const ytSt = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.62rem;">
+        <span class="badge ${ls.rendered?'badge-g':'badge-m'}">${ls.rendered?'렌더✓':'렌더○'}</span>
+        <span class="badge ${ls.uploaded?'badge-done':'badge-m'}">${ls.uploaded?'업로드✓':'업로드○'}</span>
+      </div>`;
+      const rlSt = `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.62rem;">
+        <span class="badge ${ls.reels_rendered?'badge-g':'badge-m'}">${ls.reels_rendered?'렌더✓':'렌더○'}</span>
+        <span class="badge ${ls.reels_uploaded?'badge-done':'badge-m'}">${ls.reels_uploaded?'업로드✓':'업로드○'}</span>
+      </div>`;
+      rows.push(`<tr>
+        <td style="color:var(--muted2);font-size:.7rem;">${t.id}</td>
+        <td><span style="margin-right:4px;">${t.emoji||''}</span><span style="font-weight:600;">${titleKo}</span></td>
+        <td style="text-align:center;">${catChip}</td>
+        <td style="text-align:center;color:var(--muted);">${t.phrase_count||0}</td>
+        <td style="text-align:center;">${LANG_FLAGS[lang]} <span style="font-size:.72rem;color:var(--muted);">${lang}</span></td>
+        <td style="text-align:center;">${ytSt}</td>
+        <td style="text-align:center;">${rlSt}</td>
+        <td style="text-align:center;">${vid?`<a href="https://youtube.com/watch?v=${vid}" target="_blank" style="color:var(--red);font-size:.72rem;">▶</a>`:'–'}</td>
+        <td style="text-align:right;padding-right:8px;">
+          <div style="display:flex;gap:3px;justify-content:flex-end;flex-wrap:wrap;">
+            <button class="btn btn-a" onclick="kdRenderLang('${t.id}','${lang}','youtube')" style="font-size:.62rem;padding:2px 7px;">▶ ${ls.rendered?'재렌더':'렌더'}</button>
+            <button class="btn btn-g" onclick="kdUploadLang('${t.id}','${lang}','youtube')" style="font-size:.62rem;padding:2px 7px;" ${!ls.rendered?'disabled':''}>▶ 업로드</button>
+            <button class="btn" onclick="kdRenderLang('${t.id}','${lang}','reels')" style="font-size:.62rem;padding:2px 7px;background:#4a1942;color:#f0abfc;border:1px solid #6b21a8;">📱 ${ls.reels_rendered?'재렌더':'렌더'}</button>
+            <button class="btn" onclick="kdUploadLang('${t.id}','${lang}','reels')" style="font-size:.62rem;padding:2px 7px;background:#1a2d3a;color:#67e8f9;border:1px solid #0e7490;" ${!ls.reels_rendered?'disabled':''}>📱 업로드</button>
+          </div>
+        </td>
+      </tr>`);
+    }
+  }
+  if(!_kdramaThemes.length){
+    tbody.innerHTML='';
+    if(empty) empty.style.display='block';
+  } else {
+    if(empty) empty.style.display='none';
+    tbody.innerHTML = rows.join('');
+  }
+  const cnt = document.getElementById('kd-vcount');
+  if(cnt) cnt.textContent = rows.length+'개';
+}
+
+async function kdRenderLang(themeId, lang, fmt='youtube'){
+  const label = fmt==='reels'?'📱 쇼츠':'▶ YouTube';
+  if(!confirm(`[${lang}] K-드라마 #${themeId} ${label} 렌더링할까요? (${_kdTarget==='desktop'?'💻 GPU':'🖥 NAS'})`)) return;
+  try{
+    const r = await fetch('/api/kdrama/render',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({theme_id:themeId, lang:lang, fmt:fmt, target:_kdTarget})});
+    const d = await r.json();
+    if(!r.ok){ alert('오류: '+(d.error||'')); return; }
+    loadJobQueue();
+  }catch(e){ alert('실패: '+e); }
+}
+
+async function kdUploadLang(themeId, lang, fmt='youtube'){
+  const label = fmt==='reels'?'📱 쇼츠':'▶ YouTube';
+  if(!confirm(`[${lang}] K-드라마 #${themeId} ${label} 업로드할까요?`)) return;
+  try{
+    const r = await fetch('/api/kdrama/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({theme_id:themeId, lang:lang, fmt:fmt})});
+    const d = await r.json();
+    if(!r.ok){ alert('오류: '+(d.error||'')); return; }
+    alert(`업로드 완료!\nhttps://youtube.com/watch?v=${d.video_id}`);
+    loadKdramaThemes();
   }catch(e){ alert('실패: '+e); }
 }
 

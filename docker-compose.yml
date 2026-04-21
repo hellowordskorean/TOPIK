@@ -38,6 +38,9 @@ services:
       - ./make_video_phrases.py:/app/make_video_phrases.py
       - ./make_conversation.py:/app/make_conversation.py
       - ./generate_phrase_illustrations.py:/app/generate_phrase_illustrations.py
+      - ./generate_kdrama_illustrations.py:/app/generate_kdrama_illustrations.py
+      - ./update_video_descriptions.py:/app/update_video_descriptions.py
+      - ./fix_db_and_prompts.py:/app/fix_db_and_prompts.py
 
     # Synology는 메모리 제한 권장 (영상 렌더링 시 RAM 많이 사용)
     mem_limit: 3g
@@ -72,4 +75,7 @@ services:
       - ./make_conversation.py:/app/make_conversation.py
       - ./generate_illustrations.py:/app/generate_illustrations.py
       - ./generate_phrase_illustrations.py:/app/generate_phrase_illustrations.py
+      - ./generate_kdrama_illustrations.py:/app/generate_kdrama_illustrations.py
+      - ./update_video_descriptions.py:/app/update_video_descriptions.py
+      - ./fix_db_and_prompts.py:/app/fix_db_and_prompts.py
       - ./dashboard.py:/app/dashboard.py

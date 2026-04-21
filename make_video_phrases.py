@@ -46,12 +46,13 @@ except ImportError:
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-from elevenlabs.client import ElevenLabs
-from elevenlabs import VoiceSettings
+from google import genai as _genai
+from google.genai import types as _genai_types
 
 # ─── 경로 설정 ───────────────────────────────────────────────
 _SCRIPT_DIR    = Path(__file__).parent
-PHRASES_DB_PATH = Path("Z:/Hellowords/data/Conversation/phrases_db.json")
+_APP_BASE       = os.environ.get("APP_BASE", str(Path(__file__).parent.parent))
+PHRASES_DB_PATH = Path(_APP_BASE) / "data" / "Conversation" / "phrases_db.json"
 ILLUST_DIR     = _SCRIPT_DIR / "assets" / "phrase_illustrations"
 DEFAULT_OUTPUT = _SCRIPT_DIR / "output" / "phrases"
 LOGS_DIR       = _SCRIPT_DIR / "logs"
@@ -59,7 +60,7 @@ LOGS_DIR       = _SCRIPT_DIR / "logs"
 # ─── 영상 설정 ───────────────────────────────────────────────
 W        = 1080
 H        = 1920
-FPS      = 30
+FPS      = 24
 HEADER_H = 120    # 헤더 (상황명 + 컨텍스트 자막)
 PANEL_Y  = HEADER_H
 PANEL_H  = 1060   # 패널 영역 높이
@@ -138,8 +139,8 @@ _NVENC_AVAILABLE = None
 def has_nvenc() -> bool:
     try:
         r = subprocess.run(
-            ["ffmpeg", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
-             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            ["ffmpeg", "-f", "lavfi", "-i", "color=size=320x240:duration=0.1:rate=30,format=yuv420p",
+             "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "22", "-f", "null", "-"],
             capture_output=True, text=True, timeout=10,
         )
         return r.returncode == 0
@@ -157,49 +158,66 @@ def get_video_encoder() -> list:
         return ["-c:v", "libx264", "-preset", "fast", "-crf", "22"]
 
 
-# ─── ElevenLabs Voice ID 설정 ────────────────────────────────
+# ─── Gemini TTS Voice 설정 ───────────────────────────────────
 # .env 에서 재정의 가능:
-#   EL_VOICE_MY       = <내 대사 목소리 ID>     기본: Rachel (여성)
-#   EL_VOICE_RESP     = <상대방 목소리 ID>       기본: Antoni (남성)
-#   EL_VOICE_NARRATOR = <나레이터 목소리 ID>     기본: Callum (차분하고 친근한 남성)
-# ElevenLabs 대시보드 → Voice Library 에서 원하는 목소리 ID 복사
-_EL_VOICE_MY       = os.environ.get("EL_VOICE_MY",       "21m00Tcm4TlvDq8ikWAM")  # Rachel
-_EL_VOICE_RESP     = os.environ.get("EL_VOICE_RESP",      "ErXwobaYiN019PkySvjV")  # Antoni
-_EL_VOICE_NARRATOR = os.environ.get("EL_VOICE_NARRATOR",  "N2lVS1w4EtoT3dr4eOWO")  # Callum
-_el_client: ElevenLabs | None = None
+#   GEMINI_VOICE_MY       = 내 대사 목소리   기본: Leda (귀여운 여자아이 = 래서팬더)
+#   GEMINI_VOICE_RESP     = 상대방 목소리    기본: Charon (남성)
+#   GEMINI_VOICE_NARRATOR = 나레이터 목소리  기본: Kore (차분한 여성)
+_GEMINI_TTS_MODEL    = "gemini-2.5-pro-preview-tts"
+_GEMINI_VOICE_MY       = os.environ.get("GEMINI_VOICE_MY",       "Leda")    # 래서팬더 — 귀여운 여자아이
+_GEMINI_VOICE_RESP     = os.environ.get("GEMINI_VOICE_RESP",     "Charon")  # 상대방 — 남성
+_GEMINI_VOICE_NARRATOR = os.environ.get("GEMINI_VOICE_NARRATOR", "Kore")   # 나레이터 — 차분한 여성
+_gemini_client = None
 
-def _get_el_client() -> ElevenLabs:
-    global _el_client
-    if _el_client is None:
-        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
-            raise RuntimeError(".env 에 ELEVENLABS_API_KEY 가 없습니다")
-        _el_client = ElevenLabs(api_key=api_key)
-    return _el_client
+            raise RuntimeError(".env 에 GEMINI_API_KEY 가 없습니다")
+        _gemini_client = _genai.Client(api_key=api_key)
+    return _gemini_client
 
 
-# ─── TTS (ElevenLabs Multilingual v2) ───────────────────────
-def text_to_speech(text: str, voice_id: str, output_path: str,
-                   stability: float = 0.45, similarity: float = 0.80,
-                   style: float = 0.30):
-    """ElevenLabs Multilingual v2 로 음성 파일 생성"""
-    client = _get_el_client()
-    audio_gen = client.text_to_speech.convert(
-        voice_id=voice_id,
-        text=text,
-        model_id="eleven_multilingual_v2",
-        output_format="mp3_44100_128",
-        voice_settings=VoiceSettings(
-            stability=stability,
-            similarity_boost=similarity,
-            style=style,
-            use_speaker_boost=True,
-        ),
+def _pcm_to_mp3(pcm_data: bytes, output_path: str, sample_rate: int = 24000):
+    """Raw PCM (16-bit mono) → MP3 변환 (FFmpeg 사용)"""
+    import wave
+    wav_tmp = output_path + ".tmp.wav"
+    try:
+        with wave.open(wav_tmp, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_data)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav_tmp, "-q:a", "4", output_path],
+            capture_output=True, check=True
+        )
+    finally:
+        if os.path.exists(wav_tmp):
+            os.unlink(wav_tmp)
+
+
+# ─── TTS (Gemini 2.5 Pro TTS) ────────────────────────────────
+def text_to_speech(text: str, voice_name: str, output_path: str, **_kwargs):
+    """Gemini 2.5 Pro TTS 로 음성 파일 생성"""
+    client = _get_gemini_client()
+    response = client.models.generate_content(
+        model=_GEMINI_TTS_MODEL,
+        contents=text,
+        config=_genai_types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=_genai_types.SpeechConfig(
+                voice_config=_genai_types.VoiceConfig(
+                    prebuilt_voice_config=_genai_types.PrebuiltVoiceConfig(
+                        voice_name=voice_name
+                    )
+                )
+            )
+        )
     )
-    with open(output_path, "wb") as f:
-        for chunk in audio_gen:
-            if chunk:
-                f.write(chunk)
+    pcm_data = response.candidates[0].content.parts[0].inline_data.data
+    _pcm_to_mp3(pcm_data, output_path)
 
 
 def get_audio_duration(path: str) -> float:
@@ -401,20 +419,20 @@ def _draw_translation_strip(img: Image.Image, phrase: dict):
     draw.text((44, y), "나 (Me)", font=font_label, fill=BLUE, anchor="lt")
     y += 38
 
-    ko_text = phrase["my_line"]["ko"]
+    ko_text = phrase.get("my_line", {}).get("ko", "")
     lines = _wrap_text(ko_text, font_ko_big, W - 88)
     for line in lines:
         draw.text((44, y), line, font=font_ko_big, fill=BLUE, anchor="lt")
         y += 62
 
-    roman = phrase["my_line"].get("romanization", "")
+    roman = phrase.get("my_line", {}).get("romanization", "")
     if roman:
         r_lines = _wrap_text(roman, font_roman, W - 88)
         for line in r_lines:
             draw.text((44, y), line, font=font_roman, fill=MUTED, anchor="lt")
             y += 34
 
-    en_text = phrase["my_line"]["en"]
+    en_text = phrase.get("my_line", {}).get("en", "")
     en_lines = _wrap_text(en_text, font_en_med, W - 88)
     for line in en_lines:
         draw.text((44, y), line, font=font_en_med, fill=DARK, anchor="lt")
@@ -433,20 +451,20 @@ def _draw_translation_strip(img: Image.Image, phrase: dict):
     draw.text((44, y), "상대방", font=font_label, fill=MAROON, anchor="lt")
     y += 38
 
-    ko_text = phrase["response"]["ko"]
+    ko_text = phrase.get("response", {}).get("ko", "")
     r_ko_lines = _wrap_text(ko_text, font_ko_med, W - 88)
     for line in r_ko_lines:
         draw.text((44, y), line, font=font_ko_med, fill=MAROON, anchor="lt")
         y += 56
 
-    roman = phrase["response"].get("romanization", "")
+    roman = phrase.get("response", {}).get("romanization", "")
     if roman:
         r_lines = _wrap_text(roman, font_roman2, W - 88)
         for line in r_lines:
             draw.text((44, y), line, font=font_roman2, fill=MUTED, anchor="lt")
             y += 32
 
-    en_text = phrase["response"]["en"]
+    en_text = phrase.get("response", {}).get("en", "")
     en_lines = _wrap_text(en_text, font_en2, W - 88)
     for line in en_lines:
         draw.text((44, y), line, font=font_en2, fill=DARK, anchor="lt")
@@ -497,7 +515,7 @@ def render_phrase_frame(
     # ── 말풍선: 패널 상단 배치, 자동 높이 ────────────────────────
     # MY 말풍선: 오른쪽 (x=560-1050, y_top=PANEL_Y+55)
     img = _draw_speech_bubble(
-        img, phrase["my_line"]["ko"],
+        img, phrase.get("my_line", {}).get("ko", ""),
         x1=560, y1=PANEL_Y + 55, x2=1052,
         tail_side="right", text_color=BLUE, font_size=36,
     )
@@ -505,11 +523,11 @@ def render_phrase_frame(
     if show_response:
         # MY 말풍선이 몇 줄인지 계산해서 아래에 배치
         font36    = get_font("korean_bold", 36)
-        my_lines  = _wrap_text(phrase["my_line"]["ko"], font36, 1052 - 560 - 44)
+        my_lines  = _wrap_text(phrase.get("my_line", {}).get("ko", ""), font36, 1052 - 560 - 44)
         my_bub_h  = 36 + int(36 * 1.35) * len(my_lines) + 24 + 20  # pad+lines+tail+gap
         resp_y    = PANEL_Y + 55 + my_bub_h
         img = _draw_speech_bubble(
-            img, phrase["response"]["ko"],
+            img, phrase.get("response", {}).get("ko", ""),
             x1=28, y1=resp_y, x2=520,
             tail_side="left", text_color=MAROON, font_size=36,
         )
@@ -725,7 +743,7 @@ def create_video(situation: dict, output_path: str, tmpdir: str,
     sit_en = situation.get("situation_en", "")
     narration_text = f"Situation: {sit_en}"
     narration_path = os.path.join(tmpdir, "narration.mp3")
-    text_to_speech(narration_text, _EL_VOICE_NARRATOR, narration_path,
+    text_to_speech(narration_text, _GEMINI_VOICE_NARRATOR, narration_path,
                    stability=0.55, similarity=0.75, style=0.20)
     narration_dur = get_audio_duration(narration_path)
     intro_dur = max(3.0, narration_dur + 0.8)  # 나레이션 끝나고 0.8초 여유
@@ -734,8 +752,8 @@ def create_video(situation: dict, output_path: str, tmpdir: str,
     for i, phrase in enumerate(phrases):
         my_path   = os.path.join(tmpdir, f"ph{i}_my.mp3")
         resp_path = os.path.join(tmpdir, f"ph{i}_resp.mp3")
-        text_to_speech(phrase["my_line"]["ko"],  _EL_VOICE_MY,   my_path)
-        text_to_speech(phrase["response"]["ko"], _EL_VOICE_RESP, resp_path)
+        text_to_speech(phrase.get("my_line", {}).get("ko", ""),   _GEMINI_VOICE_MY,   my_path)
+        text_to_speech(phrase.get("response", {}).get("ko", ""), _GEMINI_VOICE_RESP, resp_path)
         phrase_audios.append((my_path, resp_path))
         print(f"    [{i+1}/{len(phrases)}] TTS 완료")
 

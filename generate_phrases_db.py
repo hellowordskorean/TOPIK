@@ -11,6 +11,13 @@ Usage:
   python generate_phrases_db.py --loop               # 100% 통과할 때까지 반복
 """
 
+import sys
+import io
+if sys.stdout is not None and hasattr(sys.stdout, 'buffer') and sys.stdout.encoding != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if sys.stderr is not None and hasattr(sys.stderr, 'buffer') and sys.stderr.encoding != "utf-8":
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 import json
 import time
 import argparse

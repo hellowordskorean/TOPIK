@@ -32,6 +32,16 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
     except AttributeError:
         pass
 
+# ── 스타트업 로깅 (NAS 디버깅용) ─────────────────────────────────
+_APP_BASE_EARLY = Path(os.environ.get("APP_BASE", str(Path(__file__).parent)))
+_STARTUP_LOG = _APP_BASE_EARLY / "logs" / "illust_startup.log"
+try:
+    _STARTUP_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(_STARTUP_LOG, "a", encoding="utf-8") as _sf:
+        _sf.write(f"\n[{datetime.now()}] generate_illustrations.py 시작 args={sys.argv[1:]}\n")
+except Exception:
+    pass
+
 # .env 로드
 try:
     from dotenv import load_dotenv
@@ -39,19 +49,49 @@ try:
 except ImportError:
     pass
 
-from google import genai
-from google.genai import types
+try:
+    from google import genai
+    from google.genai import types
+    _google_import_ok = True
+except Exception as _gimp_err:
+    _google_import_ok = False
+    try:
+        with open(_STARTUP_LOG, "a", encoding="utf-8") as _sf:
+            _sf.write(f"  [IMPORT ERROR] google.genai: {_gimp_err}\n")
+    except Exception:
+        pass
+    raise
 
 # 이미지 생성 백엔드: "imagen" | "flux"
 _BACKEND = "imagen"
 # 생성 후 Gemini Vision으로 텍스트 검증 여부 (--vlm-verify 플래그로 활성화)
 _VLM_VERIFY = False
 
-OUTPUT_DIR    = Path("/app/assets/illustrations")
-PROMPTS_FILE  = Path("/app/data/LanguageTest/illustration_prompts.json")
-SCENE_CACHE   = Path("/app/logs/scene_cache.json")  # /app/data는 dashboard에서 ro 마운트
-FLAGGED_FILE  = Path("/app/logs/illust_flagged.json")
-USAGE_FILE    = Path("/app/logs/illust_usage.json")
+# _SCRIPT_DIR: 항상 스크립트가 있는 youtube 폴더 (assets/ 기준)
+# DATA_ROOT: data/ 절대 경로 (Docker=/app/data, Windows=Z:\Hellowords\data)
+#   탐색 순서: DATA_ROOT 환경변수 → /app/data → _SCRIPT_DIR.parent/data
+_SCRIPT_DIR = Path(__file__).parent
+
+def _find_data_root() -> Path:
+    for cand in [
+        os.environ.get("DATA_ROOT", ""),
+        "/app/data",
+        str(_SCRIPT_DIR.parent / "data"),
+        str(_SCRIPT_DIR / "data"),  # 레거시 fallback
+    ]:
+        if cand:
+            p = Path(cand) / "LanguageTest" / "words_db.json"
+            if p.exists():
+                return Path(cand)
+    return Path("/app/data")
+
+_DATA_ROOT    = _find_data_root()
+_APP_BASE     = _DATA_ROOT.parent  # 하위 호환용 (사용처 있을 수 있음)
+OUTPUT_DIR    = _SCRIPT_DIR / "assets" / "illustrations"
+PROMPTS_FILE  = _DATA_ROOT / "LanguageTest" / "illustration_prompts.json"
+SCENE_CACHE   = _SCRIPT_DIR / "logs" / "scene_cache.json"
+FLAGGED_FILE  = _SCRIPT_DIR / "logs" / "illust_flagged.json"
+USAGE_FILE    = _SCRIPT_DIR / "logs" / "illust_usage.json"
 
 
 # ── 일일 사용량 추적 ────────────────────────────────────────
@@ -89,79 +129,353 @@ def _track_usage(success: bool, exhausted: bool = False):
     _save_usage(data)
 
 # ── 웹툰 동물 캐릭터 스타일 ─────────────────────────────────────
-_LOCAL_ANIMALS = [
-    "tabby cat wearing a striped vest",
-    "beagle dog wearing a cozy scarf",
-    "gray cat wearing a polka-dot blouse",
-    "golden retriever dog wearing a button-up shirt",
-    "dalmatian dog wearing a yellow bandana",
-    "calico cat wearing glasses and a blazer",
-    "poodle wearing a beret and stylish sweater",
-    "corgi wearing an apron",
-    "gray cat wearing a plaid shirt",
-    "shiba inu wearing a traditional outfit",
+_LOCAL_ANIMAL_SPECIES = [
+    # ── 고양이/강아지류 ────────────────────────────────────────
+    "gray tabby cat",
+    "black-and-white dalmatian dog",
+    "white persian cat with glasses",
+    "black poodle",
+    "blue-gray russian blue cat",
+    "beagle dog",
+    "black-and-white husky dog",
+    "dark brown dachshund",
+    "gray scottish fold cat",
+    "white samoyed dog",
+    # ── 토끼/설치류류 ─────────────────────────────────────────
+    "white fluffy rabbit",
+    "gray chinchilla",
+    "cream-colored hamster",
+    "dark brown beaver",
+    "gray squirrel",
+    "tiny gray mouse",
+    "cream-white bunny",
+    "gray marmot",
+    "black-and-white skunk",
+    "gray-brown capybara",
+    # ── 곰/대형 포유류 ────────────────────────────────────────
+    "dark brown bear cub",
+    "black-and-white giant panda cub",
+    "white polar bear cub",
+    "blue-gray koala",
+    "gray donkey",
+    "fluffy white alpaca",
+    "dark gray gorilla",
+    "dark indigo tapir",
+    "cream-colored manatee",
+    "gray ring-tailed lemur",
+    # ── 작은 동물류 ──────────────────────────────────────────
+    "brown hedgehog",
+    "dark brown otter",
+    "gray meerkat",
+    "lilac-gray sugar glider",
+    "black-and-white badger",
+    # ── 독특한 동물류 ────────────────────────────────────────
+    "black-and-white striped zebra",
+    "white-gray spotted snow leopard cub",
+    "spotted yellow-and-brown baby giraffe",
+    "spotted black-and-white cow",
+    "silver-gray wolf",
+    # ── 조류/파충류/기타 ─────────────────────────────────────
+    "black-and-white penguin",
+    "brown-and-white owl",
+    "pink flamingo",
+    "iridescent peacock",
+    "blue macaw parrot",
+    "teal-blue heron",
+    "mint-green chameleon",
+    "pink-tinted axolotl",
+    "white arctic fox",
+    "white fluffy lamb",
 ]
 
 _LEARNER_OUTFITS = [
     "casual sweater and jeans",
-    "hoodie and backpack",
+    "hoodie",
     "colorful cardigan",
     "striped shirt and cap",
     "cozy knit sweater",
-    "light jacket with tote bag",
+    "light jacket",
     "denim jacket",
     "floral blouse and skirt",
     "sporty tracksuit",
     "trench coat",
 ]
 
-def _pick_characters(word_id: int) -> tuple[str, str]:
-    """단어 ID 기반으로 동물 캐릭터 쌍 선택 (결정론적)"""
-    local  = _LOCAL_ANIMALS[word_id % len(_LOCAL_ANIMALS)]
-    outfit = _LEARNER_OUTFITS[word_id % len(_LEARNER_OUTFITS)]
-    return local, f"red panda wearing {outfit}"
+def _situation_outfit(situation_text: str) -> str:
+    """예문의 situation 문자열로 적절한 의상(가방 포함 여부) 결정."""
+    s = situation_text.lower()
+    # ── 가방이 자연스러운 상황 ──────────────────────────────────
+    if any(k in s for k in ("airport", "customs", "departure", "arrival", "boarding", "check-in")):
+        return "travel outfit with a carry-on bag"
+    if any(k in s for k in ("train", "ktx", "bus terminal", "bus station", "transit")):
+        return "travel casual outfit with a backpack or small bag"
+    if any(k in s for k in ("commut", "subway", "going to work", "office")):
+        return "smart casual outfit with a slim crossbody bag"
+    if any(k in s for k in ("school", "class", "university", "lecture", "library", "study")):
+        return "casual outfit with a backpack"
+    if any(k in s for k in ("shopping", "mart", "supermarket", "grocery", "convenience store", "market")):
+        return "casual outfit, holding a shopping bag"
+    if any(k in s for k in ("hiking", "mountain", "camping", "trekking", "outdoor trip")):
+        return "outdoor casual outfit with a light backpack"
+    if any(k in s for k in ("picnic", "park outing", "day trip", "sightseeing", "tourist")):
+        return "casual outfit with a small crossbody bag"
+    if any(k in s for k in ("business", "meeting", "conference", "work trip")):
+        return "business casual outfit, carrying a slim work bag"
+    # ── 가방이 불필요한 상황 ────────────────────────────────────
+    if any(k in s for k in ("restaurant", "cafe", "coffee", "dining", "eating", "food", "bakery", "meal")):
+        return "casual everyday clothes, no bag"
+    if any(k in s for k in ("hospital", "clinic", "pharmacy", "doctor", "medical", "emergency")):
+        return "casual comfortable clothes, no bag"
+    if any(k in s for k in ("gym", "fitness", "workout", "exercise", "swimming", "sport")):
+        return "sporty activewear, no bag"
+    if any(k in s for k in ("home", "house", "apartment", "at home", "neighbor")):
+        return "home casual wear, no bag"
+    if any(k in s for k in ("hotel", "accommodation", "hostel", "check in")):
+        return "casual outfit, no bag"
+    if any(k in s for k in ("hair salon", "beauty", "spa", "nail", "barbershop")):
+        return "casual clothes, no bag"
+    if any(k in s for k in ("karaoke", "sauna", "jimjilbang", "bath", "hot spring")):
+        return "casual lounge outfit, no bag"
+    if any(k in s for k in ("beach", "sea", "swimming pool", "resort")):
+        return "summer casual outfit, no bag"
+    if any(k in s for k in ("party", "wedding", "ceremony", "celebration")):
+        return "smart casual outfit, no bag"
+    # ── 기본값: 가방 없음 ────────────────────────────────────────
+    return "casual everyday outfit, no bag"
 
 
-def _inject_characters(content: str, word_id: int) -> str:
+def _get_supporting_outfit(situation_text: str) -> str:
+    """상황 텍스트(영어)로 조연 캐릭터 의상 결정 — 상황 역할에 맞게."""
+    s = situation_text.lower()
+    # 공항 / 이동
+    if any(k in s for k in ("airport", "immigration", "customs", "boarding",
+                             "departure", "arrival", "check-in", "security check")):
+        return "airline staff uniform with a name badge and scarf"
+    if any(k in s for k in ("transit", "connecting flight")):
+        return "travel casual clothes with a carry-on bag"
+    if any(k in s for k in ("train", "ktx", "bus terminal", "bus station")):
+        return "transport staff vest or casual travel outfit"
+    if any(k in s for k in ("commut", "subway", "taxi")):
+        return "casual everyday outfit"
+    if any(k in s for k in ("hotel", "accommodation", "hostel", "check in")):
+        return "hotel front-desk uniform — neat blazer and name badge"
+    # 음식 / 카페
+    if any(k in s for k in ("restaurant", "dining", "meal", "eating")):
+        return "restaurant server apron over a neat shirt"
+    if any(k in s for k in ("cafe", "coffee", "bakery")):
+        return "barista apron over a casual shirt"
+    if any(k in s for k in ("bbq", "barbecue", "picnic", "street food")):
+        return "casual clothes with a light outdoor apron"
+    # 쇼핑
+    if any(k in s for k in ("shopping", "mart", "supermarket", "grocery",
+                             "market", "convenience store")):
+        return "store staff vest over a casual shirt"
+    if any(k in s for k in ("pharmacy", "drugstore")):
+        return "pharmacist white coat"
+    # 병원
+    if any(k in s for k in ("hospital", "clinic", "doctor", "medical", "emergency")):
+        return "doctor white coat or nurse scrubs"
+    # 학교
+    if any(k in s for k in ("school", "class", "university", "college", "lecture")):
+        return "smart casual school outfit with a backpack"
+    if any(k in s for k in ("library", "study cafe", "study room", "study")):
+        return "casual studious outfit with a book or notebook"
+    # 직장
+    if any(k in s for k in ("office", "workplace", "work", "meeting",
+                             "conference", "business", "interview")):
+        return "business casual — neat collared shirt and trousers"
+    # 운동 / 레저
+    if any(k in s for k in ("gym", "fitness", "workout", "exercise", "sport")):
+        return "sporty activewear with a towel"
+    if any(k in s for k in ("swimming", "pool")):
+        return "swim casual outfit with a towel"
+    if any(k in s for k in ("hiking", "mountain", "camping", "outdoor")):
+        return "outdoor hiking gear with a light backpack"
+    if any(k in s for k in ("beach", "sea", "ocean", "resort")):
+        return "summer casual outfit with a sunhat"
+    if any(k in s for k in ("sightseeing", "tourist", "tour")):
+        return "tourist casual outfit with a camera strap"
+    # 뷰티
+    if any(k in s for k in ("hair salon", "beauty salon", "barbershop", "nail", "spa")):
+        return "salon staff uniform — neat apron over a smart top"
+    if any(k in s for k in ("sauna", "bath", "jimjilbang", "hot spring")):
+        return "cozy lounge wear or towel wrap"
+    # 파티 / 이벤트
+    if any(k in s for k in ("party", "wedding", "ceremony", "celebration", "banquet")):
+        return "smart casual party outfit"
+    # 집 / 동네
+    if any(k in s for k in ("home", "house", "apartment", "neighbor", "landlord")):
+        return "cozy home casual wear"
+    if any(k in s for k in ("post office", "bank", "government", "service center")):
+        return "neat office-casual outfit with a name badge"
+    # 기본값
+    return "casual everyday outfit"
+
+
+# ── 가족 문맥 감지 ───────────────────────────────────────────
+_FAMILY_KW_EN = [
+    "family", "families", "parent", "parents",
+    "father", "mother", "dad", "mom", "daddy", "mommy",
+    "brother", "sister", "sibling",
+    "grandma", "grandpa", "grandmother", "grandfather", "grandparent",
+    "child", "children", "kid", "kids", "baby", "toddler",
+    "son", "daughter", "nephew", "niece",
+]
+_FAMILY_KW_KO = [
+    "가족", "부모", "아버지", "어머니", "아빠", "엄마",
+    "형", "누나", "언니", "오빠", "남동생", "여동생",
+    "할머니", "할아버지", "아이", "아들", "딸", "조카",
+]
+
+def _is_family_context(situation_text: str = "", extra_text: str = "") -> bool:
+    """상황/예문에 가족 관련 키워드가 있으면 True."""
+    combined_lo = (situation_text + " " + extra_text).lower()
+    if any(kw in combined_lo for kw in _FAMILY_KW_EN):
+        return True
+    combined_raw = situation_text + " " + extra_text
+    return any(kw in combined_raw for kw in _FAMILY_KW_KO)
+
+
+def _pick_characters(word_id: int, situation_text: str = "") -> tuple[str, str]:
+    """단어 ID 기반으로 동물 캐릭터 쌍 선택 (결정론적).
+    situation_text가 제공되면 상황에 맞는 의상(가방 포함 여부) 선택."""
+    species = _LOCAL_ANIMAL_SPECIES[word_id % len(_LOCAL_ANIMAL_SPECIES)]
+    if situation_text:
+        supporting_outfit = _get_supporting_outfit(situation_text)
+        main_outfit = _situation_outfit(situation_text)
+    else:
+        supporting_outfit = "casual everyday outfit"
+        main_outfit = _LEARNER_OUTFITS[word_id % len(_LEARNER_OUTFITS)]
+    local = f"{species} wearing {supporting_outfit}"
+    return local, f"red panda wearing {main_outfit}"
+
+
+def _inject_characters(content: str, word_id: int, situation_text: str = "") -> str:
     """'person/people' 등 인물 표현을 동물 캐릭터 설명으로 교체.
-    주인공(단수 행위자) = red panda (learner), 조연(역할 표현) = 다른 동물 (local)."""
-    local, learner = _pick_characters(word_id)
-    # 복수 인물 → 주인공(red panda) + 조연
+    가족 문맥이면 전원 래서팬더 가족으로 교체.
+    주인공 = red panda (learner), 조연 = 다른 동물 (local)."""
+
+    main_outfit = _situation_outfit(situation_text)
+    learner     = f"red panda wearing {main_outfit}"
+
+    # ── 가족 문맥: 전원 래서팬더 ────────────────────────────────
+    if _is_family_context(situation_text, content):
+        parent_outfit  = _get_supporting_outfit(situation_text)
+        adult_m  = f"adult male red panda wearing {parent_outfit}"
+        adult_f  = f"adult female red panda wearing {parent_outfit}"
+        adult    = f"adult red panda wearing {parent_outfit}"
+        cub      = "small red panda cub in cute casual clothes"
+        elderly  = "elderly red panda with gentle expression and small round glasses"
+
+        # 가족 전체 단위
+        content = re.sub(r'\ba family of \w+\b',   'a red panda family', content, flags=re.IGNORECASE)
+        content = re.sub(r'\b(a family|the family)\b', 'the red panda family', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bfamily members?\b',   'red panda family members', content, flags=re.IGNORECASE)
+        # 복수
+        content = re.sub(r'\btwo people\b',        f'{learner} and {adult}',  content, flags=re.IGNORECASE)
+        content = re.sub(r'\btwo persons?\b',       f'{learner} and {adult}',  content, flags=re.IGNORECASE)
+        content = re.sub(r'\btwo figures?\b',       f'{learner} and {adult}',  content, flags=re.IGNORECASE)
+        content = re.sub(r'\btwo characters?\b',    f'{learner} and {adult}',  content, flags=re.IGNORECASE)
+        content = re.sub(r'\bpeople\b',             'red panda family members', content, flags=re.IGNORECASE)
+        # 부모 (관사 포함/미포함 모두)
+        content = re.sub(r'\ban? (mother|mom|mommy)\b|\b(mother|mom|mommy)\b',
+                         f'a {adult_f}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bthe (mother|mom|mommy)\b',
+                         f'the {adult_f}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\ban? (father|dad|daddy)\b|\b(father|dad|daddy)\b',
+                         f'a {adult_m}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bthe (father|dad|daddy)\b',
+                         f'the {adult_m}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\ban? (parent|parents?)\b|\b(parents?)\b',
+                         'red panda parents', content, flags=re.IGNORECASE)
+        # 조부모 — 수식어 포함 패턴 먼저 (예: "an elderly grandfather")
+        content = re.sub(r'\ban? (elderly |old )?(grandmother|grandma|granny)\b',
+                         f'an {elderly}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bthe (elderly |old )?(grandmother|grandma|granny)\b',
+                         f'the {elderly}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\ban? (elderly |old )?(grandfather|grandpa|grandad)\b',
+                         f'an {elderly}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bthe (elderly |old )?(grandfather|grandpa|grandad)\b',
+                         f'the {elderly}', content, flags=re.IGNORECASE)
+        # 관사 없는 bare 형태
+        content = re.sub(r'\b(grandmother|grandma|granny|grandfather|grandpa|grandad)\b',
+                         f'an {elderly}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\b(grandparents?|grandma and grandpa)\b',
+                         'elderly red pandas', content, flags=re.IGNORECASE)
+        # 손자녀
+        content = re.sub(r'\b(grandchildren|grandchild|grandkids|grandkid)\b',
+                         'red panda cubs', content, flags=re.IGNORECASE)
+        # 자녀 / 형제자매 / 조카
+        content = re.sub(r'\b(a child|the child|a kid|the kid|a toddler|the toddler|a baby|the baby)\b',
+                         cub, content, flags=re.IGNORECASE)
+        content = re.sub(r'\b(children|kids|toddlers|babies)\b',
+                         'red panda cubs', content, flags=re.IGNORECASE)
+        # 관사 없는 단수 child/kid (예: "and child", "with child")
+        content = re.sub(r'(?<!\w)(child|kid|toddler|baby)(?!\w)',
+                         cub, content, flags=re.IGNORECASE)
+        content = re.sub(r'\b(a son|the son|a daughter|the daughter|son|daughter)\b',
+                         cub, content, flags=re.IGNORECASE)
+        content = re.sub(r'\b(a granddaughter|the granddaughter|a grandson|the grandson|granddaughter|grandson)\b',
+                         cub, content, flags=re.IGNORECASE)
+        content = re.sub(r'\b(a brother|a sister|a sibling|the brother|the sister|the sibling|brother|sister|sibling)\b',
+                         cub, content, flags=re.IGNORECASE)
+        # 나머지 인물 표현
+        content = re.sub(r'\ban? (young )?(woman|girl|female)\b', f'a {adult_f}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bthe (young )?(woman|girl|female)\b', f'the {adult_f}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\ban? (young )?(man|boy|male)\b',      f'a {adult_m}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bthe (young )?(man|boy|male)\b',      f'the {adult_m}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\ba person\b',           f'a {learner}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bthe person\b',         f'the {learner}', content, flags=re.IGNORECASE)
+        content = re.sub(r'\bsomeone\b',            learner, content, flags=re.IGNORECASE)
+        content = re.sub(r'\ba figure\b',           f'a {learner}', content, flags=re.IGNORECASE)
+        return content
+
+    # ── 일반 모드 ────────────────────────────────────────────────
+    local, learner = _pick_characters(word_id, situation_text)
+
+    # 복수 인물 → 주인공 + 조연
     content = re.sub(r'\btwo people\b',      f'{learner} and {local}',  content, flags=re.IGNORECASE)
-    content = re.sub(r'\btwo persons\b',     f'{learner} and {local}',  content, flags=re.IGNORECASE)
-    content = re.sub(r'\btwo figures\b',     f'{learner} and {local}',  content, flags=re.IGNORECASE)
-    content = re.sub(r'\btwo characters\b',  f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo persons?\b',    f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo figures?\b',    f'{learner} and {local}',  content, flags=re.IGNORECASE)
+    content = re.sub(r'\btwo characters?\b', f'{learner} and {local}',  content, flags=re.IGNORECASE)
     content = re.sub(r'\bpeople\b',          f'{learner} and {local}',  content, flags=re.IGNORECASE)
-    # 단수 인물 → 모두 주인공(red panda)으로
-    content = re.sub(r'\ba young woman\b',   f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba young man\b',     f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe young woman\b', f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe young man\b',   f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba woman\b',         f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba man\b',           f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe woman\b',       f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe man\b',         f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba person\b',        f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe person\b',      f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba figure\b',        f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe figure\b',      f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\bsomeone\b',         f'{learner}',              content, flags=re.IGNORECASE)
-    # 역할 표현: 학습자 계열 → 주인공(red panda), 상대역 → 조연
-    content = re.sub(r'\ba student\b',       f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe student\b',     f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba learner\b',       f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe learner\b',     f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba customer\b',      f'a {learner}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe customer\b',    f'the {learner}',          content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba teacher\b',       f'a {local}',              content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe teacher\b',     f'the {local}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba vendor\b',        f'a {local}',              content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe vendor\b',      f'the {local}',            content, flags=re.IGNORECASE)
-    content = re.sub(r'\ba scientist\b',     f'a {local}',              content, flags=re.IGNORECASE)
-    content = re.sub(r'\bthe scientist\b',   f'the {local}',            content, flags=re.IGNORECASE)
+
+    # 단수 인물 전체 → 주인공(red panda) 또는 조연
+    content = re.sub(r'\ba (young )?woman\b',    f'a {learner}',   content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe (young )?woman\b',  f'the {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba (young )?man\b',      f'a {learner}',   content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe (young )?man\b',    f'the {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba (young )?(girl|boy)\b',   f'a {learner}',   content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe (young )?(girl|boy)\b', f'the {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba (child|kid|baby|toddler)\b',   f'a {learner}',   content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe (child|kid|baby|toddler)\b', f'the {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\b(children|kids|babies|toddlers)\b', f'{learner} and {local}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\ban? (elderly|old) (wo)?man\b', f'a {local}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe (elderly|old) (wo)?man\b', f'the {local}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba person\b',       f'a {learner}',   content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe person\b',     f'the {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba figure\b',       f'a {learner}',   content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe figure\b',     f'the {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\bsomeone\b',        learner,          content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba human\b',        f'a {learner}',   content, flags=re.IGNORECASE)
+    content = re.sub(r'\bhumans?\b',        f'{learner} and {local}', content, flags=re.IGNORECASE)
+
+    # 역할 표현: 학습자 계열 → 주인공, 상대역 → 조연
+    content = re.sub(r'\ba (student|learner|customer|visitor|tourist|patient|client)\b',
+                     f'a {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe (student|learner|customer|visitor|tourist|patient|client)\b',
+                     f'the {learner}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\ba (teacher|vendor|staff|clerk|doctor|nurse|officer|host|server|barista|pharmacist|cashier|guard|scientist|professor)\b',
+                     f'a {local}', content, flags=re.IGNORECASE)
+    content = re.sub(r'\bthe (teacher|vendor|staff|clerk|doctor|nurse|officer|host|server|barista|pharmacist|cashier|guard|scientist|professor)\b',
+                     f'the {local}', content, flags=re.IGNORECASE)
     return content
 
 _WEBTOON_STYLE_BASE = (
+    # ⚠ 절대 "warm peachy-cream" / "warm tan" / "cozy golden hour" 같은 따뜻한 톤 키워드로
+    #    되돌리지 말 것. 전 이미지가 세피아/황금빛으로 물들어서 씬 고유 색이 묻혀버림.
+    #    이 팔레트는 커밋 1d2650c("이미지 색조 개선 — 노란색 과다 문제 해결")에서 확정된 버전.
+    #    사용자가 원하는 '보통 이미지' 스타일 = 이 버전. (2026-04-21 재확정)
     "warm watercolor and pencil sketch illustration style, "
     "soft loose brushwork with visible watercolor paper texture, "
     "gentle pencil outlines (not thick black ink), "
@@ -283,7 +597,7 @@ _WORD_VISUAL_ANCHORS: dict[str, str] = {
     "특히":   "A row of identical apples, but one in the center glowing with a spotlight — highlighted and special.",
 
     # ── 1-2급 감탄사 ─────────────────────────────────────────
-    "네":     "A person nodding vigorously with a wide smile and a big thumbs-up — enthusiastic agreement.",
+    "네":     "A person nodding vigorously with a wide smile, both hands raised open in cheerful agreement.",
     "아이고": "A person with both hands pressed to cheeks, eyes wide, mouth in an 'O' — classic flustered reaction.",
     "와":     "A person with arms thrown wide open, head tilted back — pure amazement and delight.",
     "아":     "A person with mouth open wide in sudden realization — the 'aha' moment, one finger raised.",
@@ -551,6 +865,7 @@ def _ai_word_scene(word: dict, client) -> str:
                 "3. Be HYPER-SPECIFIC — exact objects, exact action, exact positions\n"
                 "4. Characters are OPTIONAL. Include only when a living being naturally belongs.\n"
                 "   Count: zero (objects/nature/abstract), one (solo action), two+ (social scenes).\n"
+                "   SPECIES RULE: ALL characters MUST be cute cartoon animals — NEVER human figures.\n"
                 "   PROTAGONIST RULE: if any character appears, the MAIN character is always\n"
                 "   'a chibi red panda wearing [outfit]'. Supporting characters can be other animals.\n"
                 "5. Composition: choose the most expressive shot — close-up, medium, or wide.\n"
@@ -569,7 +884,9 @@ def _ai_word_scene(word: dict, client) -> str:
         return _word_prompt_fallback(meaning)
 
 
-def _ai_sentence_scene(word: dict, sent: dict, sent_idx: int, client) -> str:
+def _ai_sentence_scene(word: dict, sent: dict, sent_idx: int, client,
+                       prior_settings: list | None = None,
+                       prior_poses: list | None = None) -> str:
     """Gemini Flash로 예문에 최적화된 구체적 시각 장면 생성."""
     cache_key = f"sent_{word['id']}_{sent_idx}"
     if cache_key in _scene_cache:
@@ -592,10 +909,53 @@ def _ai_sentence_scene(word: dict, sent: dict, sent_idx: int, client) -> str:
             f"The core word concept is: {strategy} "
             f"Now adapt this to the specific sentence context below."
         )
+    # 감정/추상 단어 힌트는 예문 단위에서 너무 강하게 작용 → 보조 힌트로만 사용
+    elif strategy and visual_type in ("emotion_pos", "emotion_neg", "emotion_neu",
+                                       "adverb_freq", "adverb_deg", "adverb_manner",
+                                       "adverb_general", "determiner", "pronoun",
+                                       "exclamation"):
+        anchor_hint = (
+            f"SECONDARY HINT (only use if it does NOT conflict with the sentence's "
+            f"specific objects/actions): {strategy}"
+        )
     elif strategy:
         anchor_hint = f"WORD VISUALIZATION HINT: {strategy}"
     else:
         anchor_hint = ""
+
+    # 이전 패널에서 이미 사용한 배경 목록 (중복 방지)
+    variety_rule = ""
+    if prior_settings:
+        prior_list = "; ".join(f'"{s}"' for s in prior_settings[-5:])
+        variety_rule = (
+            f"\nBACKGROUND VARIETY RULE: The following settings were ALREADY used in "
+            f"previous panels for this word — DO NOT repeat them, choose a clearly "
+            f"DIFFERENT location type and atmosphere:\n  {prior_list}\n"
+        )
+    # 이전 패널에서 이미 사용한 포즈/동작 목록 (중복 방지)
+    if prior_poses:
+        pose_list = "; ".join(f'"{p}"' for p in prior_poses[-5:])
+        variety_rule += (
+            f"\nPOSE VARIETY RULE: The following character poses/actions were ALREADY used — "
+            f"choose COMPLETELY DIFFERENT body positions, gestures, and interactions:\n  {pose_list}\n"
+        )
+
+    # 가족 문맥: 전원 래서팬더 가족으로 지시
+    is_family = _is_family_context(situation, ko + " " + en)
+    if is_family:
+        char_rule = (
+            "4. FAMILY SCENE: ALL characters MUST be red pandas — use adult red panda parents "
+            "(slightly larger) and small red panda cubs. ONLY red pandas, no other species.\n"
+            "   The protagonist is a red panda, the parents/siblings are also red pandas.\n"
+        )
+    else:
+        char_rule = (
+            "4. Characters are OPTIONAL. Include only as many as the scene genuinely needs:\n"
+            "   zero (objects/location/weather/metaphor), one (solo action), two+ (interaction).\n"
+            "   SPECIES RULE: ALL characters MUST be cute cartoon animals — NEVER human figures.\n"
+            "   PROTAGONIST RULE: if any character appears, the MAIN one is always\n"
+            "   'a chibi red panda wearing [outfit]'. Supporting roles can be other cute animals.\n"
+        )
 
     try:
         resp = client.models.generate_content(
@@ -607,22 +967,25 @@ def _ai_sentence_scene(word: dict, sent: dict, sent_idx: int, client) -> str:
                 f"Situation: {situation}\n"
                 f"Korean sentence: {ko}\n"
                 f"English sentence: {en}\n"
-                + (f"\n{anchor_hint}\n" if anchor_hint else "") +
+                + (f"\n{anchor_hint}\n" if anchor_hint else "")
+                + variety_rule +
                 "\nSETTING RULE: Use MODERN everyday Korean environments. "
                 "FORBIDDEN: traditional tile-roof houses, wooden hanok, paper screen doors. "
                 "USE: apartments, modern cafes, convenience stores, subway, schools, "
-                "offices, parks, city streets, supermarkets.\n"
+                "offices, parks, city streets, supermarkets, gyms, libraries, hospitals, "
+                "rooftop terraces, underground malls — pick something FRESH.\n"
                 "\nRULES:\n"
                 f"1. Show the SPECIFIC MOMENT described in the sentence — not before, not after\n"
                 f"2. Make '{korean}' ({meaning.split(',')[0].strip()}) VISUALLY OBVIOUS as the focal concept\n"
                 "3. Be HYPER-SPECIFIC — exact objects, exact action, exact location details\n"
-                "4. Characters are OPTIONAL. Include only as many as the scene genuinely needs:\n"
-                "   zero (objects/location/weather/metaphor), one (solo action), two+ (interaction).\n"
-                "   PROTAGONIST RULE: if any character appears, the MAIN one is always\n"
-                "   'a chibi red panda wearing [outfit]'. Supporting roles can be other cute animals.\n"
+                + char_rule +
                 "5. Composition: choose the most expressive shot — close-up, medium, or wide.\n"
                 "   Main subject centered. Not pushed to the bottom.\n"
-                "6. No text or signs anywhere.\n\n"
+                "6. No text or signs anywhere.\n"
+                "7. Each panel must have a UNIQUE pose — vary arm positions, body angles, "
+                "actions (handing, sitting, running, pointing, bowing, opening, eating, "
+                "carrying, looking, reaching, kneeling, leaning, waving) — NEVER repeat the "
+                "same body position used in previous panels.\n\n"
                 "Output: 2-3 sentences ONLY. Start with the main subject and action. No preamble."
             )]
         )
@@ -769,11 +1132,11 @@ _CHAR_MARKERS = (
     'character', 'figure ',
 )
 
-def _apply_style(content: str, word_id: int = 0) -> str:
+def _apply_style(content: str, word_id: int = 0, situation_text: str = "") -> str:
     """커스텀 프롬프트 + lint + (선택) 캐릭터 교체 + 웹툰 스타일.
     장면 설명에 캐릭터가 언급될 때만 캐릭터 스타일 적용."""
     linted   = _lint_prompt(content)
-    injected = _inject_characters(linted, word_id)
+    injected = _inject_characters(linted, word_id, situation_text)
     has_chars = any(m in injected.lower() for m in _CHAR_MARKERS)
     return f"{injected}. {_webtoon_style(word_id, has_characters=has_chars)}"
 
@@ -899,7 +1262,7 @@ def sent_img_path(word: dict, idx: int) -> Path:
 def _log_error(msg: str):
     """에러를 파일에 기록"""
     try:
-        log_path = Path("/app/logs/illust_errors.log")
+        log_path = _APP_BASE / "logs" / "illust_errors.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().isoformat()}] {msg}\n")
@@ -940,7 +1303,7 @@ def _generate_once_flux(prompt: str, output_path: Path) -> bool:
 
 
 _IMAGE_MODEL = "gemini-3.1-flash-image-preview"
-_CHARS_DIR   = Path("/app/assets/characters")
+_CHARS_DIR   = Path(__file__).parent / "assets" / "characters"
 
 # 캐릭터 레퍼런스 이미지 캐시 (프로세스당 1회 로드)
 _char_refs_cache: list | None = None
@@ -998,32 +1361,41 @@ def _generate_once(prompt: str, output_path: Path, client) -> bool:
     if _BACKEND == "flux":
         return _generate_once_flux(prompt, output_path)
     # ── Gemini Flash Image ──────────────────────────────────
-    try:
-        char_refs = _load_char_refs()
-        contents  = char_refs + [prompt]   # 캐릭터 레퍼런스 이미지 + 텍스트 프롬프트
-        response = client.models.generate_content(
-            model=_IMAGE_MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                response_modalities=[types.Modality.IMAGE],
-                image_config=types.ImageConfig(aspect_ratio="1:1"),
-            ),
-        )
-        if _save_generated_image(response, output_path):
-            _track_usage(success=True)
-            return True
-        _log_error(f"빈 응답 (이미지 없음): {output_path.name} | prompt: {prompt[:100]}")
-        _track_usage(success=False)
-        return False
-    except Exception as e:
-        _log_error(f"생성 오류: {e} | {output_path.name} | prompt: {prompt[:100]}")
-        print(f"  생성 오류: {e}")
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            _track_usage(success=False, exhausted=True)
-            print("\n[중단] API 일일 할당량 초과 — 내일 다시 시도하세요.")
-            raise SystemExit(1)
-        _track_usage(success=False)
-        return False
+    char_refs = _load_char_refs()
+    contents  = char_refs + [prompt]
+    _503_waits = [30, 60, 120]   # 503 재시도 대기(초): 최대 3회
+    for _attempt in range(1 + len(_503_waits)):
+        try:
+            response = client.models.generate_content(
+                model=_IMAGE_MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_modalities=[types.Modality.IMAGE],
+                    image_config=types.ImageConfig(aspect_ratio="1:1"),
+                ),
+            )
+            if _save_generated_image(response, output_path):
+                _track_usage(success=True)
+                return True
+            _log_error(f"빈 응답 (이미지 없음): {output_path.name} | prompt: {prompt[:100]}")
+            _track_usage(success=False)
+            return False
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                _track_usage(success=False, exhausted=True)
+                print("\n[중단] API 일일 할당량 초과 — 내일 다시 시도하세요.")
+                raise SystemExit(1)
+            if ("503" in err_str or "UNAVAILABLE" in err_str) and _attempt < len(_503_waits):
+                wait = _503_waits[_attempt]
+                print(f"  [503 과부하] {wait}초 후 재시도 ({_attempt+1}/{len(_503_waits)})...")
+                time.sleep(wait)
+                continue
+            _log_error(f"생성 오류: {e} | {output_path.name} | prompt: {prompt[:100]}")
+            print(f"  생성 오류: {e}")
+            _track_usage(success=False)
+            return False
+    return False
 
 def _parse_vlm_json(raw: str) -> dict:
     """VLM 응답에서 JSON 추출"""
@@ -1091,7 +1463,9 @@ def _verify_image_style(image_path: Path, client) -> tuple[bool, str]:
 
                     # 스타일/팔레트
                     "  \"style_ok\": true if flat/semi-flat illustration (NOT photorealistic, NOT oil painting),\n"
-                    "  \"palette_ok\": true if overall tone is warm/light/pastel (NOT dark or black-dominant),\n"
+                    "  \"palette_ok\": true if overall tone is light and pastel with balanced natural colors — "
+                    "whites stay white, skies stay sky-blue, no global amber/sepia/yellow-orange wash, "
+                    "not overly yellow or orange, NOT dark or black-dominant,\n"
 
                     # 해부학적 이상
                     "  \"anatomy_ok\": true if all human figures have correct anatomy — "
@@ -1259,23 +1633,71 @@ def _reinforce_physics(prompt: str) -> str:
     )
 
 
+def _origin_text_for(word: dict = None, sent_idx: int = -1, sent: dict = None) -> str:
+    """이 이미지가 나타내는 원본 텍스트 (검증용 .txt 짝 파일 내용)."""
+    if sent_idx == -1 and word:
+        return (word.get("word") or "") + "|" + (word.get("meaning") or "")
+    if sent_idx >= 0 and sent:
+        return (sent.get("ko") or "") + "|" + (sent.get("en") or "")
+    return ""
+
+
+def _txt_companion(p: Path) -> Path:
+    """N.png → N.png.txt"""
+    return Path(str(p) + ".txt")
+
+
 def generate_image(prompt: str, output_path: Path, client,
                    word: dict = None, sent_idx: int = -1,
                    sent: dict = None) -> bool:
     """이미지 생성 + VLM 하네스 루프 (--vlm-verify 활성화 시)
     검증: 텍스트 / 스타일·비율·해부·물리 / 교육적 명확성
-    실패 시: 문제 유형별 프롬프트 강화 → AI 개선 → 재생성 반복"""
+    실패 시: 문제 유형별 프롬프트 강화 → AI 개선 → 재생성 반복
+
+    캐시 검증: .txt 짝 파일로 원본 텍스트(단어+뜻 / 예문 ko+en) 저장.
+    DB 내용이 바뀌었는데 폴더 이름만 같은 경우 자동 무효화.
+    """
+    origin_text = _origin_text_for(word, sent_idx, sent)
+    txt_path = _txt_companion(output_path)
+
     if output_path.exists() and output_path.stat().st_size > 0:
-        return True
+        # 원본 텍스트가 있으면 .txt 검증
+        if origin_text:
+            if txt_path.exists():
+                try:
+                    cached = txt_path.read_text(encoding="utf-8")
+                except Exception:
+                    cached = None
+                if cached == origin_text:
+                    return True
+                # 불일치 → 무효화
+                print(f"  [cache] 텍스트 변경 감지 — 재생성: {output_path.name}")
+                output_path.unlink()
+                try: txt_path.unlink()
+                except Exception: pass
+            else:
+                # .txt 없음 — 옛 버전 캐시일 수 있으므로 보수적으로 유지하되
+                # 이번에 생성한다면 .txt를 같이 쓴다. 재사용은 허용.
+                return True
+        else:
+            return True
     elif output_path.exists():
         output_path.unlink()  # 빈 파일 제거 후 재생성
 
     max_attempts = 5 if _VLM_VERIFY else 1
     word_id = word["id"] if word else 0
+    situation_text = sent.get("situation", "") if sent else ""
     # 커스텀 프롬프트는 이미 _apply_style 처리됨 → 중복 방지
     is_full_prompt = "TWO animal characters in frame:" in prompt
     current_scene = prompt
-    current_prompt = prompt if is_full_prompt else _apply_style(_lint_prompt(prompt), word_id)
+    current_prompt = prompt if is_full_prompt else _apply_style(_lint_prompt(prompt), word_id, situation_text)
+
+    def _write_txt_companion():
+        if origin_text:
+            try:
+                txt_path.write_text(origin_text, encoding="utf-8")
+            except Exception:
+                pass
 
     for attempt in range(max_attempts):
         ok = _generate_once(current_prompt, output_path, client)
@@ -1285,12 +1707,14 @@ def generate_image(prompt: str, output_path: Path, client,
             return False
 
         if not _VLM_VERIFY:
+            _write_txt_companion()
             return True
 
         # ── 통합 VLM 검증 ──────────────────────────────────
         passed, issues = _verify_image_full(output_path, client, word=word)
         if passed:
             print(f"  [VLM ✓] 모든 검사 통과")
+            _write_txt_companion()
             return True
 
         issue_str = " | ".join(issues)
@@ -1333,7 +1757,7 @@ def generate_image(prompt: str, output_path: Path, client,
         if is_full_prompt:
             current_prompt = _lint_prompt(current_scene)
         else:
-            current_prompt = _apply_style(_lint_prompt(current_scene), word_id)
+            current_prompt = _apply_style(_lint_prompt(current_scene), word_id, situation_text)
 
     if word:
         _flag_image(word, sent_idx, current_prompt, "harness failed after all retries")
@@ -1392,16 +1816,21 @@ def generate_sentences(word: dict, client) -> tuple[int, int]:
     return done, fail
 
 
-PROG_FILE = Path("/app/logs/illust_progress.json")
+PROG_FILE = _SCRIPT_DIR / "logs" / "illust_progress.json"
 
 
-def _write_prog(pct: int, step: str = "", done_word: int = 0, done_sent: int = 0):
+def _write_prog(pct: int, step: str = "", done_word: int = 0, done_sent: int = 0,
+                current_word_id: int | None = None, current_type: str = "",
+                current_sent_idx: int | None = None):
     try:
         PROG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(PROG_FILE, "w", encoding="utf-8") as f:
             json.dump({
                 "status": "running", "pct": pct, "step": step,
                 "done_word": done_word, "done_sent": done_sent,
+                "current_word_id": current_word_id,
+                "current_type": current_type,       # "word" | "sent" | ""
+                "current_sent_idx": current_sent_idx,
                 "updated_at": datetime.now().isoformat(),
             }, f, ensure_ascii=False)
     except Exception:
@@ -1560,7 +1989,7 @@ def main():
                 time.sleep(0.3)
         print(f"\n=== 감사 완료: 통과 {pass_count} / 실패 {fail_count} / 스킵 {skip_count} ===")
         # 결과를 JSON으로 저장
-        audit_path = Path("/app/logs/style_audit.json")
+        audit_path = _SCRIPT_DIR / "logs" / "style_audit.json"
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         with open(audit_path, "w", encoding="utf-8") as f:
             json.dump({
@@ -1573,7 +2002,7 @@ def main():
 
     # ── 감사 실패 이미지 재생성 ──────────────────────────────────
     if args.regen_audit_failed:
-        audit_path = Path("/app/logs/style_audit.json")
+        audit_path = _SCRIPT_DIR / "logs" / "style_audit.json"
         if not audit_path.exists():
             print("오류: style_audit.json 없음 — 먼저 --style-audit-all 실행 필요")
             return
@@ -1683,19 +2112,25 @@ def main():
                 del _scene_cache[cache_key]
                 _save_scene_cache()
                 print(f"  [캐시 삭제] {cache_key}")
-            # 사용자 노트 또는 예문 텍스트로 추가 개선 지시
-            if not issues_str and sent:
-                ko = sent.get("ko", "")
-                en = sent.get("en", "")
-                if en or ko:
-                    issues_str = (
-                        f"educational:이미지가 이 예문을 명확히 표현해야 함 — "
-                        f"{en} / {ko}. "
-                        "예문의 구체적인 행동·상황·장소를 중심으로 장면을 재설계할 것"
-                    )
-            # 캐시 삭제 후 _ai_sentence_scene이 새 장면 생성 → 추가 노트 있으면 개선 적용
-            scene = _ai_sentence_scene(word, sent, idx, client)
-            if issues_str:
+            # 우선순위 1: 커스텀 프롬프트 (illustration_prompts.json)
+            custom = get_sentence_custom_prompt(word["id"], idx)
+            if custom:
+                scene = custom
+                print(f"  [커스텀 프롬프트 사용]")
+            else:
+                # 사용자 노트 또는 예문 텍스트로 추가 개선 지시
+                if not issues_str and sent:
+                    ko = sent.get("ko", "")
+                    en = sent.get("en", "")
+                    if en or ko:
+                        issues_str = (
+                            f"educational:이미지가 이 예문을 명확히 표현해야 함 — "
+                            f"{en} / {ko}. "
+                            "예문의 구체적인 행동·상황·장소를 중심으로 장면을 재설계할 것"
+                        )
+                # 캐시 삭제 후 _ai_sentence_scene이 새 장면 생성
+                scene = _ai_sentence_scene(word, sent, idx, client)
+            if issues_str and not custom:
                 try:
                     improved = _ai_improve_scene(scene, [s.strip() for s in issues_str.split("|") if s.strip()],
                                                  word, sent, client)
@@ -1769,6 +2204,7 @@ def main():
     done_sent = 0
     fail = 0
     completed = 0
+    pct = 0          # 루프 진입 전 초기화 (단어 스킵 시 undefined 방지)
     last_word_id = args.start
 
     try:
@@ -1783,6 +2219,8 @@ def main():
                     src = "커스텀" if get_word_custom_prompt(word["id"]) else "기본"
                     keyword = word["meaning"].split(",")[0].strip().split()[0]
                     print(f"{step_base} [단어/{src}] '{keyword}' 생성 중...")
+                    _write_prog(pct, f"단어: {word['word']}", done_word, done_sent,
+                                current_word_id=word["id"], current_type="word")
                     if generate_one(word, client):
                         done_word += 1
                         print(f"  [OK] {wpath.name}")
@@ -1797,6 +2235,8 @@ def main():
             # ── 예문 일러스트 ──────────────────────────────────
             if not args.words_only:
                 sents = word.get("sentences", [])
+                used_scene_summaries: list[str] = []  # 이 단어 내 이미 쓴 배경 요약
+                used_pose_summaries:  list[str] = []  # 이 단어 내 이미 쓴 포즈 요약
                 for idx, sent in enumerate(sents):
                     spath = sent_img_path(word, idx)
                     if spath.exists():
@@ -1806,10 +2246,19 @@ def main():
                         scene = custom
                         src = "커스텀"
                     else:
-                        scene = _ai_sentence_scene(word, sent, idx, client)
+                        scene = _ai_sentence_scene(
+                            word, sent, idx, client,
+                            prior_settings=used_scene_summaries if used_scene_summaries else None,
+                            prior_poses=used_pose_summaries if used_pose_summaries else None,
+                        )
                         src = "AI"
+                        # 배경/포즈 다양성 추적
+                        used_scene_summaries.append(scene[:60])
+                        used_pose_summaries.append(scene[60:130])  # 뒷부분에 주로 동작 묘사
                     en = sent.get("en", "")
                     print(f"  [예문 {idx+1}/{len(sents)}] [{src}] {en[:40]}")
+                    _write_prog(pct, f"예문: {word['word']} [{idx+1}/{len(sents)}]", done_word, done_sent,
+                                current_word_id=word["id"], current_type="sent", current_sent_idx=idx)
                     if generate_image(scene, spath, client, word=word, sent_idx=idx, sent=sent):
                         done_sent += 1
                         print(f"    [OK] {spath.name}")
@@ -1867,4 +2316,16 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import traceback
+    try:
+        main()
+    except Exception as _exc:
+        _crash_log = _SCRIPT_DIR / "logs" / "illust_crash.log"
+        try:
+            with open(_crash_log, "a", encoding="utf-8") as _f:
+                _f.write(f"\n{'='*60}\n{datetime.now()} CRASH\n{traceback.format_exc()}\n")
+        except Exception:
+            pass
+        print(f"[CRASH] {_exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)

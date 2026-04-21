@@ -93,7 +93,7 @@ CONFIG = {
     "video": {
         "width": 1080,
         "height": 1920,
-        "fps": 30,
+        "fps": 24,
     },
     "colors": {
         "bg":           (248, 242, 234),  # warm cream
@@ -292,12 +292,33 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
                 _GEMINI_VOICE_ANIMALS[word_id % len(_GEMINI_VOICE_ANIMALS)]
     voice_name = voice
 
-    # ── 캐시 확인 ──
+    # ── 캐시 확인 (텍스트 변경 감지) ──
+    # MD5 기반 캐시(cache_path=None)는 키가 텍스트에 묶여 있어 안전.
+    # 명시적 cache_path는 파일명에 예문 번호만 있으므로 반드시 .txt 검증 필수.
     if cache_path is None:
         cache_path = _tts_cache_path(text, voice_name, slow)
+        _is_md5_cache = True
+    else:
+        _is_md5_cache = False
     if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
-        shutil.copy2(cache_path, output_path)
-        return
+        txt_path = cache_path + ".txt"
+        if os.path.exists(txt_path):
+            cached_text = open(txt_path, encoding="utf-8").read()
+            if cached_text == text:
+                shutil.copy2(cache_path, output_path)
+                return
+            # 텍스트가 바뀐 경우 — 캐시 무효화
+            os.remove(cache_path)
+            os.remove(txt_path)
+        elif _is_md5_cache:
+            # MD5 캐시는 키 자체가 텍스트에 묶여 있으므로 .txt 없어도 일치로 간주
+            shutil.copy2(cache_path, output_path)
+            return
+        else:
+            # 명시적 cache_path인데 .txt가 없음 — 텍스트 검증 불가
+            # 옛 버전에서 만들어진 캐시일 수 있으므로 안전하게 무효화
+            print(f"  [cache] .txt 짝 파일 없음 — 재생성: {os.path.basename(cache_path)}")
+            os.remove(cache_path)
 
     client = _get_gemini_client()
     last_err = None
@@ -337,14 +358,18 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
         print(f"  Gemini TTS 3회 실패, GCP 폴백 시도: {last_err}")
         if not _gcp_tts_fallback(text, lang, output_path, slow):
             raise RuntimeError(f"TTS 모두 실패 (Gemini+GCP): {last_err}") from last_err
-        # GCP 결과도 캐시에 저장 — 같은 텍스트는 이후에도 동일 목소리 유지
+        # GCP 결과도 캐시에 저장 — .txt 짝 파일 포함 (텍스트 변경 감지)
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             shutil.copy2(output_path, cache_path)
+            with open(cache_path + ".txt", "w", encoding="utf-8") as _f:
+                _f.write(text)
         return
 
     # ── 캐시 저장 ──
     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
         shutil.copy2(output_path, cache_path)
+        with open(cache_path + ".txt", "w", encoding="utf-8") as _f:
+            _f.write(text)
 
 def log_video(word: dict, output_path: str, music_src: str = None, file_size: int = 0, fmt: str = "youtube"):
     """logs/videos_log.json 에 영상 생성 기록 (음악 파일 포함)"""
@@ -410,8 +435,8 @@ def has_nvenc() -> bool:
     """NVIDIA NVENC 하드웨어 인코더 사용 가능 여부 확인 (실제 인코딩 테스트)"""
     try:
         r = subprocess.run(
-            ["ffmpeg", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
-             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            ["ffmpeg", "-f", "lavfi", "-i", "color=size=320x240:duration=0.1:rate=30,format=yuv420p",
+             "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "22", "-f", "null", "-"],
             capture_output=True, text=True, timeout=10,
         )
         return r.returncode == 0
@@ -489,6 +514,14 @@ _COMMENT_CTA = {
     "CN": "用今天的单词造个句子\n写在评论区吧！",
     "VN": "Hãy viết câu ví dụ với từ hôm nay\nvào phần bình luận nhé!",
     "ES": "¡Escribe una oración con\nla palabra de hoy en los comentarios!",
+}
+
+_REELS_MORE_CTA = {
+    "EN": "See more example sentences\nin the full YouTube video!",
+    "JP": "もっと例文はYouTubeの\n本編動画でチェック！",
+    "CN": "更多例句请观看\nYouTube完整视频！",
+    "VN": "Xem thêm ví dụ trong\nvideo đầy đủ trên YouTube!",
+    "ES": "¡Más ejemplos en el\nvideo completo de YouTube!",
 }
 
 _POS_MAP = {
@@ -859,6 +892,104 @@ _THUMB_PILL_TEXT = {
 
 _THUMB_ILL_BG = (245, 239, 231)
 
+def render_thumbnail_landscape(dest_path: str, word: dict):
+    """가로형 디자인 세로(1080×1920) 썸네일 — 좌측 텍스트 + 우측 일러스트"""
+    img  = Image.new("RGBA", (W, H), (*C["bg"], 255))
+    draw = ImageDraw.Draw(img)
+
+    lang_code  = word.get("language", "EN").upper()
+    lang_color = _THUMB_LANG_COLORS.get(lang_code, (50, 92, 200))
+    pill_text  = _THUMB_PILL_TEXT.get(lang_code, "KOREAN \u2192 ENGLISH")
+
+    MARGIN   = 48
+    SPLIT_X  = 462           # 좌측 컬럼 끝 (43% of 1080)
+    ILL_PAD  = 26
+    ILL_SIZE = 510           # 일러스트 정사각형 크기
+
+    left_cx = MARGIN + (SPLIT_X - MARGIN) // 2
+    right_x = SPLIT_X + ILL_PAD
+    right_w = W - right_x - MARGIN
+    ill_x   = right_x + (right_w - ILL_SIZE) // 2
+    ill_y   = (H - ILL_SIZE) // 2
+
+    # 일러스트 배경 카드
+    ill_bg_ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(ill_bg_ov).rounded_rectangle(
+        [ill_x - 14, ill_y - 14, ill_x + ILL_SIZE + 14, ill_y + ILL_SIZE + 14],
+        radius=56, fill=(*_THUMB_ILL_BG, 255)
+    )
+    img = Image.alpha_composite(img, ill_bg_ov)
+
+    # 일러스트
+    base    = _find_illust_base(word["word"], word.get("level", 1))
+    bg_path = os.path.join(base, "word.png") if base and os.path.isdir(base) else None
+    if bg_path and os.path.exists(bg_path):
+        try:
+            ill = Image.open(bg_path).convert("RGBA").resize((ILL_SIZE, ILL_SIZE), Image.LANCZOS)
+            msk = Image.new("L", (ILL_SIZE, ILL_SIZE), 0)
+            ImageDraw.Draw(msk).rounded_rectangle([0, 0, ILL_SIZE-1, ILL_SIZE-1], radius=42, fill=255)
+            img_c = img.convert("RGBA")
+            img_c.paste(ill, (ill_x, ill_y), mask=msk)
+            img = img_c
+        except Exception:
+            pass
+    draw = ImageDraw.Draw(img)
+
+    # 텍스트 그룹 수직 중앙 계산
+    word_text  = word["word"]
+    n = len(word_text)
+    avail_w = SPLIT_X - MARGIN * 2
+    word_size = max(78, min(264, 345 - n * 30))
+    font_word = get_font("korean_bold", word_size)
+    wb = draw.textbbox((0, 0), word_text, font=font_word)
+    while (wb[2] - wb[0]) > avail_w and word_size > 72:
+        word_size -= 12
+        font_word = get_font("korean_bold", word_size)
+        wb = draw.textbbox((0, 0), word_text, font=font_word)
+
+    TOPIK_H   = 50
+    ID_H      = 62
+    MEANING_H = 58
+    PILL_H    = 90
+    group_h   = TOPIK_H + 20 + ID_H + 22 + word_size + 28 + MEANING_H + 44 + PILL_H
+    y = (H - group_h) // 2
+
+    # TOPIK LV.X
+    draw.text((left_cx, y + TOPIK_H//2), f"TOPIK  LV.{word['level']}",
+              font=get_font("english_bold", TOPIK_H), fill=C["accent_warm"], anchor="mm")
+    y += TOPIK_H + 20
+
+    # ID
+    draw.text((left_cx, y + ID_H//2), f"{word['id']:03d}",
+              font=get_font("english_bold", ID_H), fill=C["accent_warm"], anchor="mm")
+    y += ID_H + 22
+
+    # 한국어 단어
+    draw.text((left_cx, y + word_size//2), word_text,
+              font=font_word, fill=lang_color, anchor="mm")
+    y += word_size + 28
+
+    # 뜻
+    draw.text((left_cx, y + MEANING_H//2), word["meaning"],
+              font=_lang_font(lang_code, MEANING_H), fill=C["text_secondary"], anchor="mm")
+    y += MEANING_H + 44
+
+    # 언어 pill
+    pill_x1, pill_x2 = MARGIN, SPLIT_X - MARGIN // 2
+    pill_ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(pill_ov).rounded_rectangle(
+        [pill_x1, y, pill_x2, y + PILL_H], radius=PILL_H//2, fill=(*lang_color, 255)
+    )
+    img = Image.alpha_composite(img, pill_ov)
+    draw = ImageDraw.Draw(img)
+    pill_fs = 42 if lang_code not in ("JP","CN") else 38
+    font_pill = get_font("jp" if lang_code=="JP" else ("cn" if lang_code=="CN" else "english_bold"), pill_fs)
+    draw.text(((pill_x1+pill_x2)//2, y+PILL_H//2), pill_text,
+              font=font_pill, fill=(255,255,255), anchor="mm")
+
+    img.convert("RGB").save(dest_path, "PNG")
+
+
 def render_thumbnail(src_frame: str, dest_path: str, word: dict):
     """썸네일: TOPIK/ID/단어/뜻/언어pill/일러스트 레이아웃 (처음부터 생성)"""
     img = Image.new("RGBA", (W, H), (*C["bg"], 255))
@@ -880,7 +1011,7 @@ def render_thumbnail(src_frame: str, dest_path: str, word: dict):
     draw = ImageDraw.Draw(img)
 
     # ── 채널 로고 ─────────────────────────────────────────────
-    _paste_logo(img, C["card_bg"], target_w=360, center_x=cx, center_y=cy1 + 72, alpha=0.85)
+    _paste_logo(img, C["card_bg"], target_w=360, center_x=cx, center_y=cy1 + 72, alpha=0.85, tint_rgb=lang_color)
     draw = ImageDraw.Draw(img)
 
     # ── TOPIK LV.X ───────────────────────────────────────────
@@ -907,7 +1038,7 @@ def render_thumbnail(src_frame: str, dest_path: str, word: dict):
         wb = draw.textbbox((0, 0), word_text, font=font_word)
     word_cy  = id_cy + 80 + word_size // 2
     draw.text((cx, word_cy), word_text,
-              font=font_word, fill=C["accent"], anchor="mm")
+              font=font_word, fill=lang_color, anchor="mm")
     word_bot = word_cy + word_size // 2
 
     # ── 뜻 ───────────────────────────────────────────────────
@@ -1011,32 +1142,36 @@ def draw_outro(img: Image.Image, word: dict, bg_path: str = None, progress: floa
     draw.text((cx, card_y + 480), f"= {word['meaning']}",
               font=font_sub, fill=(*C["text_secondary"], int(210 * p)), anchor="mm")
 
-    # CTA (아래) — 구독 유도
+    # CTA (아래)
+    is_reels_fmt = (_VIDEO_FORMAT == "reels")
     font_cta = get_font("english", 30)
-    cta_text = ("Follow for daily TOPIK vocab" if _VIDEO_FORMAT == "reels"
+    cta_text = ("Follow for daily TOPIK vocab" if not is_reels_fmt
                 else "Like & Subscribe for daily TOPIK vocab")
-    draw.text((cx, card_y + card_h + 60), cta_text,
-              font=font_cta, fill=(*C["text_muted"], int(160 * p)), anchor="mm")
+    if not is_reels_fmt:
+        draw.text((cx, card_y + card_h + 60), cta_text,
+                  font=font_cta, fill=(*C["text_muted"], int(160 * p)), anchor="mm")
 
-    # 댓글 유도 CTA
-    comment_text = _COMMENT_CTA.get(lang_code, _COMMENT_CTA["EN"])
+    # 릴스: 본편 유도 박스 / 본편: 댓글 유도 박스
+    if is_reels_fmt:
+        cta_box_text = _REELS_MORE_CTA.get(lang_code, _REELS_MORE_CTA["EN"])
+    else:
+        cta_box_text = _COMMENT_CTA.get(lang_code, _COMMENT_CTA["EN"])
     font_comment = _lang_font(lang_code, 36) if lang_code in ("JP", "CN") else get_font("english", 36)
-    # 배경 박스
-    lines = comment_text.split("\n")
+    lines = cta_box_text.split("\n")
     line_h = 46
-    box_h = line_h * len(lines) + 40  # 위아래 패딩 합계 40
+    box_h = line_h * len(lines) + 40
     box_x1, box_x2 = cx - 400, cx + 400
-    box_top = card_y + card_h + 130
+    box_top = card_y + card_h + (90 if is_reels_fmt else 130)
     box_bot = box_top + box_h
-    box_cy  = (box_top + box_bot) // 2   # 박스 세로 중심
+    box_cy  = (box_top + box_bot) // 2
+    box_color = _accent
     cta_ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(cta_ov).rounded_rectangle(
         [box_x1, box_top, box_x2, box_bot],
-        radius=20, fill=(*_accent, int(220 * p))
+        radius=20, fill=(*box_color, int(220 * p))
     )
     img.paste(cta_ov, mask=cta_ov.split()[3])
     draw = ImageDraw.Draw(img)
-    # 텍스트를 박스 정중앙에 배치
     text_block_h = (len(lines) - 1) * line_h
     first_line_y  = box_cy - text_block_h // 2
     for i, line in enumerate(lines):
@@ -1377,7 +1512,8 @@ def render_frame(word: dict, sentence_idx: int, t: float, duration: float,
 
 
 # ─── 메인 영상 생성 ──────────────────────────────────────────
-def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = "youtube"):
+def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = "youtube",
+                 thumb_style: str = "portrait"):
     print(f"\n>> 영상 생성: {word['word']} ({word['meaning']})")
     write_progress("1/4 TTS 음성 생성 중...", pct=5, word=word)
 
@@ -1499,7 +1635,15 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
     # 아웃트로
     segments.append(("outro", -2, t, T["outro_duration"]))
     t += T["outro_duration"]
-    
+
+    # 본편은 최소 182초 보장 — YouTube 쇼츠 기준이 ≤180초(3분 이하)이므로 여유분 확보
+    MIN_YOUTUBE_DUR = 182.0
+    if not is_reels and t < MIN_YOUTUBE_DUR:
+        pad_dur = MIN_YOUTUBE_DUR - t
+        segments.append(("outro", -2, t, pad_dur))
+        t += pad_dur
+        print(f"  [본편 패딩] {pad_dur:.1f}초 엔딩 연장 → 총 {t:.1f}초")
+
     total_duration = t
     total_frames = int(total_duration * FPS)
     print(f"  총 길이: {total_duration:.1f}초 ({total_frames}프레임)")
@@ -1567,8 +1711,12 @@ def create_video(word: dict, output_path: str, tmpdir: str, video_format: str = 
     if thumb_frame_img is not None:
         thumb_frame_path = os.path.join(tmpdir, "thumb_frame.png")
         thumb_frame_img.save(thumb_frame_path)
-        render_thumbnail(thumb_frame_path, thumb_path, word)
-        print(f"  [OK] 썸네일 저장: {thumb_path}")
+        if thumb_style == "landscape":
+            from make_thumbnail import make_thumbnail_landscape as _mtl
+            _mtl(word, thumb_path)
+        else:
+            render_thumbnail(thumb_frame_path, thumb_path, word)
+        print(f"  [OK] 썸네일 저장 ({thumb_style}): {thumb_path}")
 
     write_progress("4/4 FFmpeg 합성 중...", pct=88, word=word)
     print("  4/4 FFmpeg 합성 중...")
@@ -1653,7 +1801,16 @@ if __name__ == "__main__":
     parser.add_argument("--lang", default="EN", help="대상 언어")
     parser.add_argument("--format", default="youtube", choices=["youtube", "reels"],
                         help="영상 포맷 (youtube: 전체, reels: 짧은 릴스)")
+    parser.add_argument("--thumb-style", default=None,
+                        choices=["portrait", "landscape"],
+                        help="썸네일 스타일 (기본: 릴스=portrait, 본편=landscape 자동 결정)")
+    parser.add_argument("--thumb-only", action="store_true",
+                        help="썸네일만 생성 (영상 렌더링 생략)")
     args = parser.parse_args()
+
+    # 포맷별 썸네일 스타일 자동 결정 (명시적 지정이 없을 때)
+    if args.thumb_style is None:
+        args.thumb_style = "portrait" if args.format == "reels" else "landscape"
     
     with open(args.db, encoding="utf-8") as f:
         raw = json.load(f)
@@ -1690,7 +1847,23 @@ if __name__ == "__main__":
     filename = f"{args.exam.lower()}_{args.id:04d}_{word['word']}_{args.lang}{fmt_suffix}"
     output_path = os.path.join(video_dir, f"{filename}.mp4")
 
+    # 썸네일 경로 (video_dir 형제 폴더)
+    thumb_dir  = os.path.join(os.path.dirname(video_dir), "thumbnail")
+    os.makedirs(thumb_dir, exist_ok=True)
+    thumb_path = os.path.join(thumb_dir, f"{filename}_thumb.png")
+
+    if args.thumb_only:
+        if args.thumb_style == "landscape":
+            from make_thumbnail import make_thumbnail_landscape as _mtl
+            _mtl(word, thumb_path)
+        else:
+            from make_thumbnail import make_thumbnail as _mt
+            _mt(word, thumb_path)
+        print(f"\n완료! 썸네일 → {thumb_path}")
+        sys.exit(0)
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        create_video(word, output_path, tmpdir, video_format=args.format)
-    
+        create_video(word, output_path, tmpdir, video_format=args.format,
+                     thumb_style=args.thumb_style)
+
     print(f"\n완료! {output_path}")

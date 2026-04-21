@@ -250,28 +250,39 @@ def handle_phrase_job(dq: dict) -> bool:
 
     log(f"[{jtype}] 시작: {' '.join(cmd)}")
     try:
-        result = subprocess.run(
-            cmd, cwd=str(NAS_DRIVE), env=_get_env(),
-            timeout=7200
-        )
-        if result.returncode == 0:
+        proc = subprocess.Popen(cmd, cwd=str(NAS_DRIVE), env=_get_env())
+        deadline = time.time() + 7200
+        while proc.poll() is None:
+            if time.time() > deadline:
+                proc.kill(); proc.wait()
+                log(f"[{jtype}] 2시간 초과 (timeout)")
+                return False
+            # 취소 신호 확인 (NAS가 desktop_phrase_queue.json에 cancelled 기록)
+            try:
+                dq_cur = read_phrase_queue()
+                if dq_cur.get("status") == "cancelled":
+                    log(f"[{jtype}] 취소 신호 감지 — 프로세스 강제 종료")
+                    proc.terminate()
+                    try: proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired: proc.kill()
+                    return False
+            except Exception:
+                pass
+            time.sleep(2)
+        if proc.returncode == 0:
             log(f"[{jtype}] 완료")
             return True
         else:
-            log(f"[{jtype}] 실패 (returncode={result.returncode})")
-            if result.stderr:
-                log(f"오류: {result.stderr[-500:]}")
+            log(f"[{jtype}] 실패 (returncode={proc.returncode})")
             return False
-    except subprocess.TimeoutExpired:
-        log(f"[{jtype}] 2시간 초과 (timeout)")
-        return False
     except Exception as e:
         log(f"[{jtype}] 예외: {e}")
         return False
 
 
 # ─── 렌더링 ──────────────────────────────────────────────────
-def render(word_id: int, db_path: str, exam: str = "TOPIK", lang: str = "EN", fmt: str = "youtube") -> bool:
+def render(word_id: int, db_path: str, exam: str = "TOPIK", lang: str = "EN",
+           fmt: str = "youtube", thumb_style: str = "portrait", thumb_only: bool = False) -> bool:
     # Docker 컨테이너 경로 → 로컬 경로 변환
     # /app/data/ → Z:\Hellowords\data\ (공유 데이터는 youtube 상위 폴더)
     local_db = db_path.replace("/app/data/", str(NAS_DRIVE.parent / "data") + "/").replace("/app/", str(NAS_DRIVE) + "/").replace("/", os.sep)
@@ -293,6 +304,8 @@ def render(word_id: int, db_path: str, exam: str = "TOPIK", lang: str = "EN", fm
         "--lang", lang,
         "--format", fmt,
     ]
+    if thumb_only:
+        cmd.append("--thumb-only")
     log(f"렌더링 시작: word_id={word_id}  (native Python + FFmpeg)")
     log(f"명령어: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(NAS_DRIVE), env=_get_env())
@@ -347,14 +360,16 @@ def _main_loop():
                     if not enabled:
                         log("데스크탑 렌더링 비활성화 상태 — 단어 큐 패스")
                     else:
-                        word_id = q.get("word_id")
-                        db_path = q.get("db_path", "/app/data/LanguageTest/words_db.json")
-                        exam = q.get("exam", "TOPIK")
-                        lang = q.get("lang", "EN")
-                        fmt  = q.get("fmt", "youtube")
-                        log(f"단어 작업 발견: word_id={word_id} ({exam}/{lang}/{fmt})")
+                        word_id    = q.get("word_id")
+                        db_path    = q.get("db_path", "/app/data/LanguageTest/words_db.json")
+                        exam       = q.get("exam", "TOPIK")
+                        lang       = q.get("lang", "EN")
+                        fmt        = q.get("fmt", "youtube")
+                        thumb_style= q.get("thumb_style", "portrait")
+                        thumb_only = q.get("thumb_only", False)
+                        log(f"단어 작업 발견: word_id={word_id} ({exam}/{lang}/{fmt}) thumb_only={thumb_only}")
                         if claim_job(q):
-                            success = render(word_id, db_path, exam, lang, fmt)
+                            success = render(word_id, db_path, exam, lang, fmt, thumb_style, thumb_only)
                             q = read_queue()
                             if success:
                                 mark_done(q)

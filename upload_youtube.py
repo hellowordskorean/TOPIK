@@ -28,6 +28,7 @@ if sys.stdout.encoding != "utf-8":
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -59,14 +60,24 @@ def get_youtube_client(lang: str = "EN"):
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                # 토큰 만료/취소 → 기존 토큰 삭제 후 재인증
+                print(f"  [{lang}] 토큰이 만료되었습니다. 재인증이 필요합니다.")
+                if os.path.exists(token_file):
+                    os.remove(token_file)
+                creds = None
+        if not creds:
             print(f"  [{lang}] YouTube 인증 필요 - 브라우저에서 로그인하세요")
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)  # 0 = 사용 가능한 포트 자동 선택
-        os.makedirs(os.path.dirname(token_file), exist_ok=True)
-        with open(token_file, "wb") as f:
-            pickle.dump(creds, f)
+            creds = flow.run_local_server(port=0)
+        try:
+            os.makedirs(os.path.dirname(token_file), exist_ok=True)
+            with open(token_file, "wb") as f:
+                pickle.dump(creds, f)
+        except OSError:
+            pass  # read-only filesystem (Docker) — 메모리 내 자격증명으로 계속 진행
 
     return build("youtube", "v3", credentials=creds)
 
@@ -110,6 +121,22 @@ PLAYLIST_DESCS_PHRASE = {
     "CN": "真实韩语对话场景！每期10句实用短语，涵盖旅游、生活、工作各种情境。🔔 每周更新，订阅不错过！",
     "VN": "Hội thoại tiếng Hàn thực tế cho mọi tình huống! Mỗi video 10 câu thiết yếu cho du lịch, cuộc sống, công việc tại Hàn Quốc. 🔔 Cập nhật mỗi tuần!",
     "ES": "¡Conversaciones reales en coreano para cada situación! 10 frases esenciales por video — viajes, vida cotidiana y trabajo en Corea. 🔔 ¡Nuevo episodio cada semana!",
+}
+
+# ── 회화 쇼츠(Conversation Shorts) ──────────────────────────
+PLAYLIST_TITLES_PHRASE_SHORTS = {
+    "EN": "🇰🇷 Korean Conversation Shorts — Real Phrases",
+    "JP": "🇰🇷 韓国語会話 Shorts — すぐ使えるフレーズ",
+    "CN": "🇰🇷 韩语对话 Shorts — 实用短句",
+    "VN": "🇰🇷 Hội thoại tiếng Hàn Shorts",
+    "ES": "🇰🇷 Conversación en coreano Shorts",
+}
+PLAYLIST_DESCS_PHRASE_SHORTS = {
+    "EN": "Korean conversation Shorts! Real phrases for everyday situations — 60 seconds each. 🔔 Subscribe for new Shorts every week!",
+    "JP": "韓国語会話Shorts！毎日使えるフレーズを60秒で。🔔 チャンネル登録で毎週更新！",
+    "CN": "韩语对话Shorts！每期60秒实用短句。🔔 订阅不错过！",
+    "VN": "Hội thoại tiếng Hàn Shorts! 60 giây mỗi tập. 🔔 Đăng ký để không bỏ lỡ!",
+    "ES": "¡Conversación en coreano Shorts! 60 segundos por episodio. 🔔 ¡Suscríbete!",
 }
 
 PLAYLIST_DESCS = {
@@ -162,22 +189,22 @@ def get_or_create_playlist(youtube, lang: str, level: int) -> str:
     lang_playlists = playlists.get(lang, {})
     level_key = str(level)
 
-    # 캐시에 있으면 바로 반환
-    if level_key in lang_playlists:
-        playlist_id = lang_playlists[level_key]
-        # 유효성 검증 (삭제된 재생목록 대비)
-        try:
-            youtube.playlists().list(
-                part="id", id=playlist_id
-            ).execute()
-            return playlist_id
-        except Exception:
-            pass  # 삭제된 경우 아래에서 재생성
-
-    # 기존 재생목록에서 검색
     title_tmpl = PLAYLIST_TITLES.get(lang, PLAYLIST_TITLES["EN"])
     target_title = title_tmpl.format(level=level)
 
+    # 캐시에 있으면 items 체크 후 반환
+    if level_key in lang_playlists:
+        playlist_id = lang_playlists[level_key]
+        try:
+            resp = youtube.playlists().list(part="id", id=playlist_id).execute()
+            if resp.get("items"):
+                return playlist_id
+        except Exception:
+            pass
+        # 캐시 무효 → 아래에서 채널 전체 검색
+
+    # 채널의 모든 재생목록 검색 — 중복 방지를 위해 항상 검색
+    found_ids = []
     next_page = None
     while True:
         resp = youtube.playlists().list(
@@ -185,15 +212,21 @@ def get_or_create_playlist(youtube, lang: str, level: int) -> str:
         ).execute()
         for item in resp.get("items", []):
             if item["snippet"]["title"] == target_title:
-                playlist_id = item["id"]
-                lang_playlists[level_key] = playlist_id
-                playlists[lang] = lang_playlists
-                save_playlists(playlists)
-                print(f"  [재생목록] 기존 발견: {target_title} ({playlist_id})")
-                return playlist_id
+                found_ids.append(item["id"])
         next_page = resp.get("nextPageToken")
         if not next_page:
             break
+
+    if found_ids:
+        playlist_id = found_ids[0]   # 중복이 있어도 첫 번째 사용
+        lang_playlists[level_key] = playlist_id
+        playlists[lang] = lang_playlists
+        save_playlists(playlists)
+        if len(found_ids) > 1:
+            print(f"  [재생목록] 중복 발견 {len(found_ids)}개 → 첫 번째 사용: {playlist_id}")
+        else:
+            print(f"  [재생목록] 기존 발견: {target_title} ({playlist_id})")
+        return playlist_id
 
     # 없으면 새로 생성
     desc_tmpl = PLAYLIST_DESCS.get(lang, PLAYLIST_DESCS["EN"])
@@ -222,24 +255,30 @@ def get_or_create_typed_playlist(youtube, lang: str, ptype: str) -> str:
     playlists = load_playlists()
     lang_playlists = playlists.get(lang, {})
 
-    if ptype in lang_playlists:
-        pid = lang_playlists[ptype]
-        try:
-            youtube.playlists().list(part="id", id=pid).execute()
-            return pid
-        except Exception:
-            pass
-
     if ptype == "shorts":
         title = PLAYLIST_TITLES_SHORTS.get(lang, PLAYLIST_TITLES_SHORTS["EN"])
         desc  = PLAYLIST_DESCS_SHORTS.get(lang, PLAYLIST_DESCS_SHORTS["EN"])
     elif ptype == "phrase":
         title = PLAYLIST_TITLES_PHRASE.get(lang, PLAYLIST_TITLES_PHRASE["EN"])
         desc  = PLAYLIST_DESCS_PHRASE.get(lang, PLAYLIST_DESCS_PHRASE["EN"])
+    elif ptype == "phrase_shorts":
+        title = PLAYLIST_TITLES_PHRASE_SHORTS.get(lang, PLAYLIST_TITLES_PHRASE_SHORTS["EN"])
+        desc  = PLAYLIST_DESCS_PHRASE_SHORTS.get(lang, PLAYLIST_DESCS_PHRASE_SHORTS["EN"])
     else:
         raise ValueError(f"알 수 없는 playlist type: {ptype}")
 
-    # 기존 재생목록 검색
+    # 캐시 확인 (items 체크)
+    if ptype in lang_playlists:
+        pid = lang_playlists[ptype]
+        try:
+            resp = youtube.playlists().list(part="id", id=pid).execute()
+            if resp.get("items"):
+                return pid
+        except Exception:
+            pass
+
+    # 채널 전체 검색 — 중복 방지
+    found_ids = []
     next_page = None
     while True:
         resp = youtube.playlists().list(
@@ -247,15 +286,21 @@ def get_or_create_typed_playlist(youtube, lang: str, ptype: str) -> str:
         ).execute()
         for item in resp.get("items", []):
             if item["snippet"]["title"] == title:
-                pid = item["id"]
-                lang_playlists[ptype] = pid
-                playlists[lang] = lang_playlists
-                save_playlists(playlists)
-                print(f"  [재생목록] 기존 발견: {title} ({pid})")
-                return pid
+                found_ids.append(item["id"])
         next_page = resp.get("nextPageToken")
         if not next_page:
             break
+
+    if found_ids:
+        pid = found_ids[0]
+        lang_playlists[ptype] = pid
+        playlists[lang] = lang_playlists
+        save_playlists(playlists)
+        if len(found_ids) > 1:
+            print(f"  [재생목록] 중복 발견 {len(found_ids)}개 → 첫 번째 사용: {pid}")
+        else:
+            print(f"  [재생목록] 기존 발견: {title} ({pid})")
+        return pid
 
     # 새로 생성
     resp = youtube.playlists().insert(
@@ -313,6 +358,7 @@ LANG_META = {
         "pron_label": "Pronunciation",
         "pos_label": "Part of Speech",
         "comment_hook": '🗣️ Challenge: Write your own sentence using "{word}" in the comments! The best one gets pinned 📌',
+        "like_cta": "👍 If today's word was helpful, hit Like — it really helps the channel grow!",
         "subscribe": "🔔 New Korean word dropped EVERY DAY — Subscribe so you never miss one!",
         "study": "📚 Full word list + flashcards → https://studioroomkr.com/HW/topik/en/",
         "hashtags": (
@@ -323,10 +369,15 @@ LANG_META = {
         "tags": [
             "Korean word of the day", "learn Korean", "Korean vocabulary", "TOPIK",
             "Korean for beginners", "Korean language", "Korean study", "daily Korean",
-            "TOPIK vocabulary", "Korean words", "Korean lessons", "speak Korean",
-            "K-pop Korean", "K-drama Korean", "Korean pronunciation", "Hangul",
+            "TOPIK vocabulary", "TOPIK 1", "TOPIK 2", "TOPIK test prep",
+            "Korean words", "Korean lessons", "speak Korean", "Korean 101",
+            "K-pop Korean", "K-drama Korean", "BTS Korean", "BLACKPINK Korean",
+            "Korean pronunciation", "Hangul", "read Hangul", "Korean alphabet",
             "한국어", "한국어 공부", "토픽", "토픽단어", "토픽 단어장",
-            "Korean tutorial", "Korean alphabet", "Korean culture",
+            "Korean tutorial", "Korean culture", "learn Korean fast",
+            "learn Korean free", "Korean conversation", "Korean grammar",
+            "Korean for travel", "easy Korean", "basic Korean words",
+            "Korean flashcards", "how to speak Korean", "Korean listening",
         ],
     },
 
@@ -335,7 +386,7 @@ LANG_META = {
         "default_lang": "ko",
         "level_fmt": lambda lv: f"{lv}級",
         # 제목: 【TOPIK級】형식 + 일본어 의미 명시 (검색 최적화)
-        "title": "【TOPIK{level}】{word}＝{meaning}｜韓国語 今日の一語 #{day:03d}",
+        "title": "🇰🇷【TOPIK{level}】{word}＝{meaning}｜韓国語 今日の一語 #{day:03d}",
         "hook": "ネイティブが毎日使う必須単語！1日1語で韓国語をマスターしよう🔥",
         "word_label": "📌 今日の単語",
         "sent_label": "📖 例文",
@@ -343,6 +394,7 @@ LANG_META = {
         "pron_label": "発音",
         "pos_label": "品詞",
         "comment_hook": '🗣️ 「{word}」を使って例文を作ってみよう！コメントに書いてね👇 上手な文はピン留めするよ📌',
+        "like_cta": "👍 ためになったらいいね！チャンネルの成長につながります！",
         "subscribe": "🔔 毎日新しい韓国語単語を投稿中！チャンネル登録＆ベルマークで通知をONに！",
         "study": "📚 単語一覧＆フラッシュカード → https://studioroomkr.com/HW/topik/jp/",
         "hashtags": (
@@ -355,7 +407,12 @@ LANG_META = {
             "毎日韓国語", "韓国語初心者", "ハングル", "韓国語日常会話",
             "韓国語学習", "韓国語講座", "トピック", "韓国語発音",
             "한국어", "토픽", "토픽단어", "韓国語会話", "K-POP韓国語",
-            "韓流", "韓国旅行", "韓国留学", "TOPIK1級", "TOPIK2級",
+            "韓流", "韓国旅行", "韓国留学", "韓国語ゼロから", "韓国語聞き流し",
+            "BTS韓国語", "BLACKPINK韓国語", "推しの韓国語", "オタ活韓国語",
+            "韓国語リスニング", "韓国語文法", "韓国ドラマ韓国語", "コングリッシュ",
+            "TOPIK1", "TOPIK2", "TOPIK過去問", "TOPIK対策",
+            "韓国語独学", "韓国語基礎", "旅行韓国語", "韓国語フレーズ",
+            "韓国語 挨拶", "韓国語 日常", "韓国語 勉強法", "1日1単語",
         ],
     },
 
@@ -364,7 +421,7 @@ LANG_META = {
         "default_lang": "ko",
         "level_fmt": lambda lv: f"{lv}级",
         # 제목: TOPIK 시험 키워드 강조 (중국인 학습 동기의 핵심)
-        "title": "【TOPIK{level}】{word}＝{meaning} | 每日韩语单词 #{day:03d}",
+        "title": "🇰🇷【TOPIK{level}】{word}＝{meaning} | 每日韩语单词 #{day:03d}",
         "hook": "这个韩语词你会吗？韩国人天天说！一天一词，轻松通过TOPIK🔥",
         "word_label": "📌 今日单词",
         "sent_label": "📖 例句",
@@ -372,6 +429,7 @@ LANG_META = {
         "pron_label": "发音",
         "pos_label": "词性",
         "comment_hook": '🗣️ 用「{word}」造个句子，写在评论区吧！优秀例句会被置顶📌',
+        "like_cta": "👍 学到了就点个赞！这对频道成长很有帮助！",
         "subscribe": "🔔 每天更新韩语单词！订阅频道，开启通知，不错过任何一个词！",
         "study": "📚 全部单词表＋单词卡 → https://studioroomkr.com/HW/topik/cn/",
         "hashtags": (
@@ -385,6 +443,12 @@ LANG_META = {
             "韩语初学者", "韩语课程", "TOPIK考试", "韩语发音",
             "한국어", "토픽", "토픽단어", "韩流", "韩语留学",
             "韩国留学", "韩语打工", "K-POP韩语", "韩语对话",
+            "TOPIK1", "TOPIK2", "TOPIK真题", "TOPIK备考",
+            "韩语自学", "零基础学韩语", "韩语旅游", "韩语短语",
+            "韩语听力", "韩语语法", "韩剧学韩语", "韩综学韩语",
+            "BTS韩语", "BLACKPINK韩语", "防弹少年团", "Kpop韩语学习",
+            "每日一词", "韩语日常", "韩语口语", "学韩文", "背单词",
+            "韩语打卡", "한국어 공부", "한국어 단어",
         ],
     },
 
@@ -401,6 +465,7 @@ LANG_META = {
         "pron_label": "Phát âm",
         "pos_label": "Loại từ",
         "comment_hook": '🗣️ Thử đặt câu với từ "{word}" và viết vào bình luận nhé! Câu hay nhất sẽ được ghim📌',
+        "like_cta": "👍 Nếu học được gì mới, hãy like ủng hộ kênh nhé! Rất có ý nghĩa với mình!",
         "subscribe": "🔔 Mỗi ngày 1 từ mới — Đăng ký và bật thông báo để không bỏ lỡ!",
         "study": "📚 Danh sách từ đầy đủ + flashcard → https://studioroomkr.com/HW/topik/vn/",
         "hashtags": (
@@ -415,6 +480,13 @@ LANG_META = {
             "tiếng Hàn cho người mới", "đi Hàn Quốc", "tiếng Hàn xuất khẩu lao động",
             "한국어", "토픽", "토픽단어", "tiếng Hàn online", "K-pop tiếng Hàn",
             "tiếng Hàn thực tế", "tiếng Hàn du học", "ngữ pháp tiếng Hàn",
+            "TOPIK 1", "TOPIK 2", "đề thi TOPIK", "ôn thi TOPIK",
+            "tự học tiếng Hàn", "tiếng Hàn sơ cấp", "phát âm tiếng Hàn",
+            "tiếng Hàn du lịch", "BTS tiếng Hàn", "BLACKPINK tiếng Hàn",
+            "học Kpop", "Kdrama tiếng Hàn", "xem phim Hàn", "phim Hàn Quốc",
+            "tiếng Hàn cho người lao động", "visa Hàn Quốc", "lao động Hàn Quốc",
+            "mỗi ngày 1 từ", "từ vựng mỗi ngày", "bảng chữ cái Hàn", "Hangul",
+            "học Hangul", "học tiếng Hàn nhanh", "tiếng Hàn dễ học",
         ],
     },
 
@@ -431,6 +503,7 @@ LANG_META = {
         "pron_label": "Pronunciación",
         "pos_label": "Categoría gramatical",
         "comment_hook": '🗣️ ¡Escribe una oración con "{word}" en los comentarios! La mejor se fija arriba📌',
+        "like_cta": "👍 Si aprendiste algo nuevo, ¡dale like! Le ayuda mucho al canal crecer.",
         "subscribe": "🔔 Nueva palabra coreana CADA DÍA — ¡Suscríbete y activa la campanita!",
         "study": "📚 Lista completa de palabras + flashcards → https://studioroomkr.com/HW/topik/sp/",
         "hashtags": (
@@ -445,6 +518,15 @@ LANG_META = {
             "aprender coreano desde cero", "coreano México", "coreano latino",
             "한국어", "토픽", "토픽단어", "K-pop español", "BTS coreano",
             "coreano pronunciación", "frases en coreano", "hangul",
+            "TOPIK 1", "TOPIK 2", "examen TOPIK", "preparación TOPIK",
+            "coreano fácil", "coreano rápido", "clases de coreano",
+            "curso de coreano", "gramática coreana", "conversación coreano",
+            "coreano para viajar", "Corea del Sur", "viaje a Corea",
+            "BLACKPINK español", "Kpop en español", "Kdrama en español",
+            "army español", "blink español", "doramas coreanos",
+            "leer hangul", "alfabeto coreano", "palabras coreanas",
+            "escuchar coreano", "coreano diario", "una palabra al día",
+            "aprender idiomas", "coreano nativo", "frases útiles coreano",
         ],
     },
 }
@@ -452,7 +534,7 @@ LANG_META = {
 
 # ─── 메타데이터 생성 ─────────────────────────────────────────
 def generate_metadata(word: dict, day_number: int, lang: str = "EN",
-                      lang_meaning: str = None) -> dict:
+                      lang_meaning: str = None, fmt: str = "youtube") -> dict:
     """단어 정보로 유튜브 메타데이터 자동 생성 (다국어 지원)
     lang_meaning: 언어별 의미 (없으면 word['meaning'] 사용)
     """
@@ -470,8 +552,13 @@ def generate_metadata(word: dict, day_number: int, lang: str = "EN",
         level=level_str, word=ko_word, meaning=meaning, day=day_number
     )
 
-    # ── 예문 텍스트 (최대 5개, 너무 길면 설명 잘림 방지) ──
-    sents = (word.get("sentences") or word.get("examples") or [])[:5]
+    # ── 예문 텍스트 (본편=전체, 쇼츠 최대 5개) ─────────────
+    all_sents = (word.get("sentences") or word.get("examples") or [])
+    if fmt == "reels":
+        sents = all_sents[:5]
+    else:
+        # 본편: DB의 예문 전체 (보통 10개) — 뜻과 해석을 모두 포함
+        sents = all_sents
     sentences_text = "\n".join(
         f"  {i+1}. {s['ko']}\n     → {s.get(sent_key) or s.get('en', '')}"
         for i, s in enumerate(sents)
@@ -480,6 +567,7 @@ def generate_metadata(word: dict, day_number: int, lang: str = "EN",
     # ── 발음/품사 줄 (없으면 생략) ─────────────────────────
     pron_line = f"🔤 {L['pron_label']}: [{roman}]\n" if roman else ""
     pos_line  = f"📝 {L['pos_label']}: {pos}\n"      if pos   else ""
+    like_line = f"{L['like_cta']}\n" if L.get("like_cta") else ""
 
     # ── 설명 본문 ──────────────────────────────────────────
     description = (
@@ -498,6 +586,7 @@ def generate_metadata(word: dict, day_number: int, lang: str = "EN",
         f"{sentences_text}\n\n"
         f"{'─'*36}\n"
         f"{L['comment_hook'].format(word=ko_word)}\n\n"
+        f"{like_line}"
         f"{L['subscribe']}\n"
         f"{L['study']}\n\n"
         f"{L['hashtags']}"
@@ -585,11 +674,14 @@ def upload_video(
     
     # 썸네일 설정 (있는 경우)
     if thumbnail_path and os.path.exists(thumbnail_path):
-        youtube.thumbnails().set(
-            videoId=video_id,
-            media_body=MediaFileUpload(thumbnail_path)
-        ).execute()
-        print(f"  [OK] 썸네일 설정 완료")
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(thumbnail_path)
+            ).execute()
+            print(f"  [OK] 썸네일 설정 완료")
+        except Exception as e:
+            print(f"  [WARN] 썸네일 설정 실패 (채널 인증 필요): {e}")
     
     return video_id
 
@@ -606,9 +698,13 @@ PHRASE_LANG_META = {
         "subscribe": "🔔 New Korean conversation every week — Subscribe so you never miss one!",
         "study":    "📚 Full phrase list → https://studioroomkr.com/HW/conversation/en/",
         "hashtags": "#LearnKorean #KoreanConversation #KoreanPhrases #Korean #한국어 #KoreanForTravel #KoreanStudy #KDrama #KPop #한국어회화",
+        "like_cta": "👍 Found these phrases useful? Hit Like — it really helps the channel!",
         "tags": ["learn Korean", "Korean conversation", "Korean phrases", "Korean for travel",
                  "Korean for beginners", "Korean language", "Korean study", "daily Korean",
-                 "Korean dialogue", "speak Korean", "한국어", "한국어 회화", "Korean tutorial"],
+                 "Korean dialogue", "speak Korean", "한국어", "한국어 회화", "Korean tutorial",
+                 "K-drama Korean", "K-pop Korean", "TOPIK", "Korean listening",
+                 "Korean pronunciation", "Korean for tourists", "Korean daily life",
+                 "Korean culture", "Korean lessons", "한국어회화", "Korea travel phrases"],
     },
     "JP": {
         "lang_key": "jp",
@@ -620,6 +716,7 @@ PHRASE_LANG_META = {
         "subscribe": "🔔 毎週新しい韓国語会話を投稿！チャンネル登録＆通知ON！",
         "study":    "📚 フレーズ一覧 → https://studioroomkr.com/HW/conversation/jp/",
         "hashtags": "#韓国語会話 #韓国語フレーズ #韓国語 #韓国語勉強 #ハングル #韓国旅行 #한국어 #韓国語初心者 #韓流 #韓国語学習",
+        "like_cta": "👍 役に立ったらいいね！チャンネルの成長につながります！",
         "tags": ["韓国語会話", "韓国語フレーズ", "韓国語", "韓国語勉強", "ハングル",
                  "韓国旅行", "韓国語初心者", "韓流", "韓国語学習", "한국어", "韓国語日常会話"],
     },
@@ -633,8 +730,11 @@ PHRASE_LANG_META = {
         "subscribe": "🔔 每周更新韩语对话！订阅频道不错过！",
         "study":    "📚 短语列表 → https://studioroomkr.com/HW/conversation/cn/",
         "hashtags": "#韩语对话 #韩语短语 #韩语 #学韩语 #韩国语 #韩国旅游 #한국어 #韩语学习 #韩流 #韩语会话",
+        "like_cta": "👍 学到了就点个赞！这对频道成长很有帮助！",
         "tags": ["韩语对话", "韩语短语", "韩语", "学韩语", "韩国语", "韩国旅游",
-                 "韩语学习", "韩流", "韩语会话", "한국어", "TOPIK"],
+                 "韩语学习", "韩流", "韩语会话", "한국어", "TOPIK",
+                 "韩语入门", "韩语初学者", "韩语发音", "实用韩语", "韩语旅行",
+                 "韩语日常", "韩语课程", "韩语听力", "韩语短句"],
     },
     "VN": {
         "lang_key": "vn",
@@ -646,6 +746,7 @@ PHRASE_LANG_META = {
         "subscribe": "🔔 Video hội thoại mới mỗi tuần — Đăng ký để không bỏ lỡ!",
         "study":    "📚 Danh sách câu → https://studioroomkr.com/HW/conversation/vn/",
         "hashtags": "#tiếngHàn #hộithoạitiếngHàn #họctiếngHàn #한국어 #tiếngHànthựctế #HànQuốc #EPS_TOPIK #KPop #KDrama #tiếngHàndulich",
+        "like_cta": "👍 Nếu video này hữu ích, hãy like ủng hộ kênh nhé!",
         "tags": ["tiếng Hàn", "hội thoại tiếng Hàn", "học tiếng Hàn", "tiếng Hàn thực tế",
                  "Hàn Quốc", "EPS TOPIK", "한국어", "tiếng Hàn du lịch", "câu tiếng Hàn"],
     },
@@ -659,6 +760,7 @@ PHRASE_LANG_META = {
         "subscribe": "🔔 Nueva conversación en coreano cada semana — ¡Suscríbete!",
         "study":    "📚 Lista de frases → https://studioroomkr.com/HW/conversation/es/",
         "hashtags": "#coreano #aprendecoreano #conversaciónEnCoreano #한국어 #coreanoPráctico #KPop #KDrama #coreanoDesdeCero #frasesEnCoreano #viajeCorea",
+        "like_cta": "👍 Si las frases te fueron útiles, ¡dale like! Ayuda mucho al canal.",
         "tags": ["coreano", "aprende coreano", "conversación en coreano", "frases en coreano",
                  "coreano práctico", "한국어", "KPop", "KDrama", "viaje a Corea", "coreano desde cero"],
     },
@@ -683,6 +785,7 @@ def generate_phrase_metadata(situation: dict, num: int, lang: str = "EN") -> dic
         if p.get("my_line")
     )
 
+    like_line = f"{L['like_cta']}\n" if L.get("like_cta") else ""
     description = (
         f"{L['hook'].format(situation=situation_name)}\n\n"
         f"{'─'*36}\n"
@@ -690,6 +793,7 @@ def generate_phrase_metadata(situation: dict, num: int, lang: str = "EN") -> dic
         f"{'─'*36}\n"
         f"{phrase_lines}\n\n"
         f"{'─'*36}\n"
+        f"{like_line}"
         f"{L['subscribe']}\n"
         f"{L['study']}\n\n"
         f"{L['hashtags']}"
@@ -822,10 +926,10 @@ if __name__ == "__main__":
 
     # 로그 로드
     log = load_upload_log(args.log)
-    day_number = log["last_day"] + 1
+    day_number = word["id"]  # 단어 ID를 그대로 에피소드 번호로 사용
 
     # 메타데이터 생성
-    metadata = generate_metadata(word, day_number, lang=args.lang)
+    metadata = generate_metadata(word, day_number, lang=args.lang, fmt="reels" if args.shorts else "youtube")
 
     # 업로드
     video_id = upload_video(
@@ -845,7 +949,6 @@ if __name__ == "__main__":
         print(f"  [WARN] 재생목록 추가 실패: {e}")
 
     # 로그 저장
-    log["last_day"] = day_number
     log["uploaded"].append({
         "day": day_number,
         "word_id": args.word_id,
