@@ -31,6 +31,8 @@ except ImportError:
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from google.cloud import texttospeech
+from google import genai as _genai
+from google.genai import types as _genai_types
 
 try:
     from make_thumbnail import make_conv_thumbnail as _make_conv_thumb
@@ -113,11 +115,11 @@ def _get_supporting_species(theme_id: int) -> str:
 _face_cache: dict = {}
 
 def _load_face(slug: str, size: int = 100) -> "Image.Image | None":
-    """assets/characters/faces/{slug}.png 를 원형 마스크로 로드 (캐시)"""
+    """assets/characters/topik/faces/{slug}.png 를 원형 마스크로 로드 (캐시)"""
     key = (slug, size)
     if key in _face_cache:
         return _face_cache[key]
-    path = _app_path(f"assets/characters/faces/{slug}.png")
+    path = _app_path(f"assets/characters/topik/faces/{slug}.png")
     if not os.path.exists(path):
         _face_cache[key] = None
         return None
@@ -496,96 +498,271 @@ def tl_font(lang: str, size: int) -> ImageFont.FreeTypeFont:
     """번역 언어에 맞는 폰트"""
     return get_font(_lang_font_key(lang, bold=False), size)
 
-# ─── TTS ──────────────────────────────────────────────────────
-# 학습자(my_line) — 자연스러운 여성 목소리 (피치 조작 없음, 아티팩트 방지)
-_TTS_VOICES = {
-    "ko": ("ko-KR", "ko-KR-Neural2-A", texttospeech.SsmlVoiceGender.FEMALE),
-    "en": ("en-US", "en-US-Neural2-F", texttospeech.SsmlVoiceGender.FEMALE),
-    "jp": ("ja-JP", "ja-JP-Neural2-B", texttospeech.SsmlVoiceGender.FEMALE),
-    "cn": ("cmn-CN", "cmn-CN-Wavenet-A", texttospeech.SsmlVoiceGender.FEMALE),
-    "vn": ("vi-VN", "vi-VN-Neural2-A", texttospeech.SsmlVoiceGender.FEMALE),
-    "es": ("es-US", "es-US-Neural2-A", texttospeech.SsmlVoiceGender.FEMALE),
-}
-_LEARNER_PITCH = 0.0   # 피치 고정 — Neural2 pitch shift는 아티팩트 발생
+# ─── TTS (Gemini 2.5 Pro TTS) ────────────────────────────────
+# 단어 영상(make_video.py)과 동일한 TTS 스택
+# 주인공(my_line): 한국어/학습 언어 모두 Leda (귀여운 여자아이)
+# 상대방(response): theme_id % 30 으로 선택되는 조연 동물 목소리
+_GEMINI_TTS_MODEL  = "gemini-3.1-flash-tts-preview"
+_GEMINI_VOICE_KO   = os.environ.get("GEMINI_VOICE_KO",   "Leda")  # 주인공
+_GEMINI_VOICE_ANIMALS = [
+    # ── 기존 10종 ──
+    os.environ.get("GEMINI_VOICE_ANIMAL_0",  "Kore"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_1",  "Charon"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_2",  "Aoede"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_3",  "Enceladus"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_4",  "Fenrir"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_5",  "Pulcherrima"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_6",  "Vindemiatrix"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_7",  "Puck"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_8",  "Sulafat"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_9",  "Rasalgethi"),
+    # ── 추가 20종 ──
+    os.environ.get("GEMINI_VOICE_ANIMAL_10", "Laomedeia"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_11", "Erinome"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_12", "Zephyr"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_13", "Schedar"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_14", "Umbriel"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_15", "Gacrux"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_16", "Alnilam"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_17", "Autonoe"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_18", "Callirrhoe"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_19", "Iapetus"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_20", "Sadaltager"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_21", "Despina"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_22", "Achird"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_23", "Sadachbia"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_24", "Orus"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_25", "Algieba"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_26", "Zubenelgenubi"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_27", "Achernar"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_28", "Algenib"),
+    os.environ.get("GEMINI_VOICE_ANIMAL_29", "Leda"),
+]
+_gemini_client = None
 
-# 응답자(response) — 학습자와 다른 목소리 (성별 무관, 피치 기본값)
-_TTS_VOICES_RESP = {
-    "ko": ("ko-KR", "ko-KR-Neural2-C", texttospeech.SsmlVoiceGender.MALE),
-    "en": ("en-US", "en-US-Neural2-D", texttospeech.SsmlVoiceGender.MALE),
-    "jp": ("ja-JP", "ja-JP-Neural2-C", texttospeech.SsmlVoiceGender.MALE),
-    "cn": ("cmn-CN", "cmn-CN-Wavenet-B", texttospeech.SsmlVoiceGender.MALE),
-    "vn": ("vi-VN", "vi-VN-Neural2-D", texttospeech.SsmlVoiceGender.MALE),
-    "es": ("es-US", "es-US-Neural2-B", texttospeech.SsmlVoiceGender.MALE),
+# ── 종결어미 뭉개짐 완화 ───────────────────────────────────────
+# 문장 끝에 마침표가 없으면 Gemini TTS가 마지막 음절(특히 "~요", 영어 `-ed`,
+# 일본어 「です」)을 페이드아웃하며 삼키는 현상이 잦음. 구두점이 있으면 완결된
+# 문장으로 인식해 마지막 음절까지 제대로 발음함.
+_TERMINAL_PUNCT = {
+    '.', '!', '?', ',', ';', ':',
+    '。', '！', '？', '，', '；', '：',
+    '…', '~', '♪', '♥', '★',
 }
 
-def _conv_tts_cache_path(cache_path_override: str, text: str, lang: str, slow: bool,
-                         voice_name: str = "", pitch: float = 0.0) -> str:
-    """회화 TTS 캐시 경로 반환 (명시적 경로 우선, 없으면 misc MD5 폴백)"""
+def _ensure_terminal_punct(text: str) -> str:
+    """문장 끝에 종결 부호가 없으면 '.' 을 붙여 Gemini TTS 가 끝 음절을 삼키지 않게 함."""
+    t = text.strip()
+    if not t:
+        return text
+    if t[-1] in _TERMINAL_PUNCT:
+        return t
+    return t + "."
+
+# ── TTS 품질 검증 (오디오 길이 기반) ───────────────────────────
+# Gemini TTS 가 드물게 텍스트 중간을 건너뛰거나 말미를 삼켜 비정상적으로 짧은
+# 오디오를 반환하는 경우를 감지. 언어별 "가장 빠른 자연 발화 속도" 대비 0.8 배
+# 보다 짧으면 뭉개짐으로 간주하고 재시도.
+_MIN_CHAR_RATES = {
+    # chars/sec — 해당 언어에서 관측되는 자연 발화 상한선
+    "ko": 11.0,
+    "en": 22.0,
+    "jp": 13.0,
+    "cn": 9.0,
+    "vn": 20.0,
+    "es": 20.0,
+}
+
+def _tts_duration_ok(text: str, audio_path: str, lang: str) -> bool:
+    """오디오 길이가 텍스트 길이에 비해 납득 가능한지 판단. False면 재시도."""
+    try:
+        dur = get_audio_duration(audio_path)
+    except Exception:
+        return True   # 길이 측정 실패 시 통과시킴 (ffprobe 문제)
+    if dur <= 0:
+        return False
+    n = len(text.strip())
+    if n <= 1:
+        return dur >= 0.15
+    rate = _MIN_CHAR_RATES.get(lang.lower(), 18.0)
+    min_expected = n / rate
+    return dur >= min_expected * 0.8
+
+def _get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(".env 에 GEMINI_API_KEY 가 없습니다")
+        _gemini_client = _genai.Client(api_key=api_key)
+    return _gemini_client
+
+def _pcm_to_mp3(pcm_data: bytes, output_path: str, sample_rate: int = 24000):
+    """Raw PCM (16-bit mono) → MP3 변환 (FFmpeg 사용)"""
+    import wave
+    wav_tmp = output_path + ".tmp.wav"
+    try:
+        with wave.open(wav_tmp, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_data)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav_tmp, "-q:a", "0", output_path],
+            capture_output=True, check=True
+        )
+    finally:
+        if os.path.exists(wav_tmp):
+            os.unlink(wav_tmp)
+
+def _conv_tts_cache_path(cache_path_override: str, text: str, voice_name: str, slow: bool) -> str:
+    """회화 TTS 캐시 경로 (명시적 경로 우선, 없으면 misc MD5 폴백).
+    모델 ID를 키에 포함해 모델 교체 시 기존 캐시가 자동 무효화됨."""
     if cache_path_override:
         return cache_path_override
     import hashlib
-    key = hashlib.md5(f"gcp:{lang}:{slow}:{voice_name}:{pitch}:{text}".encode()).hexdigest()
+    key = hashlib.md5(f"{_GEMINI_TTS_MODEL}:{voice_name}:{slow}:{text}".encode()).hexdigest()
     d = _app_path("assets/tts_cache/misc")
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, f"{key}.mp3")
 
-def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
-                   cache_path: str = None, is_resp: bool = False):
-    """GCP TTS 음성 생성 (캐시 지원 + 텍스트 변경 감지).
-    is_resp=False → 학습자 목소리 (여아, pitch +4)
-    is_resp=True  → 응답자 목소리 (다른 목소리, pitch 기본값)
-    cache_path 명시 시: 파일명이 예문 번호로 고정되므로 .txt 짝 파일로
-    텍스트 변경 감지 필수. MD5 캐시는 키 자체가 텍스트에 묶여 있어 안전.
-    """
-    voice_table = _TTS_VOICES_RESP if is_resp else _TTS_VOICES
-    lc, vname, gender = voice_table.get(lang.lower(), voice_table.get("en", _TTS_VOICES["en"]))
-    pitch = 0.0 if is_resp else _LEARNER_PITCH
+# GCP TTS 폴백 음성 (Gemini TTS 실패 시)
+_GCP_TTS_VOICES = {
+    "ko": ("ko-KR", "ko-KR-Neural2-A"),
+    "en": ("en-US", "en-US-Neural2-F"),
+    "jp": ("ja-JP", "ja-JP-Neural2-B"),
+    "cn": ("cmn-CN", "cmn-CN-Wavenet-A"),
+    "vn": ("vi-VN", "vi-VN-Neural2-A"),
+    "es": ("es-US", "es-US-Neural2-A"),
+}
 
-    cp = _conv_tts_cache_path(cache_path, text, lang, slow, vname, pitch)
-    _is_md5_cache = (cache_path is None)
-    if os.path.exists(cp) and os.path.getsize(cp) > 0:
-        txt_path = cp + ".txt"
+def _gcp_tts_fallback(text: str, lang: str, output_path: str, slow: bool = False) -> bool:
+    """Google Cloud TTS 폴백 (Gemini TTS 실패 시)"""
+    try:
+        _sa = os.path.join(os.path.dirname(__file__), "secrets", "gcp_service_account.json")
+        if os.path.exists(_sa) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _sa
+        client = texttospeech.TextToSpeechClient()
+        lc, vname = _GCP_TTS_VOICES.get(lang.lower(), _GCP_TTS_VOICES["en"])
+        resp = client.synthesize_speech(
+            input=texttospeech.SynthesisInput(text=text),
+            voice=texttospeech.VoiceSelectionParams(
+                language_code=lc, name=vname,
+                ssml_gender=texttospeech.SsmlVoiceGender.FEMALE),
+            audio_config=texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3,
+                speaking_rate=0.85 if slow else 1.0,
+            )
+        )
+        with open(output_path, "wb") as f:
+            f.write(resp.audio_content)
+        return True
+    except Exception as e:
+        print(f"  GCP TTS 폴백 실패: {e}")
+        return False
+
+def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
+                   voice: str = None, cache_path: str = None):
+    """Gemini 2.5 Pro TTS → GCP TTS 폴백 (단어 영상과 동일한 스택).
+    voice: 명시적 목소리 (None이면 ko→Leda, 그 외→첫 번째 조연)
+    cache_path: 명시적 캐시 경로 (None이면 misc/MD5)
+    slow: GCP 폴백 시에만 적용 (Gemini TTS는 speaking_rate 미지원)
+    """
+    if voice is None:
+        voice = _GEMINI_VOICE_KO if lang.lower() == "ko" else _GEMINI_VOICE_ANIMALS[0]
+    voice_name = voice
+
+    # Gemini TTS 에 보낼 텍스트 = 종결 부호 보정된 텍스트 (캐시 키/검증도 이 값 기준)
+    prep_text = _ensure_terminal_punct(text)
+    # .txt 짝 파일에 저장·비교할 서명: 모델 ID 포함해 모델 교체 시 자동 무효화
+    cache_sig = f"{_GEMINI_TTS_MODEL}\n{prep_text}"
+
+    # ── 캐시 확인 (텍스트 변경 감지) ──
+    if cache_path is None:
+        cache_path = _conv_tts_cache_path(None, prep_text, voice_name, slow)
+        _is_md5_cache = True
+    else:
+        _is_md5_cache = False
+    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+        txt_path = cache_path + ".txt"
         if os.path.exists(txt_path):
             try:
                 cached_text = open(txt_path, encoding="utf-8").read()
             except Exception:
                 cached_text = None
-            if cached_text == text:
-                shutil.copy2(cp, output_path)
+            if cached_text == cache_sig:
+                shutil.copy2(cache_path, output_path)
                 return
-            # 텍스트 변경 — 무효화 후 재생성
-            os.remove(cp); os.remove(txt_path)
+            os.remove(cache_path); os.remove(txt_path)
         elif _is_md5_cache:
-            # MD5 캐시는 키가 텍스트에 묶여 있으므로 안전
-            shutil.copy2(cp, output_path)
+            shutil.copy2(cache_path, output_path)
             return
         else:
-            # 명시적 cache_path인데 .txt 없음 — 옛 버전 캐시일 수 있으므로 안전하게 무효화
-            print(f"  [cache] .txt 짝 파일 없음 — 재생성: {os.path.basename(cp)}")
-            os.remove(cp)
+            print(f"  [cache] .txt 짝 파일 없음 — 재생성: {os.path.basename(cache_path)}")
+            os.remove(cache_path)
 
-    _sa = os.path.join(os.path.dirname(__file__), "secrets", "gcp_service_account.json")
-    if os.path.exists(_sa) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _sa
-    client = texttospeech.TextToSpeechClient()
-    synthesis_input = texttospeech.SynthesisInput(text=text)
-    voice = texttospeech.VoiceSelectionParams(
-        language_code=lc, name=vname, ssml_gender=gender)
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.MP3,
-        speaking_rate=0.85 if slow else 1.0,
-        pitch=pitch,
-    )
-    response = client.synthesize_speech(
-        input=synthesis_input, voice=voice, audio_config=audio_config)
-    with open(output_path, "wb") as f:
-        f.write(response.audio_content)
+    client = _get_gemini_client()
+    last_err = None
+    # 품질 검증 포함 재시도 루프: 최대 3회 (API 에러 + 뭉개짐 감지 모두 재시도 트리거)
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=_GEMINI_TTS_MODEL,
+                contents=prep_text,
+                config=_genai_types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=_genai_types.SpeechConfig(
+                        voice_config=_genai_types.VoiceConfig(
+                            prebuilt_voice_config=_genai_types.PrebuiltVoiceConfig(
+                                voice_name=voice_name
+                            )
+                        )
+                    )
+                )
+            )
+            cands = getattr(response, "candidates", None) or []
+            if not cands:
+                raise RuntimeError(f"TTS 후보 없음 (attempt {attempt+1})")
+            content = getattr(cands[0], "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if not parts:
+                finish = getattr(cands[0], "finish_reason", "unknown")
+                raise RuntimeError(f"TTS 빈 응답 finish_reason={finish} (attempt {attempt+1}): {text[:40]!r}")
+            pcm_data = parts[0].inline_data.data
+            _pcm_to_mp3(pcm_data, output_path)
+            # 품질 검증: 오디오가 텍스트 대비 비정상적으로 짧으면 재시도
+            if not _tts_duration_ok(prep_text, output_path, lang):
+                dur = get_audio_duration(output_path)
+                raise RuntimeError(
+                    f"TTS 품질 미달 (attempt {attempt+1}): "
+                    f"audio={dur:.2f}s, text={len(prep_text)}ch — {text[:30]!r}"
+                )
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                print(f"  [TTS 재시도 {attempt+1}/3] {e}")
+                import time as _time
+                _time.sleep(2)
+    else:
+        print(f"  Gemini TTS 3회 실패, GCP 폴백 시도: {last_err}")
+        if not _gcp_tts_fallback(text, lang, output_path, slow):
+            raise RuntimeError(f"TTS 모두 실패 (Gemini+GCP): {last_err}") from last_err
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            shutil.copy2(output_path, cache_path)
+            try:
+                with open(cache_path + ".txt", "w", encoding="utf-8") as _f:
+                    _f.write(cache_sig)
+            except Exception:
+                pass
+        return
+
     # 캐시 저장 (+ .txt 짝 파일)
     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-        shutil.copy2(output_path, cp)
+        shutil.copy2(output_path, cache_path)
         try:
-            with open(cp + ".txt", "w", encoding="utf-8") as _f:
-                _f.write(text)
+            with open(cache_path + ".txt", "w", encoding="utf-8") as _f:
+                _f.write(cache_sig)
         except Exception:
             pass
 
@@ -832,7 +1009,7 @@ def render_dialogue_frame(
             if not tl_text or _count_tl_lines(_fnt, tl_text) <= 2:
                 tl_fs = _fs; break
         tl_font_obj = tl_font(lang, tl_fs)
-        tl_lh       = int(tl_fs * 1.4)
+        tl_lh       = int(tl_fs * 1.2)
 
         # 1) 한국어 — 단어 단위 자연 줄바꿈 (폰트 자동 축소)
         ko_font_key = "korean_bold"
@@ -1456,6 +1633,14 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
     def _cp(name: str) -> str:
         return os.path.join(_cache_dir, name)
 
+    # ── 이 영상에서 사용할 목소리 2개 확정 ──
+    # 주인공(my_line): Leda (귀여운 여자아이)
+    # 상대방(response): theme_id 로 결정되는 조연 동물 (언어와 무관하게 동일 목소리 사용)
+    _theme_idx = int(_theme_id) if str(_theme_id).isdigit() else (hash(str(_theme_id)) & 0xffffffff)
+    _voice_my   = _GEMINI_VOICE_KO
+    _voice_resp = _GEMINI_VOICE_ANIMALS[_theme_idx % len(_GEMINI_VOICE_ANIMALS)]
+    print(f"  목소리 — 주인공: {_voice_my} / 상대방: {_voice_resp}")
+
     # TTS 생성 — 쌍당 4개: my_ko / my_tl / resp_ko / resp_tl
     phrase_audios = []   # list of (my_ko_path, my_tl_path, resp_ko_path, resp_tl_path)
     for i, ph in enumerate(phrases):
@@ -1466,37 +1651,35 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
 
         my_ko = ph.get("my_ko", "")
         if my_ko:
-            text_to_speech(my_ko, "ko", my_ko_path, slow=True,
-                           cache_path=_cp(f"p{i+1:02d}_my_ko_girl.mp3"))
+            text_to_speech(my_ko, "ko", my_ko_path, slow=True, voice=_voice_my,
+                           cache_path=_cp(f"p{i+1:02d}_my_ko_{_voice_my}.mp3"))
         else:
             _make_silence(my_ko_path)
 
         my_tl = ph.get(f"my_{sent_key}", ph.get("my_en", ""))
         if my_tl:
-            text_to_speech(my_tl, lang_lower, my_tl_path,
-                           cache_path=_cp(f"p{i+1:02d}_my_{lang_lower}_girl.mp3"))
+            text_to_speech(my_tl, lang_lower, my_tl_path, voice=_voice_my,
+                           cache_path=_cp(f"p{i+1:02d}_my_{lang_lower}_{_voice_my}.mp3"))
         else:
             _make_silence(my_tl_path)
 
         resp_ko = ph.get("resp_ko", "")
         if resp_ko:
-            text_to_speech(resp_ko, "ko", resp_ko_path, slow=True,
-                           cache_path=_cp(f"p{i+1:02d}_resp_ko.mp3"),
-                           is_resp=True)
+            text_to_speech(resp_ko, "ko", resp_ko_path, slow=True, voice=_voice_resp,
+                           cache_path=_cp(f"p{i+1:02d}_resp_ko_{_voice_resp}.mp3"))
         else:
             _make_silence(resp_ko_path, 0.3)
 
         resp_tl = ph.get(f"resp_{sent_key}", ph.get("resp_en", ""))
         if resp_tl:
-            text_to_speech(resp_tl, lang_lower, resp_tl_path,
-                           cache_path=_cp(f"p{i+1:02d}_resp_{lang_lower}.mp3"),
-                           is_resp=True)
+            text_to_speech(resp_tl, lang_lower, resp_tl_path, voice=_voice_resp,
+                           cache_path=_cp(f"p{i+1:02d}_resp_{lang_lower}_{_voice_resp}.mp3"))
         else:
             _make_silence(resp_tl_path, 0.3)
 
         phrase_audios.append((my_ko_path, my_tl_path, resp_ko_path, resp_tl_path))
 
-    # 인트로 TTS — 상황 제목을 해당 언어로 읽어줌
+    # 인트로 TTS — 상황 제목을 해당 언어로 읽어줌 (주인공 목소리 = 내레이터)
     _LSK_INTRO = {"EN": "situation_en", "JP": "situation_jp",
                   "CN": "situation_cn", "VN": "situation_vn", "ES": "situation_es"}
     sit_title = (theme.get(_LSK_INTRO.get(lang.upper(), ""), "")
@@ -1506,8 +1689,8 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
     intro_tts_dur  = 0.0
     if sit_title and fmt != "reels":
         try:
-            intro_cache = _cp(f"intro_{lang_lower}.mp3")
-            text_to_speech(sit_title, lang_lower, intro_tts_path,
+            intro_cache = _cp(f"intro_{lang_lower}_{_voice_my}.mp3")
+            text_to_speech(sit_title, lang_lower, intro_tts_path, voice=_voice_my,
                            cache_path=intro_cache)
             intro_tts_dur = get_audio_duration(intro_tts_path)
         except Exception as e:
@@ -1535,8 +1718,12 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
         POST_GAP    = 0.8
     FADE_FRAMES = 9     # 페이드 프레임 수 (0.3s)
 
+    # 본편(youtube)은 각 상황을 2번씩 반복(주인공→상대방을 두 번), 쇼츠는 1번만
+    REPEATS     = 1 if fmt == "reels" else 2
+    REPEAT_GAP  = 0.7   # 반복 사이 간격
+
     phrase_durations = []
-    phrase_seg_durs  = []   # [(my_ko_d, my_tl_d, resp_ko_d, resp_tl_d), ...]
+    phrase_seg_durs  = []   # [(my_ko_d, my_tl_d, resp_ko_d, resp_tl_d, rep_dur), ...]
     audio_timeline   = []   # (path, abs_start_time)
 
     # 인트로 TTS를 0.4s 오프셋에 삽입
@@ -1551,23 +1738,38 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
         resp_ko_dur = get_audio_duration(resp_ko_p)
         resp_tl_dur = get_audio_duration(resp_tl_p)
 
-        phrase_dur = (PRE_GAP + my_ko_dur + KO_TL_GAP + my_tl_dur
-                      + PAIR_GAP + resp_ko_dur + KO_TL_GAP + resp_tl_dur + POST_GAP)
+        # 단일 턴(주인공→상대방) 길이
+        rep_dur = (PRE_GAP + my_ko_dur + KO_TL_GAP + my_tl_dur
+                   + PAIR_GAP + resp_ko_dur + KO_TL_GAP + resp_tl_dur + POST_GAP)
+        # 반복 포함 전체 구문 길이
+        phrase_dur = rep_dur * REPEATS + REPEAT_GAP * (REPEATS - 1)
         phrase_durations.append(phrase_dur)
-        phrase_seg_durs.append((my_ko_dur, my_tl_dur, resp_ko_dur, resp_tl_dur))
+        phrase_seg_durs.append((my_ko_dur, my_tl_dur, resp_ko_dur, resp_tl_dur, rep_dur))
 
-        t_my_ko   = t + PRE_GAP
-        t_my_tl   = t_my_ko + my_ko_dur + KO_TL_GAP
-        t_resp_ko = t_my_tl + my_tl_dur + PAIR_GAP
-        t_resp_tl = t_resp_ko + resp_ko_dur + KO_TL_GAP
+        for r in range(REPEATS):
+            rep_offset = r * (rep_dur + REPEAT_GAP)
+            t_my_ko   = t + rep_offset + PRE_GAP
+            t_my_tl   = t_my_ko + my_ko_dur + KO_TL_GAP
+            t_resp_ko = t_my_tl + my_tl_dur + PAIR_GAP
+            t_resp_tl = t_resp_ko + resp_ko_dur + KO_TL_GAP
 
-        audio_timeline.append((my_ko_p,   t_my_ko))
-        audio_timeline.append((my_tl_p,   t_my_tl))
-        audio_timeline.append((resp_ko_p, t_resp_ko))
-        audio_timeline.append((resp_tl_p, t_resp_tl))
+            audio_timeline.append((my_ko_p,   t_my_ko))
+            audio_timeline.append((my_tl_p,   t_my_tl))
+            audio_timeline.append((resp_ko_p, t_resp_ko))
+            audio_timeline.append((resp_tl_p, t_resp_tl))
         t += phrase_dur
 
     total_duration = INTRO_DUR + sum(phrase_durations) + OUTRO_DUR + ENDING_DUR
+
+    # 본편(youtube): 3분 이하 영상은 유튜브가 Shorts로 분류하므로 최소 3분 1초 보장
+    # → 아웃트로 프레임을 더 오래 보여주는 방식으로 연장 (TTS/구문 오디오는 그대로)
+    if fmt != "reels":
+        MIN_YT_DUR = 181.0   # 3:01
+        if total_duration < MIN_YT_DUR:
+            extra = MIN_YT_DUR - total_duration
+            OUTRO_DUR += extra
+            total_duration = INTRO_DUR + sum(phrase_durations) + OUTRO_DUR + ENDING_DUR
+            print(f"  [본편] 3:01 미만 → 아웃트로 {extra:.1f}s 연장 (총 {total_duration:.1f}s)")
 
     # reels 포맷: 58초 초과 시 마지막 구문을 제거해 쇼츠 60초 제한을 맞춤
     if fmt == "reels":
@@ -1634,12 +1836,14 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
 
     for i, ph in enumerate(phrases):
         ph_frames = phrase_frames[i]
-        my_ko_d, my_tl_d, resp_ko_d, resp_tl_d = phrase_seg_durs[i]
+        my_ko_d, my_tl_d, resp_ko_d, resp_tl_d, rep_dur = phrase_seg_durs[i]
 
+        # 단일 반복 내부 타이밍
         t_my_start   = PRE_GAP
         t_my_end     = t_my_start + my_ko_d + KO_TL_GAP + my_tl_d
         t_resp_start = t_my_end + PAIR_GAP
         t_resp_end   = t_resp_start + resp_ko_d + KO_TL_GAP + resp_tl_d
+        cycle        = rep_dur + REPEAT_GAP   # 다음 반복까지의 주기
 
         # 구문별 bob 조합 캐시 (동일 bob 값 재사용)
         _ph_cache: dict = {}
@@ -1651,9 +1855,15 @@ def create_conversation_video(theme: dict, phrases: list, output_path: str,
                     f"3/4 프레임 렌더링 중... ({i+1}/{total})",
                     pct=_pct(rendered), theme_id=theme["id"], lang=lang,
                     frame=rendered, total_frames=total_frames)
-            phrase_t = f / FPS
+            phrase_t_abs = f / FPS
+            # 현재 반복 번호와 반복 내 시간
+            rep_idx = int(phrase_t_abs // cycle) if cycle > 0 else 0
+            phrase_t = phrase_t_abs - rep_idx * cycle
 
-            if t_my_start <= phrase_t < t_my_end:
+            if phrase_t >= rep_dur:
+                # 반복 사이 간격 — bob 없음
+                bob_my = bob_resp = 0
+            elif t_my_start <= phrase_t < t_my_end:
                 bob_my   = int(BOB_AMP * math.sin(2 * math.pi * BOB_FREQ * phrase_t))
                 bob_resp = 0
             elif t_resp_start <= phrase_t < t_resp_end:

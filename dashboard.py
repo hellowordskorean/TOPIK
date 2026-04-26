@@ -177,10 +177,21 @@ def render_db_path_for(exam, lang, level):
     LT = f"{DATA_ROOT}/LanguageTest"
     fallback = f"{LT}/words_db.json"
     if exam == "TOPIK":
-        # ES → SP 폴더 매핑 (스페인어 데이터는 SP/ 디렉토리에 저장)
+        # 1순위: per-language per-level DB (lang_localized situation+translation)
+        lang_lc = lang.lower()
+        per_lv = f"{LT}/words_db_{lang_lc}_{level}.json"
+        if os.path.exists(per_lv):
+            return per_lv
+        # 2순위: per-language full DB
+        per_lang = f"{LT}/words_db_{lang_lc}.json"
+        if os.path.exists(per_lang):
+            return per_lang
+        # 3순위 (legacy): 옛 TOPIK/ 폴더 — 보통 stale, 사용 안 함
         folder = "SP" if lang == "ES" else lang
-        path = f"{LT}/TOPIK/{folder}/topik_{level}.json"
-        return path if os.path.exists(path) else fallback
+        legacy = f"{LT}/TOPIK/{folder}/topik_{level}.json"
+        if os.path.exists(legacy):
+            return legacy
+        return fallback
     # 다른 시험: 파일명에서 level 매칭
     exam_dir = f"{LT}/{exam}"
     if os.path.isdir(exam_dir):
@@ -1280,7 +1291,10 @@ def run_upload(word, video_path, exam="TOPIK", lang="EN", publish_at=None, fmt="
             if fmt == "reels":
                 pl_id = get_or_create_typed_playlist(youtube, lang, "shorts")
             else:
-                pl_id = get_or_create_playlist(youtube, lang, word.get("level", 1))
+                pl_id = get_or_create_playlist(
+                    youtube, lang,
+                    word.get("topik_level", word.get("level", 1))
+                )
             add_to_playlist(youtube, pl_id, video_id)
             print(f"  [playlist] {lang}/{fmt} 재생목록 추가 완료")
         except Exception as pe:
@@ -2183,13 +2197,8 @@ def _phrase_render_job(sit_id: int, lang: str = "EN"):
     _phrase_rendering = False
 
 def _phrase_upload_job(sit_id: int, lang: str = "EN"):
-    """회화 영상 업로드"""
+    """회화 영상 업로드 — 언어별 렌더 영상을 각 언어 채널에 업로드"""
     try:
-        vpath = _phrase_video_path(sit_id, lang)
-        if not _conv_path_exists(vpath):
-            print(f"  [phrase_upload] 영상 없음: sit_{sit_id} lang={lang}")
-            return
-
         from upload_youtube import (
             get_youtube_client, generate_phrase_metadata,
             upload_video, load_upload_log, save_upload_log,
@@ -2203,6 +2212,13 @@ def _phrase_upload_job(sit_id: int, lang: str = "EN"):
         s = load_json(DAILY_AUTO_F, {})
         for lg in DAILY_LANGS:
             if s.get("phrase_langs", {}).get(lg, {}).get("uploaded"):
+                continue
+            # 언어별 영상 파일 경로 — 반드시 루프 안에서 계산해야 각 채널에
+            # 해당 언어의 영상이 올라간다. (이 계산을 루프 밖에서 한 번만 하면
+            # 모든 채널에 첫 언어(EN) 영상이 올라가는 버그가 생긴다.)
+            vpath = _phrase_video_path(sit_id, lg)
+            if not _conv_path_exists(vpath):
+                print(f"  [phrase_upload] 영상 없음 (스킵): sit_{sit_id} lang={lg} — {vpath}")
                 continue
             try:
                 log_path = f"{BASE}/logs/uploads_phrase_{lg.lower()}.json"
@@ -3748,14 +3764,11 @@ def api_daily_countdown():
     """언어별 다음 업로드 시각(UTC) + 파일 준비 상태 (단어/회화 분리)"""
     KST = timezone(timedelta(hours=9))
     s   = load_json(DAILY_AUTO_F, {})
-    word_id = s.get("current_word_id")
-    word = None
-    if word_id:
-        try:
-            db = get_words_db()
-            word = next((w for w in db if w["id"] == word_id), None)
-        except Exception:
-            pass
+    global_word_id = s.get("current_word_id")
+    try:
+        db = get_words_db()
+    except Exception:
+        db = []
 
     result = {}
     for lang in DAILY_LANGS:
@@ -3779,6 +3792,12 @@ def api_daily_countdown():
         rl_upl = lang_state.get("reels_uploaded",  False)
         conv_upl = phrase_state.get("uploaded", False)
 
+        # 언어별 ep_override → global current_word_id 순으로 파일 경로 결정
+        lang_word_id = lang_state.get("ep_override") or global_word_id
+        word = None
+        if lang_word_id and db:
+            word = next((w for w in db if w["id"] == lang_word_id), None)
+
         file_yt = file_rl = file_il = False
         if word:
             lv  = word.get("level", 1)
@@ -3789,7 +3808,7 @@ def api_daily_countdown():
             il_path = f"{ILLUST_DIR}/lv{lv}/{wid}_{wrd}/word.png"
             file_il = illust_exists(il_path)
 
-        word_ep_num = lang_state.get("ep_override") or word_id or 0
+        word_ep_num = lang_state.get("ep_override") or global_word_id or 0
         conv_ep_num = phrase_state.get("conv_ep_override") or 0
 
         result[lang] = {
@@ -7075,20 +7094,25 @@ async function uploadNow(lang, ctype, btn){
     else alert(`✅ [${lang}] 단어 ${done}개 업로드 완료!`);
 
   } else {
-    // 회화 업로드
+    // 회화 업로드 — 본편+쇼츠 둘 다 시도
     const ep = d.conv_ep_num;
     if(!ep){ alert('회화 화수를 먼저 설정하세요.'); return; }
-    if(!confirm(`[${lang}] 회화 #${ep}화 지금 바로 업로드할까요?`)) return;
+    if(!confirm(`[${lang}] 회화 #${ep}화 본편+쇼츠 둘 다 업로드할까요?`)) return;
 
     btn.disabled=true; btn.textContent='⏳...';
-    try{
-      const r=await fetch('/api/conv/upload',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({theme_id:String(ep),lang,fmt:'youtube'})});
-      const rd=await r.json();
-      if(!r.ok){ alert('오류: '+(rd.error||'')); }
-      else alert(`✅ [${lang}] 회화 #${ep}화 업로드 완료!`);
-    }catch(e){ alert('오류: '+e); }
+    let convDone=0, convErrors=[];
+    for(const fmt of ['youtube','reels']){
+      try{
+        const r=await fetch('/api/conv/upload',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({theme_id:String(ep),lang,fmt})});
+        const rd=await r.json();
+        if(r.ok) convDone++;
+        else convErrors.push(`${fmt}: ${rd.error||''}`);
+      }catch(e){ convErrors.push(`${fmt}: ${e}`); }
+    }
+    if(convErrors.length) alert(`[${lang}] 회화 #${ep}화 일부 오류:\n${convErrors.join('\n')}\n(성공 ${convDone}/2)`);
+    else alert(`✅ [${lang}] 회화 #${ep}화 본편+쇼츠 ${convDone}개 업로드 완료!`);
   }
 
   btn.textContent='✅ 완료';
@@ -9848,8 +9872,9 @@ function toggleFmtBtn(btn){
 }
 function setCustomTarget(t){
   _customTarget=t;
-  const dBtn=document.getElementById('rc-target-desktop');
-  const nBtn=document.getElementById('rc-target-nas');
+  const pfx=_activeRcPrefix();
+  const dBtn=document.getElementById(pfx+'target-desktop');
+  const nBtn=document.getElementById(pfx+'target-nas');
   if(!dBtn||!nBtn)return;
   if(t==='desktop'){dBtn.className='btn btn-p';dBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';nBtn.className='btn btn-m';nBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';}
   else{dBtn.className='btn btn-m';dBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';nBtn.className='btn btn-g';nBtn.style.cssText='flex:1;justify-content:center;font-size:.72rem;';}

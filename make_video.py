@@ -160,7 +160,7 @@ def get_font(key: str, size: int) -> ImageFont.FreeTypeFont:
 #   7: corgi (앞치마)     → Puck          (친근한 남성)
 #   8: gray cat (2nd)     → Sulafat       (차분한 여성)
 #   9: shiba inu (전통)   → Rasalgethi    (단호한 남성)
-_GEMINI_TTS_MODEL  = "gemini-2.5-pro-preview-tts"
+_GEMINI_TTS_MODEL  = "gemini-3.1-flash-tts-preview"
 _GEMINI_VOICE_KO   = os.environ.get("GEMINI_VOICE_KO",   "Leda")       # 귀여운 여자아이 — 래서팬더
 _GEMINI_VOICE_ANIMALS = [
     # ── 기존 10종 ──────────────────────────────────────────────
@@ -198,6 +198,54 @@ _GEMINI_VOICE_ANIMALS = [
 ]
 _gemini_client = None
 
+# ── 종결어미 뭉개짐 완화 ───────────────────────────────────────
+# 문장 끝에 마침표가 없으면 Gemini TTS가 마지막 음절(특히 "~요", 영어 `-ed`,
+# 일본어 「です」)을 페이드아웃하며 삼키는 현상이 잦음. 구두점이 있으면 완결된
+# 문장으로 인식해 마지막 음절까지 제대로 발음함.
+_TERMINAL_PUNCT = {
+    '.', '!', '?', ',', ';', ':',
+    '。', '！', '？', '，', '；', '：',
+    '…', '~', '♪', '♥', '★',
+}
+
+def _ensure_terminal_punct(text: str) -> str:
+    """문장 끝에 종결 부호가 없으면 '.' 을 붙여 Gemini TTS 가 끝 음절을 삼키지 않게 함."""
+    t = text.strip()
+    if not t:
+        return text
+    if t[-1] in _TERMINAL_PUNCT:
+        return t
+    return t + "."
+
+# ── TTS 품질 검증 (오디오 길이 기반) ───────────────────────────
+# Gemini TTS 가 드물게 텍스트 중간을 건너뛰거나 말미를 삼켜 비정상적으로 짧은
+# 오디오를 반환하는 경우를 감지. 언어별 "가장 빠른 자연 발화 속도" 대비 0.8 배
+# 보다 짧으면 뭉개짐으로 간주하고 재시도.
+_MIN_CHAR_RATES = {
+    # chars/sec — 해당 언어에서 관측되는 자연 발화 상한선
+    "ko": 11.0,
+    "en": 22.0,
+    "jp": 13.0,
+    "cn": 9.0,
+    "vn": 20.0,
+    "es": 20.0,
+}
+
+def _tts_duration_ok(text: str, audio_path: str, lang: str) -> bool:
+    """오디오 길이가 텍스트 길이에 비해 납득 가능한지 판단. False면 재시도."""
+    try:
+        dur = get_audio_duration(audio_path)
+    except Exception:
+        return True   # 길이 측정 실패 시 통과시킴 (ffprobe 문제)
+    if dur <= 0:
+        return False
+    n = len(text.strip())
+    if n <= 1:
+        return dur >= 0.15   # 1글자여도 최소 0.15s 는 있어야 함
+    rate = _MIN_CHAR_RATES.get(lang.lower(), 18.0)
+    min_expected = n / rate
+    return dur >= min_expected * 0.8
+
 def _get_gemini_client():
     global _gemini_client
     if _gemini_client is None:
@@ -218,7 +266,7 @@ def _pcm_to_mp3(pcm_data: bytes, output_path: str, sample_rate: int = 24000):
             wf.setframerate(sample_rate)
             wf.writeframes(pcm_data)
         subprocess.run(
-            ["ffmpeg", "-y", "-i", wav_tmp, "-q:a", "4", output_path],
+            ["ffmpeg", "-y", "-i", wav_tmp, "-q:a", "0", output_path],
             capture_output=True, check=True
         )
     finally:
@@ -226,9 +274,10 @@ def _pcm_to_mp3(pcm_data: bytes, output_path: str, sample_rate: int = 24000):
             os.unlink(wav_tmp)
 
 def _tts_cache_path(text: str, voice_name: str, slow: bool) -> str:
-    """폴백용 MD5 캐시 경로 (misc/ 폴더) — 명시적 cache_path 없을 때만 사용"""
+    """폴백용 MD5 캐시 경로 (misc/ 폴더) — 명시적 cache_path 없을 때만 사용.
+    모델 ID를 키에 포함해 모델 교체 시 기존 캐시가 자동 무효화됨."""
     import hashlib
-    key = hashlib.md5(f"{voice_name}:{slow}:{text}".encode()).hexdigest()
+    key = hashlib.md5(f"{_GEMINI_TTS_MODEL}:{voice_name}:{slow}:{text}".encode()).hexdigest()
     cache_dir = _app_path("assets/tts_cache/misc")
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(cache_dir, f"{key}.mp3")
@@ -292,11 +341,16 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
                 _GEMINI_VOICE_ANIMALS[word_id % len(_GEMINI_VOICE_ANIMALS)]
     voice_name = voice
 
+    # Gemini TTS 에 보낼 텍스트 = 종결 부호 보정된 텍스트 (캐시 키/검증도 이 값 기준)
+    prep_text = _ensure_terminal_punct(text)
+    # .txt 짝 파일에 저장·비교할 서명: 모델 ID를 포함해 모델 교체 시 자동 무효화
+    cache_sig = f"{_GEMINI_TTS_MODEL}\n{prep_text}"
+
     # ── 캐시 확인 (텍스트 변경 감지) ──
-    # MD5 기반 캐시(cache_path=None)는 키가 텍스트에 묶여 있어 안전.
+    # MD5 기반 캐시(cache_path=None)는 키가 prep_text 에 묶여 있어 안전.
     # 명시적 cache_path는 파일명에 예문 번호만 있으므로 반드시 .txt 검증 필수.
     if cache_path is None:
-        cache_path = _tts_cache_path(text, voice_name, slow)
+        cache_path = _tts_cache_path(prep_text, voice_name, slow)
         _is_md5_cache = True
     else:
         _is_md5_cache = False
@@ -304,14 +358,14 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
         txt_path = cache_path + ".txt"
         if os.path.exists(txt_path):
             cached_text = open(txt_path, encoding="utf-8").read()
-            if cached_text == text:
+            if cached_text == cache_sig:
                 shutil.copy2(cache_path, output_path)
                 return
-            # 텍스트가 바뀐 경우 — 캐시 무효화
+            # 텍스트 또는 구두점 보정이 바뀐 경우 — 캐시 무효화
             os.remove(cache_path)
             os.remove(txt_path)
         elif _is_md5_cache:
-            # MD5 캐시는 키 자체가 텍스트에 묶여 있으므로 .txt 없어도 일치로 간주
+            # MD5 캐시는 키 자체가 prep_text 에 묶여 있으므로 .txt 없어도 일치로 간주
             shutil.copy2(cache_path, output_path)
             return
         else:
@@ -322,11 +376,12 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
 
     client = _get_gemini_client()
     last_err = None
+    # 품질 검증 포함 재시도 루프: 최대 3회 (API 에러 + 뭉개짐 감지 모두 재시도 트리거)
     for attempt in range(3):
         try:
             response = client.models.generate_content(
                 model=_GEMINI_TTS_MODEL,
-                contents=text,
+                contents=prep_text,
                 config=_genai_types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=_genai_types.SpeechConfig(
@@ -348,28 +403,36 @@ def text_to_speech(text: str, lang: str, output_path: str, slow: bool = False,
                 raise RuntimeError(f"TTS 빈 응답 finish_reason={finish} (attempt {attempt+1}): {text[:40]!r}")
             pcm_data = parts[0].inline_data.data
             _pcm_to_mp3(pcm_data, output_path)
+            # 품질 검증: 오디오가 텍스트 대비 비정상적으로 짧으면 재시도
+            if not _tts_duration_ok(prep_text, output_path, lang):
+                dur = get_audio_duration(output_path)
+                raise RuntimeError(
+                    f"TTS 품질 미달 (attempt {attempt+1}): "
+                    f"audio={dur:.2f}s, text={len(prep_text)}ch — {text[:30]!r}"
+                )
             break
         except Exception as e:
             last_err = e
             if attempt < 2:
+                print(f"  [TTS 재시도 {attempt+1}/3] {e}")
                 import time as _time
                 _time.sleep(2)
     else:
         print(f"  Gemini TTS 3회 실패, GCP 폴백 시도: {last_err}")
         if not _gcp_tts_fallback(text, lang, output_path, slow):
             raise RuntimeError(f"TTS 모두 실패 (Gemini+GCP): {last_err}") from last_err
-        # GCP 결과도 캐시에 저장 — .txt 짝 파일 포함 (텍스트 변경 감지)
+        # GCP 결과도 캐시에 저장 — .txt 짝 파일은 cache_sig(모델+텍스트) 기준으로 저장
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             shutil.copy2(output_path, cache_path)
             with open(cache_path + ".txt", "w", encoding="utf-8") as _f:
-                _f.write(text)
+                _f.write(cache_sig)
         return
 
     # ── 캐시 저장 ──
     if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
         shutil.copy2(output_path, cache_path)
         with open(cache_path + ".txt", "w", encoding="utf-8") as _f:
-            _f.write(text)
+            _f.write(cache_sig)
 
 def log_video(word: dict, output_path: str, music_src: str = None, file_size: int = 0, fmt: str = "youtube"):
     """logs/videos_log.json 에 영상 생성 기록 (음악 파일 포함)"""
@@ -845,7 +908,7 @@ def draw_sentence_card(img: Image.Image, word: dict, sentence: dict,
                     break
 
     en_lines = len(en_text.split('\n'))
-    lh_en = _tmp_draw.textbbox((0, 0), "Ag", font=font_en)[3] + 14
+    lh_en = _tmp_draw.textbbox((0, 0), "Ag", font=font_en)[3] + 4
     draw_multiline_highlighted(
         img, cx, text_y + (en_lines * lh_en) // 2, en_text, en_hi,
         font_en, C["text_secondary"], _hi_color
