@@ -348,17 +348,66 @@ def _inject_characters(content: str, sit_id: int, situation: dict | None = None,
 _WEBTOON_STYLE_BASE = (
     # ── 핵심 스타일 ─────────────────────────────────────────────
     # Imagen은 "NOT X" 부정어가 무효 → 긍정 묘사로만 작성
-    "soft pastel watercolor illustration, "
-    "Korean and Japanese children's picture book style, kawaii storybook, "
-    "thin delicate hand-drawn ink outlines — soft, slightly rounded, gentle even weight, "
-    "watercolor washes are airy and translucent — colors bleed softly at edges, "
-    "BACKGROUND ATMOSPHERE: warm peachy-cream gradient — soft peach at top fading to "
-    "warm cream-white at bottom, like gentle morning sunlight through frosted glass, "
-    "background is loose watercolor wash — simplified shapes, soft blurred edges, "
-    "PALETTE: warm cream, soft peach, dusty sage, muted terracotta, warm tan, soft sky blue — "
-    "warm low-saturation tones like faded watercolor pigments on paper, "
-    "paper grain subtly visible in wash areas, "
-    "overall mood: warm, cozy, heartwarming — like a beloved picture book, "
+
+    #"soft pastel watercolor illustration, "
+    #"Korean and Japanese children's picture book style, kawaii storybook, "
+    #"thin delicate hand-drawn ink outlines — soft, slightly rounded, gentle even weight, "
+    #"watercolor washes are airy and translucent — colors bleed softly at edges, "
+    #"BACKGROUND ATMOSPHERE: warm peachy-cream gradient — soft peach at top fading to "
+    #"warm cream-white at bottom, like gentle morning sunlight through frosted glass, "
+    #"background is loose watercolor wash — simplified shapes, soft blurred edges, "
+    #"PALETTE: warm cream, soft peach, dusty sage, muted terracotta, warm tan, soft sky blue — "
+    #"warm low-saturation tones like faded watercolor pigments on paper, "
+    #"paper grain subtly visible in wash areas, "
+    #"overall mood: warm, cozy, heartwarming — like a beloved picture book, "
+
+    "warm watercolor and pencil sketch illustration style, "
+    "soft loose brushwork with visible watercolor paper texture, "
+    "gentle pencil outlines (not thick black ink), "
+    "watercolor wash backgrounds that are slightly soft and misty, "
+    "time of day matches the scene naturally — morning, afternoon, evening, or night, "
+    "pastel palette: ivory white, soft sky-blue, dusty rose, sage green, "
+    "light lavender, muted mint — balanced tones, not overly yellow or orange, "
+    "NO neon colors, NO dark or black-dominant areas, "
+    "IF animal characters appear: cute chibi anthropomorphic proportions, "
+    "PROTAGONIST RULE — STRICTLY ENFORCED: the main character is ALWAYS a red panda — "
+    "supporting/secondary characters can be any other cute animal but MUST be smaller "
+    "or equal in size to the protagonist red panda, NEVER taller. "
+    "PROTAGONIST CANONICAL PROPORTIONS — the attached reference character sheet is the ONLY "
+    "source of truth: copy the red panda's head:body ratio, head size, and limb lengths "
+    "EXACTLY as drawn in the reference sheet, identical in every illustration: "
+    "1) total head height ≈ 1.0 unit, total body height ≈ 1.2 units (excluding legs), "
+    "   head:body ratio is exactly 1 : 1.2 (head is larger and dominant), "
+    "2) overall character height = 45% of the frame height (±5% tolerance only), "
+    "3) head shape: perfectly round, very large, takes up roughly the top 45% of the silhouette, "
+    "4) body shape: short, plump, oval-egg torso, no visible neck — head sits directly on shoulders, "
+    "5) arms: short stubby pillars, length ≈ 0.4 of body height, rounded paw tips no fingers, "
+    "6) legs: extremely short and stubby, length ≈ 0.3 of body height, barely separated stance, "
+    "7) tail: bushy striped fox-like tail, length ≈ 1.0 of body height, ringed with 4–5 dark bands, "
+    "8) ears: two small triangular ears on top of the head with white inner fluff, "
+    "9) face: large dark eyes 35% of face width, small dot nose, tiny smile, white muzzle and eyebrow patches, "
+    "10) fur color: warm rust-orange body, white face mask + ears + chest, dark brown limbs and ringed tail, "
+    "11) outline: clean soft watercolor outline, no thick black bold strokes, "
+    "ABSOLUTELY DO NOT change these proportions across illustrations — same character every time, like a brand mascot. "
+    "ABSOLUTELY DO NOT add: thin tall human-like body, long humanoid legs, slender torso, "
+    "muscular limbs, realistic adult proportions, large feet, fingers, knees, elbows, "
+    "shoes, boots, sandals, sneakers, or any footwear (bare paws ONLY). "
+    "characters naturally centered in the composition, fully visible head to feet, "
+    "characters have slightly more detail/contrast than the soft background, "
+    "background reflects MODERN everyday Korean life — "
+    "STRICTLY AVOID: traditional tile-roof houses (기와집), wooden hanok structures, "
+    "paper screen doors, traditional courtyards — these are tourist sites, not daily life. "
+    "USE INSTEAD: concrete apartment buildings, modern cafes, convenience stores (24h), "
+    "subway stations, school classrooms, offices, city parks, pedestrian streets, "
+    "supermarkets, modern restaurants — whatever the scene naturally calls for. "
+    "Background is soft and slightly faded. "
+    "depth: foreground subjects sharp, background gently blurred/misty, "
+    "square 1:1 composition, "
+    "FIXED FRAMING — IDENTICAL in every illustration: medium shot, camera at character eye level, "
+    "red panda total height ≈ 45% of the frame height (±5% tolerance only), "
+    "main subject centered naturally — balanced, well-composed scene. "
+
+
 
     # ── 주인공 vs 조연 ────────────────────────────────────────────
     "TWO DISTINCT CHARACTERS — they MUST look clearly different: "
@@ -371,14 +420,30 @@ _WEBTOON_STYLE_BASE = (
     "DO NOT make both characters the same species or same color. "
 
     # ── 캐릭터 비율 / 눈 ─────────────────────────────────────────
-    "CHARACTERS: all characters are cute chibi cartoon animals — "
-    "soft plush-toy proportions, head large and round (roughly 40% of total height), "
-    "body round and compact, limbs short but clearly visible, "
-    "silhouette feels soft and squeezable like a quality stuffed animal in a picture book. "
+    "CHARACTERS: all characters are cute chibi cartoon animals. "
+    "PROTAGONIST RULE — STRICTLY ENFORCED: the main character is ALWAYS a red panda — "
+    "supporting/secondary characters can be any other cute animal but MUST be smaller "
+    "or equal in size to the protagonist red panda, NEVER taller. "
+    "PROTAGONIST CANONICAL PROPORTIONS — copy EXACTLY from the attached reference character "
+    "sheet (the ONLY source of truth), identical in every illustration: "
+    "1) total head height ≈ 1.0 unit, total body height ≈ 1.2 units (excluding legs), "
+    "   head:body ratio is exactly 1 : 1.2 (head is larger and dominant), "
+    "2) head shape: perfectly round, very large, takes up roughly the top 45% of the silhouette, "
+    "3) body shape: short, plump, oval-egg torso, no visible neck — head sits directly on shoulders, "
+    "4) arms: short stubby pillars, length ≈ 0.4 of body height, rounded paw tips no fingers, "
+    "5) legs: extremely short and stubby, length ≈ 0.3 of body height, barely separated stance, "
+    "6) tail: bushy striped fox-like tail, length ≈ 1.0 of body height, ringed with 4–5 dark bands, "
+    "7) ears: two small triangular ears on top of the head with white inner fluff, "
+    "8) face: large dark eyes 35% of face width, small dot nose, tiny smile, white muzzle and eyebrow patches, "
+    "9) fur color: warm rust-orange body, white face mask + ears + chest, dark brown limbs and ringed tail, "
+    "10) outline: clean soft watercolor outline, no thick black bold strokes, "
+    "ABSOLUTELY DO NOT change these proportions across illustrations — same character every time, like a brand mascot. "
+    "ABSOLUTELY DO NOT add: thin tall human-like body, long humanoid legs, slender torso, "
+    "muscular limbs, realistic adult proportions, large feet, fingers, knees, elbows, "
+    "shoes, boots, sandals, sneakers, or any footwear (bare paws ONLY). "
     "Supporting characters: other cute animals with clearly different colors. "
-    "Total character height roughly 40–50% of frame height. "
+    "Total character height ≈ 45% of frame height (±5% tolerance only) — IDENTICAL in every illustration. "
     "Characters fully visible head to feet, centered in composition. "
-    "NO footwear — bare paws only. "
     "EYES: small bead-like eyes — tiny dark circle with a single white highlight dot, "
     "sclera is warm cream-white, eye overall is small and simple. "
 
@@ -402,12 +467,18 @@ _WEBTOON_STYLE_BASE = (
 
     # ── 구도 ─────────────────────────────────────────────────────
     "square 1:1 composition, "
-    "WIDE SHOT: both small characters centered in lower-center of frame, "
-    "large amount of soft background space above and around characters, "
-    "camera slightly above character eye level looking down gently, "
+    "MEDIUM SHOT — same framing in every illustration: both characters centered in the frame, "
+    "heads near upper-center, feet near lower-center, soft background space around them, "
+    "camera at character eye level, "
 
-    # ── 탈것 구조 정확도 ──────────────────────────────────────────
-    "VEHICLE INTERIOR ACCURACY (when scene is inside a vehicle): "
+    # ── 탈것 구조 정확도 (조건부) ─────────────────────────────────
+    "LOCATION FOLLOWS THE DIALOGUE: "
+    "transport-themed scenes do NOT default to a vehicle interior — many transport conversations "
+    "happen at ticket counters, station halls, platforms, boarding gates, sidewalks, or bus stops. "
+    "Use the scene description above to decide where the panel actually takes place; "
+    "if it says counter/platform/sidewalk/station, render that environment, NOT a vehicle interior. "
+    "VEHICLE INTERIOR ACCURACY — apply ONLY when the panel description explicitly places the scene "
+    "inside a moving vehicle (seats, aisle, windows passing scenery, steering wheel, etc.): "
     "driver ALWAYS sits on the LEFT side behind the steering wheel facing FORWARD toward the windshield, "
     "passenger ALWAYS sits on the RIGHT side or behind the driver facing FORWARD, "
     "steering wheel is ALWAYS present in front of the driver and clearly visible, "
@@ -561,7 +632,7 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
 
     if anthropic_client is None:
         return (
-            f"A modern Korean {sit_en.lower()} setting. "
+            f"A modern Korean setting suggesting the broader {sit_en.lower()} context. "
             f"A cute {learner_char} and a {local_char} "
             f"with chibi proportions and friendly expressions, ready to interact."
         )
@@ -580,7 +651,13 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     f"PROTAGONIST (red panda, LARGER, LEFT side): {learner_char}\n"
                     f"SUPPORTING character (different animal, SMALLER, RIGHT side): {local_char}\n\n"
                     "RULES:\n"
-                    "1. Describe a MODERN everyday Korean location (cafe, subway, office, park, etc.).\n"
+                    "1. Describe a MODERN everyday Korean setting that captures the BROADER theme of "
+                    "   this situation (cafe, subway, office, park, etc.). The intro shot is the WORLD "
+                    "   the conversation happens in — not necessarily one fixed spot.\n"
+                    "   For TRANSPORT themes (KTX/train, bus, taxi, subway): the intro should suggest the "
+                    "   transport context as a whole — e.g., a station hall, platform, or bus stop is "
+                    "   often a better choice than the cramped vehicle interior, because later panels "
+                    "   need the freedom to show ticket counters, platforms, or boarding areas too.\n"
                     "   Do NOT use traditional tile-roof hanok or wooden houses.\n"
                     "2. Characters are SMALL cute chibi figures in the lower-center of the frame — "
                     "   surrounded by ample soft empty background space.\n"
@@ -588,7 +665,7 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     "   suggest location with 1-2 simple shapes, NO detailed props or furniture.\n"
                     "4. NO text, signs, labels, speech bubbles anywhere.\n"
                     "5. Focus on warm, gentle, cozy pastel atmosphere with wide open space.\n"
-                    "6. VEHICLE ACCURACY: If inside a vehicle — "
+                    "6. VEHICLE ACCURACY (only if you actually choose a vehicle interior): "
                     "driver on LEFT with steering wheel facing FORWARD, "
                     "passenger on RIGHT facing FORWARD, "
                     "steering wheel always visible, characters never sideways or backward.\n\n"
@@ -631,7 +708,7 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
             f"The {learner_char} gestures expressively while saying '{my_en}', "
             f"and the {local_char} responds warmly."
         )
-        location = base_scene if base_scene else f"Inside a modern Korean {sit_en.lower()}"
+        location = base_scene if base_scene else f"A modern Korean setting fitting this dialogue ({sit_en.lower()})"
         return f"{location}, {view_hint}. {action}"
 
     # 키워드 기반 감정 힌트 사전 계산
@@ -646,18 +723,19 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
 
     try:
         setting_hint = (
-            f"Background setting (already established): {base_scene}\n" if base_scene
-            else f"Setting: soft minimalist Korean {sit_en.lower()}\n"
+            f"Broader theme/world (intro background): {base_scene}\n" if base_scene
+            else f"Broader theme: soft minimalist Korean {sit_en.lower()}\n"
         )
         message = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=220,
+            max_tokens=240,
             messages=[{
                 "role": "user",
                 "content": (
                     "You are an illustration director for a Korean language learning app.\n"
                     "Write 1-2 sentences describing the scene for this dialogue panel.\n\n"
                     f"{setting_hint}"
+                    f"Situation theme: {sit_ko} ({sit_en})\n"
                     f"PANEL CAMERA/AREA: {view_hint}\n"
                     f"LEFT character — PROTAGONIST (red panda, LARGER): {learner_char} — says: '{my_en}'\n"
                     f"RIGHT character — SUPPORTING (different animal, SMALLER, clearly different color): {local_char} — responds: '{resp_en}'\n"
@@ -675,13 +753,24 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
                     "1. CONSISTENCY: The SAME two characters appear throughout this entire scene — "
                     "same species, same fur/body color, same outfit as the intro panel. "
                     "DO NOT change species, color, or clothing between panels.\n"
-                    "2. LOCATION: Keep the same background setting as the intro panel. "
-                    "Vary only the camera angle/sub-area (use PANEL CAMERA/AREA hint).\n"
-                    "3. DIFFERENTIATION via ACTION+EXPRESSION only: "
+                    "2. LOCATION — DIALOGUE-DRIVEN: Pick the location that PHYSICALLY matches THIS panel's "
+                    "spoken dialogue, even if it differs from the intro background. "
+                    "The intro background is just the broader theme/world (e.g., \"train travel\"), "
+                    "NOT a forced setting for every panel. Use these mappings:\n"
+                    "   • Buying/cancelling tickets, asking schedule before boarding → ticket counter / kiosk / station hall\n"
+                    "   • Asking which platform / where to board / how long until departure → platform / boarding gate\n"
+                    "   • Finding seat, asking about stops while moving, requesting window seat → INSIDE the moving vehicle\n"
+                    "   • Asking taxi to go somewhere / fare → could be sidewalk hailing OR inside taxi (pick what fits)\n"
+                    "   • Bus fare / boarding → at the entrance door area near the fare reader\n"
+                    "   • Ordering food → at counter or seated at a table (pick what the line implies)\n"
+                    "   • Asking for the bill / takeout → at table or at the counter\n"
+                    "   Keep the same overall art style and color palette as the intro, but the SUB-LOCATION "
+                    "must serve the dialogue. Do NOT cram every panel into the same single spot.\n"
+                    "3. DIFFERENTIATION via ACTION+EXPRESSION: "
                     "Each panel must show a DIFFERENT body pose, gesture, and facial expression. "
                     "Describe SPECIFIC concrete visuals: eye shape, mouth, paw position, "
                     "lean direction, blush, sweat drop, item being held/handed, etc.\n"
-                    "4. First sentence: camera angle + location sub-area for this panel.\n"
+                    "4. First sentence: camera angle + the dialogue-appropriate sub-location for this panel.\n"
                     "5. Second sentence: specific actions and expressions matching the dialogue.\n"
                     "6. AVOID: repeating poses from previous panels, generic 'warm smile', "
                     "thumbs-up gesture, raised-index-finger pose (OVERUSED — use at most once per entire scene).\n"
@@ -702,13 +791,23 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
                     "   • holding up a card/phone/ticket (both paws) / clutching item to chest\n"
                     "   • pointing at self with both paws (\"me?\") / spreading both paws wide\n"
                     "7. Protagonist is LEFT and LARGER; supporting is RIGHT and SMALLER.\n"
-                    "8. VEHICLE ACCURACY: If the scene is inside a vehicle — "
+                    "8. VEHICLE ACCURACY (only when the dialogue actually takes place inside a moving vehicle): "
                     "driver ALWAYS sits on the LEFT behind the steering wheel facing FORWARD; "
                     "passenger sits on RIGHT or behind, also facing FORWARD; "
                     "steering wheel MUST be visible in front of driver; "
                     "characters NEVER sit sideways or backward; "
-                    "bus fare card reader is near the entrance on driver's right; "
-                    "ALL seating and spatial positions must be physically correct.\n"
+                    "bus fare card reader is near the entrance on driver's right. "
+                    "If the dialogue is at a counter/platform/sidewalk, do NOT force a vehicle interior.\n"
+                    "9. DEMONSTRATIVES (이/그/저 · 여기/거기/저기 · 이거/그거/저거): if the line "
+                    "refers to something with a demonstrative, place it at the MATCHING distance — "
+                    "이/여기/이거 (this/here, near speaker) = right beside the LEFT protagonist; "
+                    "그/거기/그거 (that/there, near listener) = beside the RIGHT supporting character; "
+                    "저/저기/저쪽 (that over there, far from both) = a distant spot, the speaker "
+                    "sweeping an open hand toward the far location. NEVER put a 그/저 referent in the "
+                    "speaker's own hands (that reads as 이/this).\n"
+                    "10. PHONE SCREENS: when a character looks at their OWN phone, the screen faces "
+                    "that character's own eyes (tilted toward themselves), NOT turned outward. Only "
+                    "when they deliberately show it to the other character may it face outward.\n"
                     "Output: 1-2 sentences ONLY, no preamble."
                 ),
             }],
@@ -723,7 +822,7 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
             f"The {learner_char} shows a {fallback_emotion} expression ({fallback_cue}), "
             f"while the {local_char} reacts with a complementary gesture."
         )
-        location = base_scene if base_scene else f"Inside a modern Korean {sit_en.lower()}"
+        location = base_scene if base_scene else f"A modern Korean setting fitting this dialogue ({sit_en.lower()})"
         return (
             f"{location}, {view_hint}. "
             + action
@@ -731,7 +830,7 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
 
 
 _IMAGE_MODEL   = "gemini-3.1-flash-image-preview"
-_CHARS_DIR     = _SCRIPT_DIR / "assets" / "characters"
+_CHARS_DIR     = _SCRIPT_DIR / "assets" / "characters" / "topik"
 
 
 def _load_char_refs() -> list:
@@ -745,7 +844,14 @@ def _load_char_refs() -> list:
             refs.append(PILImage.open(str(main)).convert("RGB"))
         except Exception:
             pass
-    # 2) extra 캐릭터 시트 (있는 것 모두 포함)
+    # 2) 주인공 표정시트 (표정 레퍼런스)
+    face_sheet = _CHARS_DIR / "main_character_facialexpression.png"
+    if face_sheet.exists():
+        try:
+            refs.append(PILImage.open(str(face_sheet)).convert("RGB"))
+        except Exception:
+            pass
+    # 3) extra 캐릭터 시트 (있는 것 모두 포함)
     for extra in sorted(_CHARS_DIR.glob("extra_characters*.png")):
         try:
             refs.append(PILImage.open(str(extra)).convert("RGB"))
@@ -851,17 +957,39 @@ def _build_char_instruction(situation: dict, phrase_idx: int = 0,
         )
 
     return (
-        "CHARACTER REFERENCE IMAGES ARE PROVIDED ABOVE.\n\n"
+        "CHARACTER REFERENCE IMAGES ARE PROVIDED ABOVE.\n"
+        "  - 1st reference = main character (red panda) base design — the ONLY source of truth "
+        "for body proportions: copy the head:body ratio, head size, limb lengths, fur color, "
+        "markings, and drawing style EXACTLY as drawn in this sheet. The character's proportions "
+        "must be pixel-identical to this reference in EVERY panel — never slimmer, never taller, "
+        "never more realistic.\n"
+        "  - 2nd reference = main character FACIAL EXPRESSION SHEET — 20 expressions of the "
+        "same red panda (Neutral, Happy, Laughing, Excited, Curious, Surprised, Shocked, "
+        "Thinking, Confused, Sleepy, Sad, Crying, Angry, Annoyed, Embarrassed, Shy, "
+        "Scared, Determined, Playful Wink, Proud). Pick the ONE expression from this sheet "
+        "that best fits the scene emotion and reproduce it faithfully on the red panda.\n"
+        "  - Any remaining references = supporting character sheets.\n\n"
         "=== STYLE FIRST — MATCH THE REFERENCE IMAGES ===\n"
         "Draw in the EXACT SAME STYLE as the reference character images: "
         "soft pastel watercolor, Korean/Japanese children's picture book (kawaii storybook), "
         "thin delicate ink outlines — soft, slightly rounded, gentle even weight, "
         "airy translucent watercolor washes, "
-        "warm peachy-cream background gradient — soft peach fading to warm cream-white. "
-        "CHARACTERS: cute chibi cartoon animals — soft plush-toy proportions, "
-        "head large and round (roughly 40% of total height), body round and compact, "
-        "limbs short but clearly visible, silhouette feels soft and squeezable like a quality stuffed animal. "
-        "Total character height roughly 40–50% of frame height. "
+        # ⚠ 단어 시스템과 톤 통일: "warm peachy-cream gradient"는 세피아/황금빛 과다(채도 상승)
+        #    원인이라 제거. 단어 _WEBTOON_STYLE_CORE와 동일한 중립 파스텔로 맞춤(2026-06-20).
+        "pastel palette: ivory white, soft sky-blue, dusty rose, sage green, light lavender, "
+        "muted mint — balanced tones, not overly yellow or orange, NO neon colors. "
+        "CHARACTERS: cute chibi cartoon animals. "
+        "PROTAGONIST RULE — STRICTLY ENFORCED: main character is ALWAYS a red panda; "
+        "supporting characters MUST be smaller or equal in size, NEVER taller. "
+        "PROTAGONIST CANONICAL PROPORTIONS — identical in every illustration: "
+        "head:body ratio EXACTLY 1:1.2 (head dominant); head perfectly round, top 45% of silhouette; "
+        "body short plump oval-egg, no visible neck; arms 0.4× body height, stubby paw tips no fingers; "
+        "legs 0.3× body height, very short stubby; tail 1.0× body height, bushy with 4–5 dark rings; "
+        "ears small triangles with white inner fluff; eyes 35% of face width with small dot nose; "
+        "fur: rust-orange body + white face/ears/chest + dark brown limbs and ringed tail; "
+        "clean watercolor outline (no thick black strokes). "
+        "DO NOT use thin human-like body, long legs, muscular sleek frame, fingers, shoes/boots/sandals. "
+        "Total character height ≈ 45% of frame height (±5% tolerance only) — IDENTICAL in every panel. "
         "Characters fully visible head to feet. NO footwear — bare paws only. "
         "EYES: small bead-like eyes — tiny dark circle with a single white highlight dot, "
         "sclera is warm cream-white, eye overall is small and simple.\n\n"
@@ -946,8 +1074,11 @@ def _generate_image(prompt: str, output_path: Path, genai_client,
 
 # ─── 상황별 일러스트 생성 ────────────────────────────────────
 def generate_situation(situation: dict, genai_client, anthropic_client,
-                       progress: dict, intro_only: bool = False) -> tuple[int, int]:
-    """단일 상황의 모든 패널 생성. (done, fail) 반환"""
+                       progress: dict, intro_only: bool = False,
+                       only_key: str | None = None) -> tuple[int, int]:
+    """단일 상황의 패널 생성. (done, fail) 반환.
+    only_key 가 지정되면 그 패널 1개만 생성 (예: "intro" 또는 "phrase_3").
+    """
     sit_id  = situation["id"]
     sit_ko  = situation.get("situation", "")
     sit_en  = situation.get("situation_en", "")
@@ -966,29 +1097,35 @@ def generate_situation(situation: dict, genai_client, anthropic_client,
     print(f"  [캐릭터] 조연:   {local_char}")
     print(f"  [배경]   {base_scene_bg[:60]}...")
 
+    do_intro = (only_key is None) or (only_key == "intro")
+
     # 1. 인트로 (설정 샷) — is_first_panel=True 로 캐릭터 확립
     intro_path = sit_dir / "intro.png"
     intro_key  = "intro"
-    if not (intro_path.exists() and intro_path.stat().st_size > 0):
-        print(f"  [인트로] {sit_ko} ({sit_en})")
-        _mark_current(progress, sit_id, intro_key)
-        scene = _build_intro_scene(situation, anthropic_client)
-        print(f"    장면: {scene[:80]}...")
-        if _generate_image(scene, intro_path, genai_client, sit_id, situation,
-                           phrase_idx=0, is_first_panel=True):
+    if do_intro:
+        if not (intro_path.exists() and intro_path.stat().st_size > 0):
+            print(f"  [인트로] {sit_ko} ({sit_en})")
+            _mark_current(progress, sit_id, intro_key)
+            scene = _build_intro_scene(situation, anthropic_client)
+            print(f"    장면: {scene[:80]}...")
+            if _generate_image(scene, intro_path, genai_client, sit_id, situation,
+                               phrase_idx=0, is_first_panel=True):
+                done += 1
+                _mark_done(progress, sit_id, intro_key)
+                print(f"    [OK] intro.png")
+            else:
+                fail += 1
+                _mark_failed(progress, sit_id, intro_key, "generation failed")
+                print(f"    [FAIL] intro.png")
+            time.sleep(0.5)
+        elif only_key == "intro":
+            print(f"  [스킵] intro.png (이미 존재)")
             done += 1
-            _mark_done(progress, sit_id, intro_key)
-            print(f"    [OK] intro.png")
         else:
-            fail += 1
-            _mark_failed(progress, sit_id, intro_key, "generation failed")
-            print(f"    [FAIL] intro.png")
-        time.sleep(0.5)
-    else:
-        print(f"  [스킵] intro.png (이미 존재)")
-        done += 1
+            print(f"  [스킵] intro.png (이미 존재)")
+            done += 1
 
-    if intro_only:
+    if intro_only or only_key == "intro":
         return done, fail
 
     # 2. 대화 쌍별 패널 — 동일 캐릭터/배경, 동작·표정·구도로만 차별화
@@ -997,6 +1134,12 @@ def generate_situation(situation: dict, genai_client, anthropic_client,
         ph_id   = phrase["id"]
         ph_key  = f"phrase_{ph_id}"
         ph_path = sit_dir / f"phrase_{ph_id}.png"
+
+        # only_key 가 지정되면 그 패널만 생성, 나머지는 (포즈 추적만 하고) 스킵
+        if only_key is not None and only_key != ph_key:
+            if ph_path.exists() and ph_path.stat().st_size > 0:
+                used_poses.append("(prior generated panel)")
+            continue
 
         if ph_path.exists() and ph_path.stat().st_size > 0:
             print(f"  [스킵] phrase_{ph_id}.png (이미 존재)")
@@ -1070,6 +1213,8 @@ def main():
     parser.add_argument("--end",   type=int, default=None, help="끝 상황 ID (포함)")
     parser.add_argument("--situation-id", type=int, default=None, help="단일 상황 ID")
     parser.add_argument("--intro-only", action="store_true", help="인트로 패널만 생성")
+    parser.add_argument("--phrase-key", type=str, default=None,
+                        help='단일 패널만 생성 (예: "intro" 또는 "phrase_3"). --situation-id 와 함께 사용')
     parser.add_argument("--status", action="store_true", help="진행 상황 출력 후 종료")
     args = parser.parse_args()
 
@@ -1125,6 +1270,8 @@ def main():
     print(f"처리 대상: {len(targets)}개 상황")
     if args.intro_only:
         print("모드: 인트로 패널만")
+    if args.phrase_key:
+        print(f"모드: 단일 패널만 ({args.phrase_key})")
 
     progress = _load_progress()
     total_done = 0
@@ -1139,6 +1286,7 @@ def main():
         done, fail = generate_situation(
             situation, genai_client, anthropic_client,
             progress, intro_only=args.intro_only,
+            only_key=args.phrase_key,
         )
         total_done += done
         total_fail += fail
