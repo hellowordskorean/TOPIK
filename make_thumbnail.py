@@ -99,11 +99,15 @@ def _detect_fonts():
                         "C:/Windows/Fonts/msgothic.ttc",
                         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
                         "C:/Windows/Fonts/malgun.ttf"],
-        "cn":          ["/app/assets/fonts/NotoSansJP-Regular.otf",
-                        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                        "C:/Windows/Fonts/msyh.ttc",
+        "cn":          ["C:/Windows/Fonts/msyh.ttc",
                         "C:/Windows/Fonts/simsun.ttc",
+                        "/app/assets/fonts/NotoSansSC-Regular.otf",
+                        "/app/assets/fonts/NotoSansSC-VF.ttf",
+                        "/app/assets/fonts/NotoSansCJK-Regular.ttc",
+                        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                        "/app/assets/fonts/NotoSansKR-VF.ttf",
+                        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                        "/app/assets/fonts/NotoSansJP-Regular.otf",
                         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
                         "C:/Windows/Fonts/malgun.ttf"],
     }
@@ -124,6 +128,95 @@ def get_font(key: str, size: int) -> ImageFont.FreeTypeFont:
         except Exception:
             _font_cache[ck] = ImageFont.load_default()
     return _font_cache[ck]
+
+
+# ─── 스크립트 혼용 텍스트 렌더링 ────────────────────────────
+# 뜻풀이에 한글·한자가 인용되는 경우가 있다(예: id89 "what (contracted form of 무엇)").
+# 언어별 폰트 하나로 그리면 글리프가 없어 두부(□)가 되므로 스크립트별로 폰트를 나눠 그린다.
+# make_video.py 의 _segment_runs / _draw_runs_line 과 같은 규칙.
+
+def _is_hangul(ch: str) -> bool:
+    return "가" <= ch <= "힯" or "ㄱ" <= ch <= "ㅎ" or "ㅏ" <= ch <= "ㅣ"
+
+
+def _is_cjk_ideo(ch: str) -> bool:
+    # 한자 + 일본어 카나
+    return ("一" <= ch <= "鿿") or ("぀" <= ch <= "ヿ") or ("㐀" <= ch <= "䶿")
+
+
+def _segment_runs(text: str, lang_font, size: int, cjk_pref: str = "jp"):
+    """텍스트를 스크립트별 (text, font) 런으로 분할.
+    한글 → korean 폰트, 한자·카나 → CJK 폰트(cjk_pref), 그 외 → lang_font.
+    공백·구두점은 직전 런에 흡수(시작이면 라틴으로 시작)."""
+    if not text:
+        return []
+    korean_f = get_font("korean", size)
+    cjk_f    = get_font(cjk_pref, size)
+
+    def hard_class(ch):
+        if _is_hangul(ch):
+            return "ko"
+        if _is_cjk_ideo(ch):
+            return "cjk"
+        if ch.isalnum() and ch.isascii():
+            return "lat"
+        return None   # 공백·구두점 등은 직전 런에 흡수
+
+    runs, cur_chars, cur_script = [], [], None
+    for ch in text:
+        sc = hard_class(ch)
+        if sc is None:
+            if cur_script is None:
+                cur_script = "lat"
+            cur_chars.append(ch)
+        elif cur_script is None or sc == cur_script:
+            cur_script = sc
+            cur_chars.append(ch)
+        else:
+            runs.append(("".join(cur_chars), cur_script))
+            cur_chars, cur_script = [ch], sc
+    if cur_chars:
+        runs.append(("".join(cur_chars), cur_script or "lat"))
+
+    out = []
+    for txt, sc in runs:
+        if sc == "ko":
+            out.append((txt, korean_f))
+        elif sc == "cjk":
+            out.append((txt, cjk_f))
+        else:
+            out.append((txt, lang_font))
+    return out
+
+
+def _segment_for_lang(text: str, lang_code: str, size: int):
+    """lang_code 기준으로 _segment_runs 호출 (cjk_pref 자동 선택)."""
+    return _segment_runs(text, _lang_font(lang_code, size), size,
+                         cjk_pref=("jp" if lang_code == "JP" else "cn"))
+
+
+def _runs_width(draw, runs) -> int:
+    return sum(draw.textbbox((0, 0), t, font=f)[2] - draw.textbbox((0, 0), t, font=f)[0]
+               for t, f in runs)
+
+
+def _draw_runs_line(draw, cx: int, cy: int, runs, fill) -> int:
+    """런 리스트를 (cx, cy) 중앙 정렬 기준으로 한 줄에 그림. 반환: 전체 폭(px).
+    런마다 폰트가 달라도 baseline 을 맞춰 붙인다."""
+    if not runs:
+        return 0
+    widths = [draw.textbbox((0, 0), t, font=f)[2] - draw.textbbox((0, 0), t, font=f)[0]
+              for t, f in runs]
+    max_ascent  = max(f.getmetrics()[0] for _, f in runs)
+    max_descent = max(f.getmetrics()[1] for _, f in runs)
+    total_w  = sum(widths)
+    cur_x    = cx - total_w // 2
+    baseline = cy + (max_ascent - max_descent) // 2
+    for (txt, fnt), w in zip(runs, widths):
+        draw.text((cur_x, baseline - fnt.getmetrics()[0]), txt, font=fnt, fill=fill)
+        cur_x += w
+    return total_w
+
 
 def get_illustration_path(word: dict) -> str | None:
     w  = word["word"]
@@ -152,6 +245,36 @@ def _rounded_rect(img: Image.Image, x1, y1, x2, y2, radius, fill):
     ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(ov).rounded_rectangle([x1, y1, x2, y2], radius=radius, fill=(*fill, 255))
     img.paste(ov, mask=ov.split()[3])
+
+
+def _draw_star(draw: ImageDraw.ImageDraw, cx: int, cy: int, r_outer: int,
+                color: tuple, filled: bool = True):
+    """5각 별 polygon"""
+    import math
+    points = []
+    r_inner = int(r_outer * 0.42)
+    for i in range(10):
+        angle = -math.pi / 2 + i * math.pi / 5
+        radius = r_outer if i % 2 == 0 else r_inner
+        x = cx + radius * math.cos(angle)
+        y = cy + radius * math.sin(angle)
+        points.append((x, y))
+    if filled:
+        draw.polygon(points, fill=(*color, 255))
+    else:
+        draw.polygon(points, outline=(*color, 255), width=3)
+
+
+def _draw_topik_stars(draw: ImageDraw.ImageDraw, cx: int, cy: int, stars: int,
+                       color: tuple, star_r: int = 18, gap: int = 14):
+    """TOPIK frequency 별 5개 가로 정렬"""
+    if stars <= 0:
+        return
+    total_w = star_r * 2 * 5 + gap * 4
+    start_x = cx - total_w // 2 + star_r
+    for i in range(5):
+        sx = start_x + i * (star_r * 2 + gap)
+        _draw_star(draw, sx, cy, star_r, color, filled=(i < stars))
 
 def _paste_rounded(base: Image.Image, src: Image.Image,
                    x: int, y: int, w: int, h: int, radius: int):
@@ -193,39 +316,58 @@ def make_thumbnail(word: dict, output_path: str):
     draw.text((cx, id_cy), f"{word['id']:03d}",
               font=font_id, fill=C["accent_warm"], anchor="mm")
 
-    # ── ③ 한국어 단어 (초대형) ───────────────────────────────
+    # ── ②-b TOPIK Frequency 별점 ──────────────────────────────
+    _topik_ctx = word.get("topik_context") or {}
+    _stars = int(_topik_ctx.get("frequency_stars") or 0)
+    star_cy = id_cy + 45
+    if _stars > 0:
+        _draw_topik_stars(draw, cx, star_cy, _stars,
+                          C["accent"], star_r=22, gap=16)
+
+    # ── ③ 뜻 (현지어, 대형) ───────────────────────────────────
+    # 영어권/일본/중국/베트남/스페인 시청자가 스크롤 중 즉시 인식하도록
+    # 자국어를 위에 + 크게 배치 (영어 우선 제목과 같은 원칙).
+    meaning_text = word["meaning"]
+    meaning_text = (meaning_text[:1].upper() + meaning_text[1:]) if meaning_text else meaning_text
+    meaning_lines, meaning_size = _fit_text_lines(
+        draw, meaning_text, lambda s, sz: _segment_for_lang(s, lang_code, sz),
+        card_w - 50, size_max=84, size_min=48, max_lines=2)
+    _LINE_GAP = 8
+    meaning_block_h = len(meaning_lines) * meaning_size + (len(meaning_lines) - 1) * _LINE_GAP
+    meaning_top = star_cy + 38
+    _my = meaning_top
+    for _li, _ln in enumerate(meaning_lines):
+        _draw_runs_line(draw, cx, _my + meaning_size // 2,
+                        _segment_for_lang(_ln, lang_code, meaning_size), lang_color)
+        _my += meaning_size + (_LINE_GAP if _li < len(meaning_lines) - 1 else 0)
+    meaning_bot = meaning_top + meaning_block_h
+
+    # ── ④ 한국어 단어 (중대형) ───────────────────────────────
+    # 한국어 학습 채널 정체성 유지를 위해 여전히 크게 두되, 뜻보다는 작게.
     word_text = word["word"]
     n = len(word_text)
-    if   n == 1: word_size = 260
-    elif n == 2: word_size = 220
-    elif n == 3: word_size = 190
-    elif n == 4: word_size = 158
-    elif n == 5: word_size = 132
-    elif n == 6: word_size = 112
-    else:        word_size = 96
+    if   n == 1: word_size = 210
+    elif n == 2: word_size = 170
+    elif n == 3: word_size = 150
+    elif n == 4: word_size = 130
+    elif n == 5: word_size = 110
+    elif n == 6: word_size = 95
+    else:        word_size = 82
 
     font_word = get_font("korean_bold", word_size)
     wb = draw.textbbox((0, 0), word_text, font=font_word)
-    while wb[2] - wb[0] > card_w - 50 and word_size > 64:
+    while wb[2] - wb[0] > card_w - 50 and word_size > 60:
         word_size -= 8
         font_word = get_font("korean_bold", word_size)
         wb = draw.textbbox((0, 0), word_text, font=font_word)
 
-    word_cy  = id_cy + 52 + word_size // 2
+    word_cy  = meaning_bot + 32 + word_size // 2
     draw.text((cx, word_cy), word_text,
-              font=font_word, fill=C["accent"], anchor="mm")
+              font=font_word, fill=C["accent_warm"], anchor="mm")
     word_bot = word_cy + word_size // 2
 
-    # ── ④ 뜻 (meaning) ───────────────────────────────────────
-    font_meaning = _lang_font(lang_code, 44)
-    meaning_cy   = word_bot + 38
-    draw.text((cx, meaning_cy), word["meaning"],
-              font=font_meaning, fill=C["text_muted"], anchor="mm")
-    mb = draw.textbbox((0, 0), word["meaning"], font=font_meaning)
-    meaning_bot = meaning_cy + (mb[3] - mb[1]) // 2
-
     # ── ⑤ 언어 pill 배너 ─────────────────────────────────────
-    pill_top = meaning_bot + 44
+    pill_top = word_bot + 44
     pill_h   = 80
     pill_x1  = card_x + 22
     pill_x2  = card_x + card_w - 22
@@ -287,6 +429,46 @@ def _draw_placeholder(img, draw, x, y, w, h, text):
               font=font_ph, fill=C["text_muted"], anchor="mm")
 
 
+def _fit_text_lines(draw, text, runs_fn, avail_w, size_max, size_min, max_lines=2):
+    """텍스트를 avail_w 폭에 맞춰 폰트 크기를 줄이며 최대 max_lines줄로 워드랩.
+    한 줄에 들어가면 1줄, 길면 2줄로 나눠 가장 큰 크기를 사용.
+    폭 측정은 스크립트별 런 기준(혼용 텍스트도 정확). 반환: (lines, size)."""
+    def _line_w(s, size):
+        return _runs_width(draw, runs_fn(s, size))
+
+    def _tokens():
+        """공백 기준 단어로 나누되, 공백이 거의 없는 CJK 문장은 글자 단위로 쪼갠다.
+        (한글·한자·카나·구두점은 공백 없이 이어져 워드랩이 안 되므로)"""
+        parts = text.split()
+        if len(parts) >= 3:
+            return parts, " "        # 라틴형: 공백으로 재결합
+        return list(text.replace(" ", "")), ""   # CJK형: 글자 단위, 붙여서 결합
+
+    def _wrap(size, limit):
+        toks, sep = _tokens()
+        lines, cur = [], ""
+        for i, w in enumerate(toks):
+            t = cur + sep + w if cur else w
+            if not cur or _line_w(t, size) <= avail_w:
+                cur = t
+            else:
+                lines.append(cur); cur = w
+                if limit and len(lines) == limit:
+                    # 남은 토큰은 버리지 않도록 마지막 줄에 누적
+                    cur = sep.join(toks[i:])
+                    break
+        if cur:
+            lines.append(cur)
+        return lines
+    size = size_max
+    while size >= size_min:
+        lines = _wrap(size, None)
+        if len(lines) <= max_lines and all(_line_w(ln, size) <= avail_w for ln in lines):
+            return lines, size
+        size -= 4
+    return _wrap(size_min, max_lines)[:max_lines], size_min
+
+
 def make_thumbnail_landscape(word: dict, output_path: str):
     """가로형 YouTube 썸네일 1280×720 — 좌측 텍스트 + 우측 일러스트"""
     LW, LH = 1280, 720
@@ -332,29 +514,43 @@ def make_thumbnail_landscape(word: dict, output_path: str):
     draw = ImageDraw.Draw(img)
 
     # ── 텍스트 그룹 — 수직 중앙 정렬 ─────────────────────────
+    # 뜻을 한국어 위로 이동 + 크게(영어 우선 원칙). 한국어는 약간 축소.
     word_text = word["word"]
     n = len(word_text)
     avail_w = SPLIT_X - MARGIN * 2
-    if   n == 1: word_size = 220
-    elif n == 2: word_size = 200
-    elif n == 3: word_size = 172
-    elif n == 4: word_size = 148
-    elif n == 5: word_size = 126
-    elif n == 6: word_size = 108
-    else:        word_size =  92
+    if   n == 1: word_size = 170
+    elif n == 2: word_size = 150
+    elif n == 3: word_size = 130
+    elif n == 4: word_size = 115
+    elif n == 5: word_size = 100
+    elif n == 6: word_size = 88
+    else:        word_size = 76
 
     font_word = get_font("korean_bold", word_size)
     wb = draw.textbbox((0, 0), word_text, font=font_word)
-    while (wb[2] - wb[0]) > avail_w and word_size > 64:
+    while (wb[2] - wb[0]) > avail_w and word_size > 56:
         word_size -= 10
         font_word = get_font("korean_bold", word_size)
         wb = draw.textbbox((0, 0), word_text, font=font_word)
 
+    # 뜻 크기 결정 (auto-fit, 길면 최대 2줄 워드랩)
+    meaning_text = word["meaning"]
+    meaning_text = (meaning_text[:1].upper() + meaning_text[1:]) if meaning_text else meaning_text
+    meaning_lines, meaning_size = _fit_text_lines(
+        draw, meaning_text, lambda s, sz: _segment_for_lang(s, lang_code, sz),
+        avail_w, size_max=72, size_min=40, max_lines=2)
+    LINE_GAP = 8
+    meaning_block_h = len(meaning_lines) * meaning_size + (len(meaning_lines) - 1) * LINE_GAP
+
     TOPIK_H   = 36
     ID_H      = 46
-    MEANING_H = 42
+    STAR_H    = 36   # 별점 영역 높이
     PILL_H    = 68
-    group_h   = TOPIK_H + 12 + ID_H + 14 + word_size + 18 + MEANING_H + 28 + PILL_H
+    _topik_ctx = word.get("topik_context") or {}
+    _stars = int(_topik_ctx.get("frequency_stars") or 0)
+    star_block = (STAR_H + 14) if _stars > 0 else 0
+    group_h   = (TOPIK_H + 12 + ID_H + 14 + star_block
+                 + meaning_block_h + 20 + word_size + 28 + PILL_H)
     y         = (LH - group_h) // 2
 
     # ① TOPIK LV.X
@@ -367,15 +563,25 @@ def make_thumbnail_landscape(word: dict, output_path: str):
               font=get_font("english_bold", ID_H), fill=C["accent_warm"], anchor="mm")
     y += ID_H + 14
 
-    # ③ 한국어 단어 (lang_color 적용)
-    draw.text((left_cx, y + word_size // 2), word_text,
-              font=font_word, fill=lang_color, anchor="mm")
-    y += word_size + 18
+    # ②-b TOPIK Frequency 별점 (5px 위로)
+    if _stars > 0:
+        _draw_topik_stars(draw, left_cx, y + STAR_H // 2 - 5, _stars,
+                          lang_color, star_r=18, gap=12)
+        y += STAR_H + 14
 
-    # ④ 뜻
-    draw.text((left_cx, y + MEANING_H // 2), word["meaning"],
-              font=_lang_font(lang_code, MEANING_H), fill=C["text_muted"], anchor="mm")
-    y += MEANING_H + 28
+    # ③ 뜻 (현지어, 대형, lang_color) — 최대 2줄
+    for li, ln in enumerate(meaning_lines):
+        _draw_runs_line(draw, left_cx, y + meaning_size // 2,
+                        _segment_for_lang(ln, lang_code, meaning_size), lang_color)
+        y += meaning_size
+        if li < len(meaning_lines) - 1:
+            y += LINE_GAP
+    y += 20
+
+    # ④ 한국어 단어 (중대형, accent_warm)
+    draw.text((left_cx, y + word_size // 2), word_text,
+              font=font_word, fill=C["accent_warm"], anchor="mm")
+    y += word_size + 28
 
     # ⑤ 언어 pill
     pill_x1 = MARGIN
@@ -425,17 +631,23 @@ _CONV_SUBTITLE = {
 
 
 def _get_situation_title(theme: dict, lang: str) -> str:
-    """언어별 상황명 반환 (줄바꿈 처리 포함)"""
+    """언어별 상황명 반환 (줄바꿈 처리 포함).
+    1차: 대시 separator(em-dash, hyphen)로 첫 줄 분리.
+    2차: 분리 후에도 한 줄이 길고(>22자) " / "가 있으면 추가 분리."""
     lang_up = lang.upper()
     key_map = {"JP": "situation_jp", "CN": "situation_cn",
                "VN": "situation_vn", "ES": "situation_es"}
     raw = theme.get(key_map.get(lang_up, ""), "") or theme.get("situation_en", "")
-    # " — " 또는 " - " 으로 분리해 줄바꿈
-    for sep in [" \u2014 ", " — ", " - "]:
+    for sep in [" — ", " - "]:
         if sep in raw:
-            return raw.replace(sep, "\n", 1)
-    return raw
-
+            raw = raw.replace(sep, "\n", 1)
+            break
+    out_lines = []
+    for line in raw.split("\n"):
+        if len(line) > 22 and " / " in line:
+            line = line.replace(" / ", "\n", 1)
+        out_lines.append(line)
+    return "\n".join(out_lines)
 
 def make_conv_thumbnail(theme: dict, lang: str, output_path: str):
     """회화 YouTube 썸네일 1280×720 — 이미지 #52 디자인
@@ -520,8 +732,8 @@ def make_conv_thumbnail(theme: dict, lang: str, output_path: str):
     font_title = get_font(_title_fkey, TITLE_H)
     for line in lines:
         wb = draw.textbbox((0, 0), line, font=font_title)
-        while (wb[2] - wb[0]) > avail_w and TITLE_H > 48:
-            TITLE_H   -= 6
+        while (wb[2] - wb[0]) > avail_w and TITLE_H > 32:
+            TITLE_H   -= 4
             font_title = get_font(_title_fkey, TITLE_H)
             wb = draw.textbbox((0, 0), line, font=font_title)
 
