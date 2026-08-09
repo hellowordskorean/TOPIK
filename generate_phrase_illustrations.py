@@ -24,6 +24,7 @@ import re
 import sys
 import io
 import time
+import hashlib
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -274,7 +275,11 @@ _KEYWORD_EMOTIONS = [
 
 _FALLBACK_EXPRESSIONS = list(_EXPRESSION_VOCAB.keys())
 
-# ── 패널별 배경 변주 힌트 — 같은 상황 내에서 촬영 각도·서브공간을 바꿔 단조로움 방지 ──
+# ── 카메라 구도 선택지 — 장면 디렉터가 대사에 맞는 구도를 "고르는" 메뉴.
+# (2026-08-09) 예전에는 phrase_idx로 구도를 고정 배정해서 모든 상황의 N번 예문이
+# 똑같은 앵글로 그려졌다. 이제는 디렉터가 대사 내용에 맞는 구도를 직접 고르고,
+# 같은 상황에서 이미 쓴 구도는 피하도록만 제약한다. fallback 경로에서만 인덱스 대신
+# 대사 해시로 하나 뽑아 쓴다.
 _PANEL_VARIATION_HINTS = [
     "front-facing medium shot at the main area of the location",
     "slightly to the side near a window or corner, different lighting",
@@ -365,7 +370,11 @@ _WEBTOON_STYLE_BASE = (
     "soft loose brushwork with visible watercolor paper texture, "
     "gentle pencil outlines (not thick black ink), "
     "watercolor wash backgrounds that are slightly soft and misty, "
-    "time of day matches the scene naturally — morning, afternoon, evening, or night, "
+    # 2026-07-21: "time of day matches the scene naturally"가 시장/식당 장면에서 저녁+등불
+    # 조명(황금빛 고채도)을 유발 → 낮 기본값으로 고정. 밤은 대사가 명시할 때만.
+    "soft bright daytime lighting by default — gentle diffused morning or afternoon light, "
+    "use evening or night ONLY when the dialogue explicitly happens at night, "
+    "never golden-hour glow, never lantern-lit amber cast, "
     "pastel palette: ivory white, soft sky-blue, dusty rose, sage green, "
     "light lavender, muted mint — balanced tones, not overly yellow or orange, "
     "NO neon colors, NO dark or black-dominant areas, "
@@ -404,12 +413,17 @@ _WEBTOON_STYLE_BASE = (
     "depth: foreground subjects sharp, background gently blurred/misty, "
     "square 1:1 composition, "
     "FIXED FRAMING — IDENTICAL in every illustration: medium shot, camera at character eye level, "
-    "red panda total height ≈ 45% of the frame height (±5% tolerance only), "
+    "red panda total height ≈ 45% of the frame height (±5% tolerance only; "
+    "in split-screen phone-call panels judge the height within the character's own half), "
     "main subject centered naturally — balanced, well-composed scene. "
 
 
 
     # ── 주인공 vs 조연 ────────────────────────────────────────────
+    # 2026-07-22: 분할화면(phone-call)/솔로 패널과 충돌하지 않도록 기본 레이아웃임을 명시
+    "DEFAULT CHARACTER LAYOUT — applies to face-to-face panels; if the FRAMING section above "
+    "specifies a phone-call panel, a front-door handoff, or a solo panel, "
+    "THAT layout OVERRIDES this: "
     "TWO DISTINCT CHARACTERS — they MUST look clearly different: "
     "PROTAGONIST (LEARNER): always a RED PANDA — orange-red fur with dark brown body, "
     "white facial markings, fluffy striped tail visible — "
@@ -420,27 +434,9 @@ _WEBTOON_STYLE_BASE = (
     "DO NOT make both characters the same species or same color. "
 
     # ── 캐릭터 비율 / 눈 ─────────────────────────────────────────
+    # 2026-07-21: 주인공 비율 1~11항이 위 핵심 스타일 블록과 통째로 중복돼 팔레트 지시를
+    # 희석시키던 것 정리 — 비율 규칙은 위 블록 한 곳만 유지.
     "CHARACTERS: all characters are cute chibi cartoon animals. "
-    "PROTAGONIST RULE — STRICTLY ENFORCED: the main character is ALWAYS a red panda — "
-    "supporting/secondary characters can be any other cute animal but MUST be smaller "
-    "or equal in size to the protagonist red panda, NEVER taller. "
-    "PROTAGONIST CANONICAL PROPORTIONS — copy EXACTLY from the attached reference character "
-    "sheet (the ONLY source of truth), identical in every illustration: "
-    "1) total head height ≈ 1.0 unit, total body height ≈ 1.2 units (excluding legs), "
-    "   head:body ratio is exactly 1 : 1.2 (head is larger and dominant), "
-    "2) head shape: perfectly round, very large, takes up roughly the top 45% of the silhouette, "
-    "3) body shape: short, plump, oval-egg torso, no visible neck — head sits directly on shoulders, "
-    "4) arms: short stubby pillars, length ≈ 0.4 of body height, rounded paw tips no fingers, "
-    "5) legs: extremely short and stubby, length ≈ 0.3 of body height, barely separated stance, "
-    "6) tail: bushy striped fox-like tail, length ≈ 1.0 of body height, ringed with 4–5 dark bands, "
-    "7) ears: two small triangular ears on top of the head with white inner fluff, "
-    "8) face: large dark eyes 35% of face width, small dot nose, tiny smile, white muzzle and eyebrow patches, "
-    "9) fur color: warm rust-orange body, white face mask + ears + chest, dark brown limbs and ringed tail, "
-    "10) outline: clean soft watercolor outline, no thick black bold strokes, "
-    "ABSOLUTELY DO NOT change these proportions across illustrations — same character every time, like a brand mascot. "
-    "ABSOLUTELY DO NOT add: thin tall human-like body, long humanoid legs, slender torso, "
-    "muscular limbs, realistic adult proportions, large feet, fingers, knees, elbows, "
-    "shoes, boots, sandals, sneakers, or any footwear (bare paws ONLY). "
     "Supporting characters: other cute animals with clearly different colors. "
     "Total character height ≈ 45% of frame height (±5% tolerance only) — IDENTICAL in every illustration. "
     "Characters fully visible head to feet, centered in composition. "
@@ -467,9 +463,22 @@ _WEBTOON_STYLE_BASE = (
 
     # ── 구도 ─────────────────────────────────────────────────────
     "square 1:1 composition, "
-    "MEDIUM SHOT — same framing in every illustration: both characters centered in the frame, "
+    # 2026-07-22: 분할화면/솔로 패널에서는 FRAMING 섹션이 우선함을 명시
+    "MEDIUM SHOT (default — the FRAMING section above OVERRIDES this for phone-call, "
+    "front-door handoff, or solo panels): both characters centered in the frame, "
     "heads near upper-center, feet near lower-center, soft background space around them, "
     "camera at character eye level, "
+    # 2026-07-21: 직원-손님 대화인데 둘 다 카운터 앞에 나란히 서 있던 문제 교정
+    "ROLE-ACCURATE STAGING (face-to-face service scenes ONLY — never applies to phone-call "
+    "panels where the speakers are in different places): "
+    "when the supporting character is serving the protagonist "
+    "(cashier, store clerk, restaurant staff, barista, pharmacist, receptionist, "
+    "ticket agent, bank teller, nurse at reception): the supporting character stands "
+    "BEHIND the counter/register/desk at their work station, and the protagonist stands "
+    "IN FRONT of it as the customer — the counter surface runs between the two characters. "
+    "NEVER place a staff member on the customer side casually chatting side-by-side. "
+    "A doctor sits at the exam desk, a taxi driver sits in the driver's seat, "
+    "a hair stylist stands behind the styling chair — each role occupies its real work position, "
 
     # ── 탈것 구조 정확도 (조건부) ─────────────────────────────────
     "LOCATION FOLLOWS THE DIALOGUE: "
@@ -496,7 +505,22 @@ _WEBTOON_STYLE_BASE = (
     "phone screens→simple icon UI only, price tags→coin icon. "
     "EXCEPTION: 'TAXI' rooftop sign is allowed. "
     "All other text must be replaced with pictogram icons. "
-    "NO readable text anywhere in the image"
+    "NO readable text anywhere in the image. "
+
+    # ── 최종 색감/밀도 앵커 (2026-07-21 신설) ────────────────────
+    # 프롬프트 맨 끝 = 모델 가중치가 가장 높은 위치. 단어 일러스트와 톤을 맞추기 위한
+    # 세피아/고채도/과밀 배경 교정. 지우면 시장·식당 장면이 다시 황금빛으로 물듦.
+    "FINAL COLOR AND DENSITY RULES — HIGHEST PRIORITY, THESE OVERRIDE EVERYTHING ABOVE: "
+    "overall HIGH-KEY, LIGHT and AIRY pastel image on soft ivory-white watercolor paper, "
+    "background heavily faded, desaturated and misty — a pale washed-out suggestion "
+    "of the location, not a fully painted set, "
+    "at least one third of the frame stays as soft empty breathing space, "
+    "maximum 2-3 muted accent colors in the entire scene, "
+    "props kept minimal — only the items this dialogue actually needs, "
+    "NO sepia or golden-amber overall cast, NO lanterns, NO rainbow-colored awnings, "
+    "NO bunting or festival decorations, NO string lights, "
+    "NO densely packed shelves or walls of colorful goods, "
+    "the same light gentle pastel tone as a children's picture book page"
 )
 
 def _webtoon_style(sit_id: int) -> str:
@@ -626,9 +650,12 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
     cat     = situation.get("category", "")
     local_char, learner_char = _pick_characters(sit_id, situation)
 
-    # DB에 미리 생성된 scene_prompt 우선 사용
-    if situation.get("scene_prompt"):
-        return situation["scene_prompt"]
+    # 2026-07-21: DB scene_prompt를 그대로 반환하던 로직 제거 — 구버전 프롬프트에 박힌
+    # 고채도 지시("cheerful red-and-yellow color scheme" 등)와 뒤바뀐 캐릭터 좌우/종이
+    # 그대로 재현되던 원인. Claude가 있으면 항상 새 규칙으로 재작성하고 DB는 장소 힌트로만 사용.
+    db_scene = situation.get("scene_prompt", "")
+    if db_scene and anthropic_client is None:
+        return db_scene
 
     if anthropic_client is None:
         return (
@@ -640,7 +667,7 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
     try:
         message = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=200,
+            max_tokens=280,
             messages=[{
                 "role": "user",
                 "content": (
@@ -648,7 +675,16 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     "Write a 2-sentence establishing shot description for a cute animal character panel.\n\n"
                     f"Situation: {sit_ko} ({sit_en})\n"
                     f"Category: {cat}\n"
-                    f"PROTAGONIST (red panda, LARGER, LEFT side): {learner_char}\n"
+                    + (
+                        "⚠️ REMOTE-BY-DEFAULT SITUATION: this situation's theme is inherently "
+                        "remote (phone/text/online/delivery), so output 'STAGING: phone-call' "
+                        "and set the LEFT half at the protagonist's home.\n"
+                        if _is_remote_theme(situation) else ""
+                    )
+                    + (f"Location hint from database (use ONLY for the location idea — "
+                       f"IGNORE any color scheme, character species, or left/right placement "
+                       f"written in it, they are outdated): {db_scene}\n" if db_scene else "")
+                    + f"PROTAGONIST (red panda, LARGER, LEFT side): {learner_char}\n"
                     f"SUPPORTING character (different animal, SMALLER, RIGHT side): {local_char}\n\n"
                     "RULES:\n"
                     "1. Describe a MODERN everyday Korean setting that captures the BROADER theme of "
@@ -659,17 +695,33 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
                     "   often a better choice than the cramped vehicle interior, because later panels "
                     "   need the freedom to show ticket counters, platforms, or boarding areas too.\n"
                     "   Do NOT use traditional tile-roof hanok or wooden houses.\n"
+                    "1-1. POINT OF VIEW — set the world where the PROTAGONIST actually is during "
+                    "these conversations. For REMOTE situations where the speakers talk from "
+                    "different places (food delivery, phone orders or reservations, calling a taxi, "
+                    "customer service / repair / AS calls, reporting utility problems, calling the "
+                    "management office, KakaoTalk/text chats), the world is the protagonist's HOME — "
+                    "a cozy living room with a phone — NOT the business's interior. "
+                    "If the situation title itself mentions phone/전화, text/문자, or online, "
+                    "default to phone-call. In phone-call intros BOTH characters must each hold "
+                    "their own phone/headset/receiver. "
+                    "In that case output 'STAGING: phone-call' as the first line and describe "
+                    "LEFT half = protagonist at home with phone, RIGHT half = the supporting "
+                    "character answering at their own workplace. Otherwise output "
+                    "'STAGING: face-to-face'.\n"
                     "2. Characters are SMALL cute chibi figures in the lower-center of the frame — "
                     "   surrounded by ample soft empty background space.\n"
                     "3. BACKGROUND is minimal abstract color wash only — "
                     "   suggest location with 1-2 simple shapes, NO detailed props or furniture.\n"
                     "4. NO text, signs, labels, speech bubbles anywhere.\n"
-                    "5. Focus on warm, gentle, cozy pastel atmosphere with wide open space.\n"
+                    "5. Focus on gentle, LIGHT pastel atmosphere with wide open space — "
+                    "   soft daylight, at most 2-3 muted accent colors. "
+                    "   NEVER mention: lanterns, rainbow/multicolored awnings, bunting, "
+                    "   string lights, festival decorations, or shelves packed with goods.\n"
                     "6. VEHICLE ACCURACY (only if you actually choose a vehicle interior): "
                     "driver on LEFT with steering wheel facing FORWARD, "
                     "passenger on RIGHT facing FORWARD, "
                     "steering wheel always visible, characters never sideways or backward.\n\n"
-                    "Output: 2 sentences ONLY. No preamble."
+                    "Output: the STAGING line first, then 2 sentences ONLY. No preamble."
                 ),
             }],
         )
@@ -685,7 +737,8 @@ def _build_intro_scene(situation: dict, anthropic_client) -> str:
 
 def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
                         phrase_idx: int = 0,
-                        prior_poses: list | None = None) -> str:
+                        prior_poses: list | None = None,
+                        prior_views: list | None = None) -> str:
     """대화 쌍별 패널 장면 설명 생성"""
     sit_id      = situation.get("id", 0)
     sit_ko      = situation.get("situation", "")
@@ -697,8 +750,10 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
     tip         = phrase.get("tip", "")
     local_char, learner_char = _pick_characters(sit_id, situation, phrase_idx)
 
-    # 패널 인덱스로 촬영 각도/서브공간 변주 힌트 선택
-    view_hint = _PANEL_VARIATION_HINTS[phrase_idx % len(_PANEL_VARIATION_HINTS)]
+    # 구도는 인덱스로 고정하지 않는다 — 디렉터가 대사에 맞는 구도를 고른다.
+    # fallback(Claude 미사용/실패) 경로에서만 대사 해시로 하나 뽑아 쓴다.
+    _vh_seed = int(hashlib.md5((my_ko or my_en or str(phrase_idx)).encode("utf-8")).hexdigest()[:8], 16)
+    view_hint = _PANEL_VARIATION_HINTS[_vh_seed % len(_PANEL_VARIATION_HINTS)]
 
     # DB에 미리 생성된 scene_prompt가 있으면 배경으로 사용 + 동작 설명 추가
     base_scene = situation.get("scene_prompt", "")
@@ -723,12 +778,14 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
 
     try:
         setting_hint = (
-            f"Broader theme/world (intro background): {base_scene}\n" if base_scene
+            f"Broader theme/world (intro background — use ONLY as location info; "
+            f"IGNORE any color scheme, character species, or left/right placement "
+            f"written in it, they are outdated): {base_scene}\n" if base_scene
             else f"Broader theme: soft minimalist Korean {sit_en.lower()}\n"
         )
         message = anthropic_client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=240,
+            max_tokens=320,
             messages=[{
                 "role": "user",
                 "content": (
@@ -736,8 +793,29 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
                     "Write 1-2 sentences describing the scene for this dialogue panel.\n\n"
                     f"{setting_hint}"
                     f"Situation theme: {sit_ko} ({sit_en})\n"
-                    f"PANEL CAMERA/AREA: {view_hint}\n"
-                    f"LEFT character — PROTAGONIST (red panda, LARGER): {learner_char} — says: '{my_en}'\n"
+                    + (
+                        "⚠️ REMOTE-BY-DEFAULT SITUATION: this situation's theme is inherently "
+                        "remote (phone/text/online/delivery). Output 'STAGING: phone-call' for "
+                        "this panel UNLESS this specific line can ONLY happen in person "
+                        "(e.g., physically arriving at the place, or receiving the item at the "
+                        "door → then use door-handoff). Any location hint below describing a "
+                        "business interior applies to the OTHER side of the call, not to the "
+                        "protagonist.\n"
+                        if _is_remote_theme(situation) else ""
+                    )
+                    + "PANEL CAMERA/AREA — YOU CHOOSE. There is no assigned angle for this "
+                    "panel: pick the framing that best shows what THIS line is actually doing "
+                    "(pointing at something far away needs a wider shot; handing over an item "
+                    "or reading a menu needs a closer one; asking staff behind a counter needs "
+                    "the counter in frame). Menu of options — pick one or describe your own:\n"
+                    + "\n".join(f"  • {v}" for v in _PANEL_VARIATION_HINTS) + "\n"
+                    + (
+                        "ALREADY-USED FRAMINGS in this situation — pick a DIFFERENT one unless "
+                        "the dialogue really demands the same:\n"
+                        + "\n".join(f"  - {v}" for v in (prior_views or [])[-6:]) + "\n"
+                        if prior_views else ""
+                    )
+                    + f"LEFT character — PROTAGONIST (red panda, LARGER): {learner_char} — says: '{my_en}'\n"
                     f"RIGHT character — SUPPORTING (different animal, SMALLER, clearly different color): {local_char} — responds: '{resp_en}'\n"
                     + (f"Tip: {tip}\n" if tip else "")
                     + (emotion_hint if emotion_hint else "")
@@ -749,7 +827,45 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
                         + "\n".join(f"  - {p}" for p in prior_poses[-6:]) + "\n\n"
                         if prior_poses else ""
                     )
-                    + "RULES:\n"
+                    + "BEFORE WRITING — UNDERSTAND THE SCENE (think silently, do not output this):\n"
+                    "  (a) WHO is the supporting character in THIS situation — staff serving the "
+                    "protagonist (cashier, clerk, barista, pharmacist, doctor, driver, ticket agent, "
+                    "receptionist) or a peer (friend, neighbor, colleague)?\n"
+                    "  (b) WHERE does each character physically belong at this exact moment — "
+                    "which side of the counter, seated or standing, holding what?\n"
+                    "  (c) WHAT is each speaker feeling, judged from what their line actually MEANS — "
+                    "not a generic smile?\n"
+                    "  (d) ARE the two speakers even in the SAME PLACE? Phone/app orders, delivery "
+                    "inquiries ('where is my order?'), and phone reservations mean they are in "
+                    "DIFFERENT places and must NOT be drawn together.\n\n"
+                    "RULES:\n"
+                    "0. STAGING — output this FIRST on its own line, exactly one of:\n"
+                    "   'STAGING: phone-call' — the speakers are NOT in the same place. This covers "
+                    "ANY remote conversation: ordering food or calling a taxi by phone/app, delivery "
+                    "inquiries, reservations by phone (hotel, restaurant, hospital, salon), calling "
+                    "customer service / repair / AS centers, reporting utility problems, calling the "
+                    "apartment management office or landlord, KakaoTalk/text message chats, and "
+                    "making plans by phone or text with a friend. The panel will be drawn as a "
+                    "SPLIT-SCREEN, so describe BOTH sides in your scene sentences: what the "
+                    "protagonist does and feels at their own location, AND what the supporting "
+                    "character does at their own location while answering. ALWAYS state the device "
+                    "for BOTH sides — e.g., 'phone gripped in one paw pressed to ear' / 'headset "
+                    "on' / 'holding the receiver' — both speakers MUST visibly hold their own "
+                    "device. ONE-PAW GESTURES ONLY while holding a phone: the phone paw stays at "
+                    "the ear, so pick gestures using just the OTHER free paw (open palm, paw on "
+                    "chest, paw on cheek) — never both-paws-clasped, both-paws-to-cheeks, or "
+                    "arms-thrown-up during a call (headset wearers may use both paws). For "
+                    "TEXT/app chats, both characters look down at their phone screens typing — "
+                    "no phone held to the ear.\n"
+                    "   THEME OVERRIDE: if the situation theme itself mentions phone/전화, text/문자, "
+                    "or online booking, DEFAULT to phone-call for every line unless that specific "
+                    "line clearly happens in person.\n"
+                    "   'STAGING: door-handoff' — a delivery worker or visitor is at the "
+                    "protagonist's front door (receiving food, 'leave it at the door' moment, "
+                    "courier handing over a package).\n"
+                    "   'STAGING: face-to-face' — both speakers really are in the same room.\n"
+                    "   'STAGING: solo' — the protagonist acts alone (tapping an app, reading a "
+                    "menu flyer at home, no one else present).\n"
                     "1. CONSISTENCY: The SAME two characters appear throughout this entire scene — "
                     "same species, same fur/body color, same outfit as the intro panel. "
                     "DO NOT change species, color, or clothing between panels.\n"
@@ -762,15 +878,42 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
                     "   • Finding seat, asking about stops while moving, requesting window seat → INSIDE the moving vehicle\n"
                     "   • Asking taxi to go somewhere / fare → could be sidewalk hailing OR inside taxi (pick what fits)\n"
                     "   • Bus fare / boarding → at the entrance door area near the fare reader\n"
-                    "   • Ordering food → at counter or seated at a table (pick what the line implies)\n"
+                    "   • Ordering food IN PERSON → at counter or seated at a table (pick what the line implies)\n"
+                    "   • Ordering/asking by PHONE or app (delivery, reservation, order status) → "
+                    "phone-call split-screen: protagonist's home living room ↔ the business's counter/kitchen\n"
+                    "   • Calling customer service / AS / utilities / management office → "
+                    "phone-call split-screen: protagonist's home ↔ the service desk or office\n"
+                    "   • KakaoTalk/text chat, making plans by text → phone-call split-screen: "
+                    "each side at their own place, looking at their phone screen and typing\n"
+                    "   • Receiving a delivery, 'leave it at the door', paying a rider → "
+                    "door-handoff at the protagonist's apartment front door\n"
                     "   • Asking for the bill / takeout → at table or at the counter\n"
                     "   Keep the same overall art style and color palette as the intro, but the SUB-LOCATION "
                     "must serve the dialogue. Do NOT cram every panel into the same single spot.\n"
+                    "2-1. ROLE-ACCURATE STAGING: if the supporting character is STAFF, they are "
+                    "AT THEIR WORK STATION — behind the counter/register/desk, at the exam desk, "
+                    "in the driver's seat, behind the styling chair. The protagonist faces them "
+                    "from the customer side, the counter running between them. "
+                    "NEVER describe staff and customer standing side-by-side on the customer side "
+                    "casually chatting — that breaks the scene's realism.\n"
+                    "2-2. COLOR RESTRAINT: describe the location simply and airy — at most ONE "
+                    "colored prop. NEVER mention: lanterns, rainbow/multicolored awnings, bunting, "
+                    "string lights, festival decorations, or shelves densely packed with goods. "
+                    "Prefer soft daylight unless the dialogue explicitly happens at night.\n"
                     "3. DIFFERENTIATION via ACTION+EXPRESSION: "
                     "Each panel must show a DIFFERENT body pose, gesture, and facial expression. "
                     "Describe SPECIFIC concrete visuals: eye shape, mouth, paw position, "
                     "lean direction, blush, sweat drop, item being held/handed, etc.\n"
-                    "4. First sentence: camera angle + the dialogue-appropriate sub-location for this panel.\n"
+                    "3-1. EXPRESSIONS MUST MATCH THE DIALOGUE MEANING: derive each character's "
+                    "emotion from what THEIR OWN line says — apologizing → embarrassed slight bow; "
+                    "asking a favor → hopeful lean forward; complaining → troubled frown; "
+                    "receiving something → delighted; being thanked → modest warm nod. "
+                    "The two characters usually feel DIFFERENT things — give each their own "
+                    "distinct expression, never the same generic smile on both.\n"
+                    "4. First sentence: the camera angle YOU chose + the dialogue-appropriate "
+                    "sub-location for this panel. State the angle explicitly (e.g. 'wide three-quarter "
+                    "shot', 'close medium shot over the counter') so it reads as a deliberate choice "
+                    "for this line, not a default.\n"
                     "5. Second sentence: specific actions and expressions matching the dialogue.\n"
                     "6. AVOID: repeating poses from previous panels, generic 'warm smile', "
                     "thumbs-up gesture, raised-index-finger pose (OVERUSED — use at most once per entire scene).\n"
@@ -808,7 +951,7 @@ def _build_phrase_scene(situation: dict, phrase: dict, anthropic_client,
                     "10. PHONE SCREENS: when a character looks at their OWN phone, the screen faces "
                     "that character's own eyes (tilted toward themselves), NOT turned outward. Only "
                     "when they deliberately show it to the other character may it face outward.\n"
-                    "Output: 1-2 sentences ONLY, no preamble."
+                    "Output: the STAGING line first, then 1-2 scene sentences. No preamble."
                 ),
             }],
         )
@@ -935,8 +1078,47 @@ def _get_main_char_outfit(situation: dict) -> str:
     return _CATEGORY_OUTFITS.get(cat, _DEFAULT_OUTFIT)
 
 
+# ─── 스테이징 타입 (2026-07-22) ──────────────────────────────
+# 장면 디렉터가 패널마다 "STAGING: <type>" 태그를 첫 줄에 출력 → 구도 분기.
+# phone-call: 두 화자가 다른 장소(전화 주문/예약/배달 문의) → 분할화면.
+# door-handoff: 배달원이 현관에 도착한 순간. solo: 주인공 단독. face-to-face: 대면(기본).
+_STAGING_TYPES = ("face-to-face", "phone-call", "door-handoff", "solo")
+# phone-split은 phone-call의 별칭으로만 허용(디렉터가 가끔 출력해도 안전하게 처리)
+_STAGING_RE = re.compile(
+    r'^\s*STAGING:\s*(face-to-face|phone-call|phone-split|door-handoff|solo)\s*\.?\s*\n?',
+    re.IGNORECASE,
+)
+
+
+# 상황명 자체가 원격 대화(전화/문자/온라인/배달)를 뜻하면 phone-call을 기본값으로 강제.
+# 프롬프트 권고만으론 DB 장소 힌트(리셉션 등)에 밀려 대면으로 오판되는 사례(sit_14)가 있어
+# 코드에서 결정적으로 주입 (2026-07-22).
+_REMOTE_THEME_RE = re.compile(
+    r'전화|통화|문자|카카오|온라인|배달|phone|text message|kakao|online|delivery',
+    re.IGNORECASE,
+)
+
+
+def _is_remote_theme(situation: dict) -> bool:
+    text = f"{situation.get('situation', '')} {situation.get('situation_en', '')}"
+    return bool(_REMOTE_THEME_RE.search(text))
+
+
+def _split_staging(scene: str) -> tuple[str, str]:
+    """장면 텍스트에서 STAGING 태그를 분리. (staging, 본문) 반환. 태그 없으면 face-to-face."""
+    m = _STAGING_RE.match(scene or "")
+    if m:
+        staging = m.group(1).lower()
+        if staging == "phone-split":
+            staging = "phone-call"
+        return staging, scene[m.end():].strip()
+    return "face-to-face", (scene or "").strip()
+
+
 def _build_char_instruction(situation: dict, phrase_idx: int = 0,
-                            is_first_panel: bool = False) -> str:
+                            is_first_panel: bool = False,
+                            staging: str = "face-to-face",
+                            has_scene_ref: bool = False) -> str:
     outfit = _get_main_char_outfit(situation)
     sit_id = situation.get("id", 0)
     local_char, _ = _pick_characters(sit_id, situation, phrase_idx)
@@ -950,10 +1132,88 @@ def _build_char_instruction(situation: dict, phrase_idx: int = 0,
     else:
         consistency_note = (
             "⚠️ VISUAL CONSISTENCY REQUIRED: Use the EXACT SAME characters as the intro panel.\n"
-            f"  LEFT: red panda — orange-red fur, white markings, {outfit}\n"
-            f"  RIGHT: {local_char}\n"
-            "Same species, same fur color, same outfit in EVERY panel. "
+            f"  PROTAGONIST: red panda — orange-red fur, white markings, {outfit}\n"
+            + (f"  SUPPORTING: {local_char}\n" if staging != "solo" else "")
+            + "Same species, same fur color, same outfit in EVERY panel. "
             "DIFFERENTIATE only via: expression, body pose, gesture, camera angle.\n"
+        )
+
+    # ── 스테이징별 구도/배치 블록 (2026-07-22) ──────────────────
+    if staging == "phone-call":
+        # 2026-07-22 확정: 원거리 대화(전화 등)는 인트로·패널 모두 분할샷 — 두 화자를
+        # 각자의 공간에 그림(사용자 확정. 주인공 단독안은 폐기).
+        layout_block = (
+            "=== FRAMING — SPLIT-SCREEN PHONE CALL ===\n"
+            "The two speakers are in DIFFERENT PLACES talking on the phone — they are NOT together.\n"
+            "Vertical SPLIT-SCREEN composition: a soft hand-drawn wavy watercolor divider line runs "
+            "from top to bottom down the middle of the square frame, creating two half-panels.\n"
+            f"LEFT HALF — the red panda protagonist at their OWN location as the scene describes "
+            f"(e.g., home living room), phone to ear — or looking down at the phone screen and "
+            f"typing if the scene describes a text/app chat. Outfit: {outfit}.\n"
+            f"RIGHT HALF — the {local_char} at their own separate location as the scene describes "
+            f"(restaurant counter, kitchen, office, service desk, or their own home), answering "
+            f"on a phone or headset — or typing on their own phone for a text chat.\n"
+            "Each half has its OWN background. The two characters NEVER share a room, never touch, "
+            "and no counter or table connects the two halves. "
+            "MANDATORY — BOTH CHARACTERS HOLD THEIR OWN DEVICE: the protagonist holds a phone AND "
+            "the supporting character holds their own phone (or wears a headset, or holds a "
+            "landline receiver). A character talking in a phone call WITHOUT any device in "
+            "paw/on head is WRONG — never draw that. For text chats, both hold phones and look "
+            "down at their screens.\n"
+            "PHONE IS ALWAYS GRIPPED BY ONE PAW pressed to the ear — a phone floating at the ear "
+            "with no paw holding it is WRONG. Therefore during a call each character has only ONE "
+            "free paw: all gestures must be ONE-PAW gestures (open palm, pointing direction, paw "
+            "on chest, paw on cheek, scratching head). NEVER draw two-paw poses — both paws "
+            "clasped together, both paws on cheeks, both arms thrown up — while on a call. "
+            "(Exception: a character wearing a HEADSET has both paws free.)\n"
+            "Each character ≈ 70% of the frame height inside their own half, medium shot, eye level, "
+            "fully visible head to feet.\n"
+            f"SUPPORTING CHARACTER: a {local_char} — clearly DIFFERENT color from the red panda "
+            "(NOT orange/red/tan), same watercolor storybook style.\n"
+        )
+    elif staging == "door-handoff":
+        layout_block = (
+            "=== FRAMING — FRONT DOOR HANDOFF ===\n"
+            "The scene happens at the protagonist's apartment FRONT DOOR.\n"
+            f"LEFT — the red panda protagonist stands INSIDE the home at the open front door. "
+            f"Outfit: {outfit}.\n"
+            f"RIGHT — the {local_char} stands OUTSIDE in the hallway as a DELIVERY WORKER: "
+            "wearing a delivery cap or helmet, holding a paper food bag or insulated delivery box "
+            "with both paws.\n"
+            "The open door frame clearly separates inside and outside. "
+            "Camera at eye level, medium shot, both characters fully visible.\n"
+            f"SUPPORTING CHARACTER: a {local_char} — clearly DIFFERENT color from the red panda "
+            "(NOT orange/red/tan), same watercolor storybook style.\n"
+        )
+    elif staging == "solo":
+        layout_block = (
+            "=== FRAMING — SOLO PANEL ===\n"
+            "ONLY ONE character appears in this panel: the red panda protagonist ALONE at the "
+            f"location the scene describes, interacting with their phone or the item at hand. "
+            f"Outfit: {outfit}.\n"
+            "NO second character anywhere in the image. "
+            "Protagonist centered, medium shot, eye level, fully visible head to feet.\n"
+        )
+    else:  # face-to-face (기본)
+        layout_block = (
+            "=== FRAMING ===\n"
+            "CLOSE MEDIUM SHOT: two characters fill the CENTER of the square frame. "
+            "Heads near upper-center, feet near lower-center. "
+            "Background at top and sides only — NOT dominating the lower half. "
+            "Camera at character eye level. Do NOT push characters to the bottom.\n"
+            "ROLE-ACCURATE STAGING: if the supporting character is staff serving the protagonist "
+            "(cashier, clerk, barista, pharmacist, receptionist, ticket agent), place them BEHIND "
+            "their counter/register/desk with the protagonist in FRONT as the customer — "
+            "the counter runs between the two. Never show staff standing on the customer side.\n\n"
+            "=== TWO CHARACTERS ===\n"
+            f"LEFT — PROTAGONIST (RED PANDA): match the reference image exactly. "
+            f"Orange-red fur, dark brown body, white facial markings, fluffy striped tail. "
+            f"Outfit: {outfit}.\n"
+            f"RIGHT — SUPPORTING CHARACTER: a {local_char}. "
+            f"Must be clearly DIFFERENT color from the red panda (NOT orange/red/tan). "
+            f"Same watercolor storybook style as the protagonist.\n"
+            "The two characters must look CLEARLY DIFFERENT — different species, different colors, "
+            "different sizes.\n"
         )
 
     return (
@@ -968,11 +1228,24 @@ def _build_char_instruction(situation: dict, phrase_idx: int = 0,
         "Thinking, Confused, Sleepy, Sad, Crying, Angry, Annoyed, Embarrassed, Shy, "
         "Scared, Determined, Playful Wink, Proud). Pick the ONE expression from this sheet "
         "that best fits the scene emotion and reproduce it faithfully on the red panda.\n"
-        "  - Any remaining references = supporting character sheets.\n\n"
-        "=== STYLE FIRST — MATCH THE REFERENCE IMAGES ===\n"
-        "Draw in the EXACT SAME STYLE as the reference character images: "
-        "soft pastel watercolor, Korean/Japanese children's picture book (kawaii storybook), "
-        "thin delicate ink outlines — soft, slightly rounded, gentle even weight, "
+        "  - Any remaining references = supporting character sheets"
+        + (
+            ", EXCEPT THE LAST reference image which is the INTRO PANEL of this exact scene — "
+            "copy the supporting character's species, face shape, body proportions, colors and "
+            "outfit EXACTLY from that intro panel, and keep the same watercolor rendering style "
+            "so every panel of this scene looks drawn by the same artist"
+            if has_scene_ref else ""
+        )
+        + ".\n\n"
+        "=== STYLE ===\n"
+        # ⚠ 2026-07-21: 기존 "STYLE FIRST — MATCH THE REFERENCE IMAGES(그림 전체)" 지시가
+        #    웜톤 시트(주황/갈색/크림) 색감을 화면 전체에 물들여 세피아/고채도의 원인이었음.
+        #    레퍼런스 매칭은 캐릭터 외형 한정으로 완화 — 전체 스타일 매칭으로 되돌리지 말 것.
+        "Use the reference images for CHARACTER APPEARANCE ONLY — body proportions, fur colors, "
+        "markings, and outline style of the characters themselves. "
+        "Do NOT tint the whole image with the reference sheet's warm orange-brown tones. "
+        "Overall rendering: soft pastel watercolor, Korean/Japanese children's picture book "
+        "(kawaii storybook), thin delicate ink outlines — soft, slightly rounded, gentle even weight, "
         "airy translucent watercolor washes, "
         # ⚠ 단어 시스템과 톤 통일: "warm peachy-cream gradient"는 세피아/황금빛 과다(채도 상승)
         #    원인이라 제거. 단어 _WEBTOON_STYLE_CORE와 동일한 중립 파스텔로 맞춤(2026-06-20).
@@ -993,20 +1266,8 @@ def _build_char_instruction(situation: dict, phrase_idx: int = 0,
         "Characters fully visible head to feet. NO footwear — bare paws only. "
         "EYES: small bead-like eyes — tiny dark circle with a single white highlight dot, "
         "sclera is warm cream-white, eye overall is small and simple.\n\n"
-        "=== FRAMING ===\n"
-        "CLOSE MEDIUM SHOT: two characters fill the CENTER of the square frame. "
-        "Heads near upper-center, feet near lower-center. "
-        "Background at top and sides only — NOT dominating the lower half. "
-        "Camera at character eye level. Do NOT push characters to the bottom.\n\n"
-        "=== TWO CHARACTERS ===\n"
-        f"LEFT — PROTAGONIST (RED PANDA): match the reference image exactly. "
-        f"Orange-red fur, dark brown body, white facial markings, fluffy striped tail. "
-        f"Outfit: {outfit}.\n"
-        f"RIGHT — SUPPORTING CHARACTER: a {local_char}. "
-        f"Must be clearly DIFFERENT color from the red panda (NOT orange/red/tan). "
-        f"Same watercolor storybook style as the protagonist.\n"
-        "The two characters must look CLEARLY DIFFERENT — different species, different colors, different sizes.\n"
-        f"{consistency_note}\n"
+        + layout_block
+        + consistency_note + "\n"
     )
 
 
@@ -1032,6 +1293,46 @@ def _save_generated_image(response, output_path: Path) -> bool:
     return False
 
 
+# ─── 팔레트 검증 (단어 시스템 palette_ok 이식, 2026-07-21) ─────
+_PALETTE_FIX_SUFFIX = (
+    " STYLE FIX — the previous attempt was too saturated/dark: render this scene as a "
+    "HIGH-KEY light airy pastel watercolor — heavily faded desaturated misty background, "
+    "soft ivory-white paper showing through, maximum 2-3 muted accent colors, "
+    "soft diffused daylight, no sepia or golden-amber cast, no lanterns, "
+    "no festival decorations, no densely packed colorful props."
+)
+
+
+def _verify_palette(image_path: Path, genai_client) -> tuple[bool, str]:
+    """생성 이미지가 저채도 파스텔 톤인지 VLM으로 검증.
+    검증 자체가 실패하면 통과 처리(파이프라인을 막지 않음)."""
+    try:
+        from PIL import Image as PILImage
+        img = PILImage.open(str(image_path)).convert("RGB")
+        resp = genai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                img,
+                "Evaluate this illustration's color palette. Answer in strict JSON only: "
+                '{"palette_ok": true or false, "reason": "one short sentence"}. '
+                "palette_ok is true ONLY if ALL of these hold: "
+                "overall tone is light high-key pastel; "
+                "background is faded/desaturated with soft pale washes; "
+                "no strong sepia or golden-amber cast over the whole image; "
+                "no large heavily-saturated color areas dominating the frame; "
+                "no densely packed colorful props (lanterns, bunting, packed shelves). "
+                "Judge strictly.",
+            ],
+        )
+        m = re.search(r"\{.*\}", resp.text or "", re.DOTALL)
+        if not m:
+            return True, "no-json"
+        data = json.loads(m.group(0))
+        return bool(data.get("palette_ok", True)), str(data.get("reason", ""))[:150]
+    except Exception as e:
+        return True, f"verify-error: {e}"
+
+
 # ─── Gemini Flash Image 생성 ─────────────────────────────────
 def _generate_image(prompt: str, output_path: Path, genai_client,
                     sit_id: int = 0, situation: dict | None = None,
@@ -1042,28 +1343,57 @@ def _generate_image(prompt: str, output_path: Path, genai_client,
     elif output_path.exists():
         output_path.unlink()
 
-    char_instruction = _build_char_instruction(situation or {}, phrase_idx, is_first_panel)
-    full_prompt = char_instruction + _apply_style(_lint_prompt(prompt), sit_id, situation, phrase_idx)
+    # STAGING 태그 분리 (2026-07-22): 전화 통화=분할화면, 현관 인수, 단독 패널 등 구도 분기
+    staging, scene_body = _split_staging(prompt)
 
     # 캐릭터 레퍼런스 이미지 로드
     char_refs = _load_char_refs()
 
-    # contents = [ref_img1, ref_img2, ..., text_prompt]
-    contents = char_refs + [full_prompt]
+    # 이 상황의 인트로 패널을 추가 레퍼런스로 첨부 (2026-07-22):
+    # 패널마다 독립 생성이라 조연 디자인/화풍이 널뛰던 문제 → 인트로에서 확립된 look을 고정
+    scene_ref = None
+    if not is_first_panel:
+        intro_path = output_path.parent / "intro.png"
+        if intro_path.exists() and intro_path.stat().st_size > 0:
+            try:
+                from PIL import Image as PILImage
+                scene_ref = PILImage.open(str(intro_path)).convert("RGB")
+            except Exception:
+                scene_ref = None
 
-    try:
+    char_instruction = _build_char_instruction(
+        situation or {}, phrase_idx, is_first_panel,
+        staging=staging, has_scene_ref=scene_ref is not None,
+    )
+    full_prompt = char_instruction + _apply_style(_lint_prompt(scene_body), sit_id, situation, phrase_idx)
+    all_refs = char_refs + ([scene_ref] if scene_ref is not None else [])
+
+    def _call(prompt_text: str, path: Path) -> bool:
         response = genai_client.models.generate_content(
             model=_IMAGE_MODEL,
-            contents=contents,
+            contents=all_refs + [prompt_text],
             config=types.GenerateContentConfig(
                 response_modalities=[types.Modality.IMAGE],
                 image_config=types.ImageConfig(aspect_ratio="1:1"),
             ),
         )
-        if _save_generated_image(response, output_path):
-            return True
-        print(f"  [빈 응답] 이미지 없음: {output_path.name}")
-        return False
+        return _save_generated_image(response, path)
+
+    try:
+        if not _call(full_prompt, output_path):
+            print(f"  [빈 응답] 이미지 없음: {output_path.name}")
+            return False
+        # 팔레트 검증(단어 시스템의 palette_ok 이식, 2026-07-21) — NG면 1회만 재생성.
+        # 재시도는 임시 파일에 생성 후 교체: 재시도 실패 시 원본 유지(원본삭제 위험 방지).
+        ok, reason = _verify_palette(output_path, genai_client)
+        if not ok:
+            print(f"  [팔레트 NG → 재생성 1회] {output_path.name}: {reason}")
+            retry_path = output_path.with_name(output_path.stem + "_retry.png")
+            if _call(full_prompt + _PALETTE_FIX_SUFFIX, retry_path):
+                retry_path.replace(output_path)
+            else:
+                retry_path.unlink(missing_ok=True)
+        return True
     except Exception as e:
         print(f"  [생성 오류: {e}] {output_path.name}")
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
@@ -1130,6 +1460,7 @@ def generate_situation(situation: dict, genai_client, anthropic_client,
 
     # 2. 대화 쌍별 패널 — 동일 캐릭터/배경, 동작·표정·구도로만 차별화
     used_poses: list[str] = []  # 이 상황 내 이미 쓴 포즈/표정 요약
+    used_views: list[str] = []  # 이 상황 내 이미 쓴 카메라 구도(첫 문장) 요약
     for phrase_loop_idx, phrase in enumerate(phrases):
         ph_id   = phrase["id"]
         ph_key  = f"phrase_{ph_id}"
@@ -1153,8 +1484,16 @@ def generate_situation(situation: dict, genai_client, anthropic_client,
             situation, phrase, anthropic_client,
             phrase_idx=phrase_loop_idx,
             prior_poses=used_poses if used_poses else None,
+            prior_views=used_views if used_views else None,
         )
-        used_poses.append(scene[:80])  # 포즈 힌트로 앞 80자 기록
+        # 포즈 힌트 기록 — STAGING 태그 제거 후, 첫 문장(카메라/장소)을 건너뛰고
+        # 둘째 문장부터(동작·표정) 기록. (구버전 scene[:80]은 장소 텍스트만 쌓여
+        # 포즈 중복 방지가 전혀 안 됐음. 2026-07-21 수정, 2026-07-22 태그 제거 추가)
+        _sc_body = _split_staging(scene)[1]
+        _sc_parts = _sc_body.split(". ", 1)
+        used_poses.append((_sc_parts[1] if len(_sc_parts) > 1 else _sc_body)[:150])
+        # 구도 기록 — 첫 문장(카메라 앵글+서브장소)을 다음 패널에 "이미 쓴 구도"로 전달
+        used_views.append(_sc_parts[0][:120])
         print(f"    장면: {scene[:80]}...")
         # phrase_0 이후는 모두 is_first_panel=False → 일관성 강조 프롬프트 사용
         if _generate_image(scene, ph_path, genai_client, sit_id, situation,
